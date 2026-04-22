@@ -1,0 +1,11 @@
+{
+  "name": "jingshi-course-billing",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "dev": "python3 -m http.server 4173",
+    "build": "node scripts/build-static.mjs && node scripts/verify-static-app.mjs"
+  }
+}

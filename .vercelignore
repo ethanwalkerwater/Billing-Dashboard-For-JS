@@ -1,0 +1,7 @@
+data/raw/
+outputs/
+tests/
+docs/
+scripts/*.py
+__pycache__/
+*.pyc

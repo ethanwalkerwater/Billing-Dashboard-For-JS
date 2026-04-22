@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>菁仕课时收费报表</title>
+  <link rel="stylesheet" href="/assets/styles.css" />
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">Course Billing Workspace</p>
+        <h1>菁仕课时收费报表</h1>
+      </div>
+      <div class="top-actions">
+        <span id="sourceBadge" class="badge">等待上传 CSV</span>
+        <span id="privacyBadge" class="badge">数据仅在浏览器本地处理</span>
+      </div>
+    </header>
+
+    <section id="uploadPanel" class="upload-panel">
+      <div class="upload-copy">
+        <p class="eyebrow">Raw Data</p>
+        <h2>上传最新课程表 CSV</h2>
+        <p>支持飞书/表格导出的原始课表。上传后会生成学生收费视图、老师收入视图和原始行明细追溯。</p>
+      </div>
+      <label id="dropzone" class="dropzone" for="csvInput">
+        <span class="drop-icon">CSV</span>
+        <strong>选择或拖入课程表 CSV</strong>
+        <span>不会上传到服务器，刷新页面后数据会清空。</span>
+        <input id="csvInput" type="file" accept=".csv,text/csv" />
+      </label>
+    </section>
+
+    <section id="reportPanel" class="report-panel" hidden>
+      <div class="toolbar card">
+        <div class="segmented" role="tablist" aria-label="视图切换">
+          <button id="studentTab" type="button" class="active" data-view="student">学生收费</button>
+          <button id="teacherTab" type="button" data-view="teacher">老师收入</button>
+        </div>
+        <label class="field">
+          <span>月份</span>
+          <select id="monthSelect"></select>
+        </label>
+        <label class="field">
+          <span id="entityLabel">学生</span>
+          <select id="entitySelect"></select>
+        </label>
+        <div class="toolbar-actions">
+          <button id="resetButton" class="button outline" type="button">重新上传</button>
+          <button id="exportButton" class="button primary" type="button">导出当前汇总</button>
+        </div>
+      </div>
+
+      <section id="summaryCards" class="summary-grid"></section>
+
+      <section class="card panel">
+        <div class="panel-head">
+          <div>
+            <h2 id="groupTitle">汇总</h2>
+            <p id="groupSubtitle"></p>
+          </div>
+          <span id="currentIssueBadge" class="badge">0 个数据提醒</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th id="counterpartyHeader">老师</th>
+                <th>课程类型</th>
+                <th>授课类型</th>
+                <th>取消/上课状态</th>
+                <th class="numeric">课程数</th>
+                <th class="numeric">总时长</th>
+                <th class="numeric">取消时长</th>
+                <th class="numeric">课程单价</th>
+                <th class="numeric">总金额</th>
+                <th>原始数据</th>
+              </tr>
+            </thead>
+            <tbody id="groupRows"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="quality-grid">
+        <aside class="card">
+          <div class="panel-head compact">
+            <div>
+              <h2>全表数据质量</h2>
+              <p>按原始行号追溯</p>
+            </div>
+          </div>
+          <div id="issueCounts" class="issue-list"></div>
+        </aside>
+        <section class="card panel">
+          <div class="panel-head">
+            <div>
+              <h2>当前筛选的数据提醒</h2>
+              <p id="issueSubtitle"></p>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>原始行</th>
+                  <th>问题</th>
+                  <th>学生</th>
+                  <th>老师</th>
+                  <th>课程</th>
+                  <th>日期</th>
+                  <th>说明</th>
+                </tr>
+              </thead>
+              <tbody id="issueRows"></tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+    </section>
+  </main>
+
+  <div id="drawerBackdrop" class="drawer-backdrop"></div>
+  <aside id="detailDrawer" class="drawer" aria-label="原始数据明细" aria-hidden="true">
+    <div class="drawer-head">
+      <div>
+        <h2 id="drawerTitle">原始数据</h2>
+        <p id="drawerSubtitle"></p>
+      </div>
+      <button id="closeDrawer" type="button" class="button outline">关闭</button>
+    </div>
+    <div class="drawer-body">
+      <div class="table-wrap">
+        <table class="raw-table">
+          <thead>
+            <tr>
+              <th>原始行</th>
+              <th>日期</th>
+              <th>时间</th>
+              <th>学生</th>
+              <th>老师</th>
+              <th>课程类型</th>
+              <th>授课类型</th>
+              <th>状态</th>
+              <th class="numeric">单价</th>
+              <th class="numeric">时长</th>
+              <th class="numeric">原表金额</th>
+              <th class="numeric">规则金额</th>
+              <th>地点</th>
+              <th>问题</th>
+            </tr>
+          </thead>
+          <tbody id="drawerRows"></tbody>
+        </table>
+      </div>
+    </div>
+  </aside>
+
+  <script type="module" src="/assets/app.js"></script>
+</body>
+</html>

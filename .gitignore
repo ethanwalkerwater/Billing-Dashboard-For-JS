@@ -1,0 +1,10 @@
+node_modules/
+.vercel/
+__pycache__/
+*.pyc
+.DS_Store
+data/raw/
+outputs/
+public/
+scripts/__pycache__/
+tests/__pycache__/
