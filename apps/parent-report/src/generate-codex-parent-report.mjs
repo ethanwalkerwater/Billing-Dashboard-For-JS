@@ -9,7 +9,7 @@ const PROJECT_ROOT = path.resolve(__dirname, "../../..");
 const INPUT = "data/raw/schedule.csv";
 const OUTPUT = "outputs/parent_reports/codex-ivy-2488-2026-03.html";
 const PORTRAIT_RENDER_DIR = path.resolve(PROJECT_ROOT, "outputs/parent_reports/teacher_info");
-const PORTRAIT_SOURCE_DIR = path.resolve(PROJECT_ROOT, "outputs/parent_reports/teacher_portraits");
+const PORTRAIT_SOURCE_DIR = path.resolve(PROJECT_ROOT, "apps/parent-report/assets/teachers");
 
 function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>"']/g, (char) => ({
