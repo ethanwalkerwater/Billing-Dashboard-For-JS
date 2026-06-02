@@ -272,17 +272,16 @@ function renderSelectionChips() {
 function renderSummary(results) {
   const totals = combinedTotals(results);
   const cards = [
-    ["总金额", money(totals.amount), `${number(totals.duration)} 小时`],
-    ["课程数", number(totals.lessons), "进入计费汇总的原始课程"],
-    ["临时取消金额", money(totals.cancelledAmount), `${number(totals.cancelledDuration)} 取消小时`],
-    ["临时取消课程", number(totals.cancelledLessons), "按取消比例收费"],
-    ["数据提醒", number(totals.issueCount), "当前筛选范围"],
+    ["总金额", money(totals.amount)],
+    ["总课时", `${number(totals.duration)} 小时`],
+    ["临时取消金额", money(totals.cancelledAmount)],
+    ["临时取消课程", number(totals.cancelledLessons)],
+    ["数据提醒", number(totals.issueCount)],
   ];
-  els.summaryCards.innerHTML = cards.map(([label, value, sub]) => `
+  els.summaryCards.innerHTML = cards.map(([label, value]) => `
     <article class="card metric">
       <div class="metric-label">${escapeHtml(label)}</div>
       <div class="metric-value">${escapeHtml(value)}</div>
-      <div class="metric-sub">${escapeHtml(sub)}</div>
     </article>
   `).join("");
 }
@@ -325,7 +324,6 @@ function renderGroups(results) {
             <col style="width: 92px" />
             <col style="width: 72px" />
             <col style="width: 96px" />
-            <col style="width: 58px" />
             <col style="width: 80px" />
             <col style="width: 86px" />
             <col style="width: 84px" />
@@ -341,7 +339,6 @@ function renderGroups(results) {
               <th>课程类型</th>
               <th>授课类型</th>
               <th>取消/上课状态</th>
-              <th class="numeric">课程数</th>
               <th class="numeric">总时长（h）</th>
               <th class="numeric">取消时长（h）</th>
               <th class="numeric">课程单价（¥）</th>
@@ -361,7 +358,6 @@ function renderGroups(results) {
                   <td>${escapeHtml(group.courseType)}</td>
                   <td>${escapeHtml(group.teachingType)}</td>
                   <td>${statusBadge(group.cancellationStatus)}</td>
-                  <td class="numeric">${number(group.lessons)}</td>
                   <td class="numeric">${number(group.duration)}</td>
                   <td class="numeric">${number(group.cancelledDuration)}</td>
                   <td class="numeric">${escapeHtml(group.unitPriceLabel)}</td>
@@ -484,7 +480,7 @@ function closeDrawer() {
 function exportCurrentCsv() {
   const results = currentResults();
   if (!results.length) return;
-  const rows = [[`${results[0].subjectLabel}名`, "月份", results[0]?.counterpartyLabel || "", "课程类型", "授课类型", "取消/上课状态", "课程数", "总时长（h）", "取消时长（h）", "课程单价（¥）", "折扣（%）", "折扣原因", "总金额（¥）", "实际金额（¥）", "原始行"]];
+  const rows = [[`${results[0].subjectLabel}名`, "月份", results[0]?.counterpartyLabel || "", "课程类型", "授课类型", "取消/上课状态", "总时长（h）", "取消时长（h）", "课程单价（¥）", "折扣（%）", "折扣原因", "总金额（¥）", "实际金额（¥）", "原始行"]];
   results.forEach((result) => {
     result.groups.forEach((group) => {
       const adjustment = getAdjustment(groupAdjustmentKey(result, group));
@@ -495,7 +491,6 @@ function exportCurrentCsv() {
         group.courseType,
         group.teachingType,
         group.cancellationStatus,
-        group.lessons,
         group.duration,
         group.cancelledDuration,
         group.unitPriceLabel,
