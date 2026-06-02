@@ -1,11 +1,19 @@
 {
-  "name": "jingshi-course-billing",
+  "name": "jingshi-monorepo",
   "version": "1.0.0",
   "private": true,
   "type": "module",
+  "description": "菁仕收费 monorepo：课时收费报表 + 家长报告，共享 billing-core 计算内核。",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
   "scripts": {
-    "test": "node --test tests/*.test.mjs",
-    "dev": "python3 -m http.server 4173",
-    "build": "node scripts/build-static.mjs && node scripts/verify-static-app.mjs"
+    "test": "node --test packages/billing-core/tests/*.test.mjs apps/parent-report/tests/*.test.mjs",
+    "test:core": "npm test -w @jingshi/billing-core",
+    "test:billing-report": "npm test -w @jingshi/billing-report",
+    "test:parent-report": "npm test -w @jingshi/parent-report",
+    "build:billing-report": "npm run build -w @jingshi/billing-report",
+    "dev:billing-report": "npm run dev -w @jingshi/billing-report"
   }
 }

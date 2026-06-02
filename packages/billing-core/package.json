@@ -1,0 +1,14 @@
+{
+  "name": "@jingshi/billing-core",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "课时收费计算内核：从 CSV 计算每个学生/老师的收费与收入。两个项目共享的唯一真源。",
+  "main": "src/report-core.js",
+  "exports": {
+    ".": "./src/report-core.js"
+  },
+  "scripts": {
+    "test": "node --test tests/*.test.mjs"
+  }
+}

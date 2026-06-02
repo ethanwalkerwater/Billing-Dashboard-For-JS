@@ -7,7 +7,7 @@ import {
   normalizeRow,
   parseCancellationRate,
   parseCsv,
-} from "../assets/report-core.js";
+} from "../src/report-core.js";
 
 function makeRow(overrides = {}) {
   return {
