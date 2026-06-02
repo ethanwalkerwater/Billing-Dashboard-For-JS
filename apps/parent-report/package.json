@@ -1,0 +1,19 @@
+{
+  "name": "@jingshi/parent-report",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "项目2 · 家长报告：基于学生收费计算，为每位家长生成 PPT/PDF。下游，依赖 billing-core。",
+  "dependencies": {
+    "@jingshi/billing-core": "*",
+    "pdf-lib": "^1.17.1",
+    "playwright-core": "^1.59.1"
+  },
+  "scripts": {
+    "generate": "cd ../.. && node apps/parent-report/src/generate-parent-report.mjs",
+    "generate:codex": "cd ../.. && node apps/parent-report/src/generate-codex-parent-report.mjs",
+    "export:pdf": "cd ../.. && node apps/parent-report/src/export-parent-report-pdf.mjs",
+    "export:web-pdf": "cd ../.. && node apps/parent-report/src/export-web-pdf.mjs",
+    "test": "cd ../.. && node --test apps/parent-report/tests/*.test.mjs"
+  }
+}
