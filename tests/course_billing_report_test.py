@@ -2,8 +2,10 @@ import unittest
 
 from scripts.course_billing_report import (
     aggregate_records,
+    build_report_data,
     normalize_row,
     parse_cancellation_rate,
+    render_html,
 )
 
 
@@ -77,6 +79,8 @@ class CourseBillingReportTest(unittest.TestCase):
         )
         cancelled = next(g for g in result["groups"] if g["cancellationStatus"] == "0h-70%")
         self.assertEqual(cancelled["rawRows"], [4])
+        tutoring = next(g for g in result["groups"] if g["teachingType"] == "刷题班")
+        self.assertEqual(tutoring["unitPriceLabel"], "350")
 
     def test_teacher_view_groups_by_student(self):
         records = [
@@ -89,6 +93,17 @@ class CourseBillingReportTest(unittest.TestCase):
         self.assertEqual(result["totals"]["amount"], 4000)
         self.assertEqual([g["counterparty"] for g in result["groups"]], ["学生A-101", "学生B-202"])
 
+    def test_student_view_orders_normal_lessons_before_cancelled_lessons(self):
+        records = [
+            normalize_row(make_row(临时取消="0h-70%", 课程总价格="1400"), 2),
+            normalize_row(make_row(上课时间="2026/03/02 10:00"), 3),
+        ]
+
+        result = aggregate_records(records, "student", "2026-03", "学生A-101")
+
+        self.assertEqual(result["groups"][0]["cancellationStatus"], "正常上课")
+        self.assertEqual(result["groups"][1]["cancellationStatus"], "0h-70%")
+
     def test_quality_issues_expose_source_mismatches_and_missing_dimensions(self):
         mismatch = normalize_row(make_row(课程总价格="1999"), 2)
         missing_student = normalize_row(make_row(学生=" ", 课程总价格="2000"), 3)
@@ -98,6 +113,41 @@ class CourseBillingReportTest(unittest.TestCase):
         issue_codes = {issue["code"] for issue in result["qualityIssues"]}
         self.assertIn("amount_mismatch", issue_codes)
         self.assertIn("missing_student", issue_codes)
+
+    def test_rendered_summary_table_has_discount_columns_and_header_units(self):
+        records = [normalize_row(make_row(课程总价格="2000"), 2)]
+        report_data = build_report_data(records, "unit.csv")
+
+        html = render_html(report_data)
+
+        self.assertIn("总时长（h）", html)
+        self.assertIn("课程单价（¥）", html)
+        self.assertIn("折扣（%）", html)
+        self.assertIn("折扣原因", html)
+        self.assertIn("总金额（¥）", html)
+        self.assertIn("实际金额（¥）", html)
+        self.assertIn('type="number"', html)
+        self.assertIn('data-discount-input', html)
+        self.assertIn('id="monthSearch"', html)
+        self.assertIn('id="entitySearch"', html)
+        self.assertIn('data-filter-list="months"', html)
+        self.assertIn('data-filter-list="entities"', html)
+        self.assertIn('class="filter-grid"', html)
+        self.assertIn('class="workspace-layout"', html)
+        self.assertIn('class="sidebar-panel"', html)
+        self.assertIn('class="content-panel"', html)
+        self.assertIn('id="monthChips"', html)
+        self.assertIn('id="entityChips"', html)
+        self.assertIn('id="sidebarToggle"', html)
+        self.assertIn('class="sidebar-body"', html)
+        self.assertIn("sidebarCollapsed", html)
+        self.assertIn("sidebar-collapsed", html)
+        self.assertIn("max-width: 120px", html)
+        self.assertIn("min-width: 1120px", html)
+        self.assertIn('class="content-actionbar"', html)
+        self.assertIn('result-section', html)
+        self.assertNotIn('data-section-row', html)
+        self.assertIn('subjectLabel}名', html)
 
 
 if __name__ == "__main__":

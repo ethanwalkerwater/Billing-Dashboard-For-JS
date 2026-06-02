@@ -69,10 +69,23 @@ test("student view separates teaching type and cancellation status", () => {
   assert.equal(result.totals.duration, 5.5);
   assert.equal(result.totals.cancelledAmount, 1400);
   assert.equal(result.groups.length, 3);
+  assert.equal(result.groups.find((group) => group.teachingType === "刷题班").unitPriceLabel, "350");
   assert.deepEqual(
     new Set(result.groups.map((group) => `${group.courseType}|${group.teachingType}|${group.cancellationStatus}`)),
     new Set(["Alevel数学|1v1|正常上课", "Alevel数学|刷题班|正常上课", "Alevel数学|1v1|0h-70%"]),
   );
+});
+
+test("student view orders normal lessons before cancelled lessons", () => {
+  const records = [
+    normalizeRow(makeRow({ 临时取消: "0h-70%", 课程总价格: "1400" }), 2),
+    normalizeRow(makeRow({ 上课时间: "2026/03/02 10:00" }), 3),
+  ];
+
+  const result = aggregateRecords(records, "student", "2026-03", "学生A-101");
+
+  assert.equal(result.groups[0].cancellationStatus, "正常上课");
+  assert.equal(result.groups[1].cancellationStatus, "0h-70%");
 });
 
 test("buildReportData exposes month options and raw row lookup", () => {

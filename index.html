@@ -34,91 +34,100 @@
     </section>
 
     <section id="reportPanel" class="report-panel" hidden>
-      <div class="toolbar card">
-        <div class="segmented" role="tablist" aria-label="视图切换">
-          <button id="studentTab" type="button" class="active" data-view="student">学生收费</button>
-          <button id="teacherTab" type="button" data-view="teacher">老师收入</button>
-        </div>
-        <label class="field">
-          <span>月份</span>
-          <select id="monthSelect"></select>
-        </label>
-        <label class="field">
-          <span id="entityLabel">学生</span>
-          <select id="entitySelect"></select>
-        </label>
-        <div class="toolbar-actions">
-          <button id="resetButton" class="button outline" type="button">重新上传</button>
-          <button id="exportButton" class="button primary" type="button">导出当前汇总</button>
-        </div>
-      </div>
-
-      <section id="summaryCards" class="summary-grid"></section>
-
-      <section class="card panel">
-        <div class="panel-head">
-          <div>
-            <h2 id="groupTitle">汇总</h2>
-            <p id="groupSubtitle"></p>
-          </div>
-          <span id="currentIssueBadge" class="badge">0 个数据提醒</span>
-        </div>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th id="counterpartyHeader">老师</th>
-                <th>课程类型</th>
-                <th>授课类型</th>
-                <th>取消/上课状态</th>
-                <th class="numeric">课程数</th>
-                <th class="numeric">总时长</th>
-                <th class="numeric">取消时长</th>
-                <th class="numeric">课程单价</th>
-                <th class="numeric">总金额</th>
-                <th>原始数据</th>
-              </tr>
-            </thead>
-            <tbody id="groupRows"></tbody>
-          </table>
-        </div>
-      </section>
-
-      <section class="quality-grid">
-        <aside class="card">
-          <div class="panel-head compact">
+      <div class="workspace-layout">
+        <aside class="sidebar-panel" aria-label="筛选">
+          <div class="sidebar-head">
             <div>
-              <h2>全表数据质量</h2>
-              <p>按原始行号追溯</p>
+              <p class="eyebrow">筛选</p>
+              <strong>报表范围</strong>
+            </div>
+            <button id="sidebarToggle" class="icon-button" type="button" aria-expanded="true" aria-label="收起筛选">&lt;</button>
+          </div>
+
+          <div class="sidebar-body">
+            <div class="sidebar-section">
+              <p class="eyebrow">视图</p>
+              <div class="segmented" role="tablist" aria-label="视图切换">
+                <button id="studentTab" type="button" class="active" data-view="student">学生收费</button>
+                <button id="teacherTab" type="button" data-view="teacher">老师收入</button>
+              </div>
+            </div>
+
+            <div class="filter-grid">
+              <label class="field">
+                <span>月份</span>
+                <input id="monthSearch" class="picker-search" type="text" placeholder="搜索月份" autocomplete="off" />
+                <div id="monthOptions" class="picker-options" data-filter-list="months"></div>
+                <div id="monthChips" class="selection-chips" aria-label="已选月份"></div>
+              </label>
+              <label class="field">
+                <span id="entityLabel">学生</span>
+                <input id="entitySearch" class="picker-search" type="text" placeholder="搜索学生" autocomplete="off" />
+                <div id="entityOptions" class="picker-options" data-filter-list="entities"></div>
+                <div id="entityChips" class="selection-chips" aria-label="已选对象"></div>
+              </label>
+            </div>
+
+            <div class="sidebar-section sidebar-actions">
+              <button id="resetButton" class="button outline" type="button">重新上传</button>
+              <button id="exportButton" class="button primary" type="button">导出当前汇总</button>
             </div>
           </div>
-          <div id="issueCounts" class="issue-list"></div>
         </aside>
-        <section class="card panel">
-          <div class="panel-head">
+
+        <section class="content-panel">
+          <div class="content-actionbar">
             <div>
-              <h2>当前筛选的数据提醒</h2>
-              <p id="issueSubtitle"></p>
+              <p class="eyebrow">当前筛选</p>
+              <h2 id="groupTitle">汇总</h2>
+              <p id="groupSubtitle"></p>
             </div>
+            <span id="currentIssueBadge" class="badge">0 个数据提醒</span>
           </div>
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>原始行</th>
-                  <th>问题</th>
-                  <th>学生</th>
-                  <th>老师</th>
-                  <th>课程</th>
-                  <th>日期</th>
-                  <th>说明</th>
-                </tr>
-              </thead>
-              <tbody id="issueRows"></tbody>
-            </table>
-          </div>
+
+          <section id="summaryCards" class="summary-grid"></section>
+
+          <section class="card panel">
+            <div id="groupSections" class="result-sections"></div>
+          </section>
+
+          <section class="quality-grid">
+            <aside class="card">
+              <div class="panel-head compact">
+                <div>
+                  <h2>全表数据质量</h2>
+                  <p>按原始行号追溯</p>
+                </div>
+              </div>
+              <div id="issueCounts" class="issue-list"></div>
+            </aside>
+            <section class="card panel">
+              <div class="panel-head">
+                <div>
+                  <h2>当前筛选的数据提醒</h2>
+                  <p id="issueSubtitle"></p>
+                </div>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>原始行</th>
+                      <th>问题</th>
+                      <th>学生</th>
+                      <th>老师</th>
+                      <th>课程</th>
+                      <th>日期</th>
+                      <th>说明</th>
+                    </tr>
+                  </thead>
+                  <tbody id="issueRows"></tbody>
+                </table>
+              </div>
+            </section>
+          </section>
         </section>
-      </section>
+      </div>
     </section>
   </main>
 
@@ -144,10 +153,10 @@
               <th>课程类型</th>
               <th>授课类型</th>
               <th>状态</th>
-              <th class="numeric">单价</th>
-              <th class="numeric">时长</th>
-              <th class="numeric">原表金额</th>
-              <th class="numeric">规则金额</th>
+              <th class="numeric">单价（¥）</th>
+              <th class="numeric">时长（h）</th>
+              <th class="numeric">原表金额（¥）</th>
+              <th class="numeric">规则金额（¥）</th>
               <th>地点</th>
               <th>问题</th>
             </tr>

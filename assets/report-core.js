@@ -102,7 +102,11 @@ function weekday(date) {
 function priceLabel(prices) {
   const unique = [...new Set(prices.filter((price) => price != null).map((price) => roundNumber(price)))].sort((a, b) => a - b);
   if (!unique.length) return "缺失";
-  return unique.map((price) => `¥${price.toLocaleString("zh-CN", { maximumFractionDigits: 2 })}`).join(" / ");
+  return unique.map((price) => price.toLocaleString("zh-CN", { maximumFractionDigits: 2 })).join(" / ");
+}
+
+function cancellationOrder(status) {
+  return status === NORMAL_STATUS ? 0 : 1;
 }
 
 function addIssue(issues, code, rawRow, message) {
@@ -222,6 +226,7 @@ export function aggregateRecords(records, view, month, entity) {
   });
 
   groups.sort((a, b) => (
+    cancellationOrder(a.cancellationStatus) - cancellationOrder(b.cancellationStatus) ||
     a.counterparty.localeCompare(b.counterparty, "zh-CN") ||
     a.courseType.localeCompare(b.courseType, "zh-CN") ||
     a.teachingType.localeCompare(b.teachingType, "zh-CN") ||
