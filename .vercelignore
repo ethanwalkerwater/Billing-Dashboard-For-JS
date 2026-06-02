@@ -1,7 +1,11 @@
+# 部署的是项目1（apps/billing-report，Vercel Root Directory 指向它）。
+# 以下与该静态站构建无关，无需上传。
 data/raw/
 outputs/
-tests/
 docs/
-scripts/*.py
+.runtime/
 __pycache__/
 *.pyc
+apps/parent-report/
+apps/billing-report/python/
+**/tests/
