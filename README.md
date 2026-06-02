@@ -68,8 +68,9 @@ npm run test:billing-report                    # 项目1 静态站校验
 
 ## 部署（项目1 → Vercel）
 
-在 Vercel 项目设置里把 **Root Directory** 设为 `apps/billing-report`。
-构建命令与产物目录已在 `apps/billing-report/vercel.json` 声明（`npm run build` → `dist/`）。
+Vercel 项目的 **Root Directory 保持为仓库根**。根 `vercel.json` 负责 monorepo 构建：
+安装 workspace 后执行 `npm run build -w @jingshi/billing-report`，产物输出到
+`apps/billing-report/dist/`。推送到 `main` 即自动部署，无需改 Vercel 后台设置。
 线上页面不保存原始课表，CSV 在浏览器本地解析。
 
 ## 报表口径（项目1）
