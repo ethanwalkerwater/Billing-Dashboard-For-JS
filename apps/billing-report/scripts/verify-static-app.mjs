@@ -1,20 +1,26 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { buildReportFromCsv } from "../assets/report-core.js";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { buildReportFromCsv } from "@jingshi/billing-core";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const APP_ROOT = path.resolve(__dirname, "..");
+const f = (rel) => path.resolve(APP_ROOT, rel);
 
 const requiredFiles = [
-  "index.html",
-  "assets/app.js",
-  "assets/report-core.js",
-  "assets/styles.css",
+  "web/index.html",
+  "web/assets/app.js",
+  "web/assets/report-core.js",
+  "web/assets/styles.css",
   "vercel.json",
 ];
 
 for (const file of requiredFiles) {
-  assert.ok(fs.existsSync(file), `${file} is missing`);
+  assert.ok(fs.existsSync(f(file)), `${file} is missing`);
 }
 
-const html = fs.readFileSync("index.html", "utf8");
+const html = fs.readFileSync(f("web/index.html"), "utf8");
 assert.match(html, /assets\/app\.js/, "index.html must load app.js");
 assert.match(html, /csvInput/, "index.html must include the CSV upload input");
 assert.match(html, /id="monthSearch"/, "month selector must support search input");
@@ -31,7 +37,7 @@ assert.match(html, /id="sidebarToggle"/, "sidebar must have a collapse toggle");
 assert.match(html, /class="sidebar-body"/, "collapsible sidebar content must be grouped");
 assert.match(html, /class="content-actionbar"/, "main report must have an action bar");
 
-const app = fs.readFileSync("assets/app.js", "utf8");
+const app = fs.readFileSync(f("web/assets/app.js"), "utf8");
 assert.match(app, /总时长（h）/, "summary table must put hour units in headers");
 assert.match(app, /课程单价（¥）/, "summary table must put currency units in headers");
 assert.match(app, /折扣（%）/, "summary table must include discount percent column");
@@ -51,7 +57,7 @@ assert.match(app, /data-chip-type/, "selected chips must be removable");
 assert.match(app, /sidebarCollapsed/, "app state must track collapsed sidebar state");
 assert.match(app, /sidebar-collapsed/, "app must toggle a collapsed sidebar class");
 
-const css = fs.readFileSync("assets/styles.css", "utf8");
+const css = fs.readFileSync(f("web/assets/styles.css"), "utf8");
 assert.match(css, /\.filter-grid/, "filter controls must have grid layout styles");
 assert.match(css, /\.workspace-layout/, "workspace layout must be styled");
 assert.match(css, /\.sidebar-panel/, "sidebar panel must be styled");

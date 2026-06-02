@@ -1,0 +1,18 @@
+{
+  "name": "@jingshi/billing-report",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "项目1 · 菁仕课时收费报表：上传 CSV，计算每个学生/老师的收费与收入（网页版 + Python 版）。",
+  "dependencies": {
+    "@jingshi/billing-core": "*"
+  },
+  "scripts": {
+    "sync-core": "node scripts/sync-core.mjs",
+    "dev": "npm run sync-core && python3 -m http.server 4173 --directory web",
+    "build": "node scripts/build-static.mjs && node scripts/verify-static-app.mjs",
+    "verify": "npm run sync-core && node scripts/verify-static-app.mjs",
+    "test": "npm run sync-core && node scripts/verify-static-app.mjs",
+    "test:python": "cd python && PYTHONPATH=. python3 -m unittest discover -s tests -p '*_test.py'"
+  }
+}

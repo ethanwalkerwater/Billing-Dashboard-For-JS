@@ -1,6 +1,6 @@
 import unittest
 
-from scripts.course_billing_report import (
+from course_billing_report import (
     aggregate_records,
     build_report_data,
     normalize_row,
