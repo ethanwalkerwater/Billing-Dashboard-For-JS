@@ -1,0 +1,6 @@
+{
+  "buildCommand": "npm run build -w @jingshi/billing-report",
+  "outputDirectory": "apps/billing-report/dist",
+  "cleanUrls": true,
+  "trailingSlash": false
+}
