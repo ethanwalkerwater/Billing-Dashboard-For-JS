@@ -12,7 +12,8 @@ data/raw/
 # 产物 / 生成物
 outputs/
 apps/billing-report/dist/
-apps/billing-report/web/assets/report-core.js   # 由 sync-core 从 billing-core 生成
+# 由 sync-core 从 billing-core 生成
+apps/billing-report/web/assets/report-core.js
 
 # 项目2 本地资源（老师图片，可能含 PII，沿用旧 ref/ 未跟踪状态）
 apps/parent-report/assets/teachers/
