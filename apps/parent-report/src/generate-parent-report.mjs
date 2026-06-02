@@ -8,7 +8,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, "../../..");
 const INPUT = "data/raw/schedule.csv";
 const OUTPUT = "outputs/parent_reports/ivy-2488-2026-03.html";
-const PORTRAIT_SOURCE_DIR = "outputs/parent_reports/teacher_portraits";
+const PORTRAIT_SOURCE_DIR = "apps/parent-report/assets/teachers";
 const PORTRAIT_RENDER_DIR = "outputs/parent_reports/teacher_info";
 const RENDERER_MTIME = fs.statSync(fileURLToPath(import.meta.url)).mtimeMs;
 
