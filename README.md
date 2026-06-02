@@ -1,105 +1,81 @@
-# 菁仕月度课时收费报表
+# 菁仕收费 Monorepo
 
-这个目录用于把飞书/课程表导出的原始 CSV 转成可交互收费报表。
+一个仓库，两个项目，共享同一套课时收费计算内核。
 
-现在有两种使用方式：
-
-- 线上页面：打开 Vercel 部署后的页面，直接上传最新 CSV。
-- 本地脚本：把 CSV 放到 `data/raw/schedule.csv`，运行 Python 脚本生成静态 HTML。
-
-线上页面不会保存原始课表；CSV 在浏览器本地解析。
-
-## 线上页面使用步骤
-
-1. 打开部署后的 Vercel 地址。
-2. 选择或拖入最新课程表 CSV。
-3. 使用月份和学生/老师筛选报表。
-4. 点击汇总行的“明细”查看对应原始行。
-5. 需要留档时点击“导出当前汇总”。
-
-## 本地脚本使用步骤
-
-1. 把新的原始课程表 CSV 覆盖到：
-
-   `data/raw/schedule.csv`
-
-2. 在本目录运行：
-
-   ```bash
-   python3 scripts/course_billing_report.py
-   ```
-
-3. 打开生成结果：
-
-   `outputs/course_billing_report/course_billing_report.html`
-
-## 本地预览上传页面
-
-```bash
-npm run dev
+```
+菁仕收费2/
+├─ packages/
+│  └─ billing-core/        ★ 共享计算内核（唯一真源）
+│                            从 CSV 计算每个学生/老师的收费与收入
+├─ apps/
+│  ├─ billing-report/      【项目1】课时收费报表（上游）
+│  │                         上传 CSV → 交互式收费报表（网页版 + Python 版）
+│  └─ parent-report/       【项目2】家长报告（下游）
+│                            基于学生收费计算 → 每位家长的 PPT/PDF
+├─ data/raw/              共享输入：schedule.csv（不入库）
+└─ outputs/              共享产物目录（不入库）
+   ├─ course_billing_report/   ← 项目1
+   ├─ parent_reports/          ← 项目2
+   └─ parent_reports_web/      ← 项目2
 ```
 
-然后打开：
+## 怎么分清哪个文件属于哪个项目
 
-`http://localhost:4173`
+看路径前缀即可，无需记忆：
 
-## 部署到 Vercel
+| 前缀 | 归属 | 说明 |
+|------|------|------|
+| `packages/billing-core/` | 共享内核 | 两个项目都 import 它，改这里两边同时生效 |
+| `apps/billing-report/` | 项目1 | 收费报表（网页 + Python） |
+| `apps/parent-report/` | 项目2 | 家长报告生成与导出 |
+| `data/`、`outputs/` | 共享 I/O | 输入 CSV 与各项目产物（按子目录区分） |
 
-```bash
-npx vercel --prod --yes
+## 上下游关系
+
+```
+data/raw/schedule.csv
+        │
+        ▼
+packages/billing-core  ──► apps/billing-report   （项目1：报表）
+        │
+        └──────────────►  apps/parent-report     （项目2：家长报告依赖费用计算）
 ```
 
-部署时 `.vercelignore` 会排除 `data/raw/` 和 `outputs/`，避免把原始 CSV 或旧 HTML 输出上传到线上。
+项目2 通过 `import { buildReportFromCsv } from "@jingshi/billing-core"` 拿到费用计算，
+不重复实现计算逻辑。npm workspaces 把 `@jingshi/billing-core` 软链接到本地包，改内核无需发版。
 
-## 常用命令
-
-如果原始表不放在默认路径，可以临时指定：
-
-```bash
-python3 scripts/course_billing_report.py --input /path/to/raw.csv --output outputs/course_billing_report/course_billing_report.html
-```
-
-运行测试：
+## 常用命令（都在仓库根运行）
 
 ```bash
-npm test
-python3 -m unittest tests/course_billing_report_test.py
-npm run build
+npm install                                    # 安装并建立 workspace 软链接
+
+# 项目1 课时收费报表
+npm run dev   -w @jingshi/billing-report       # 本地静态站 http://localhost:4173
+npm run build -w @jingshi/billing-report       # 生成 dist/ 并校验
+npm run test:python -w @jingshi/billing-report # Python 版测试
+
+# 项目2 家长报告
+npm run generate   -w @jingshi/parent-report   # 生成报告 HTML
+npm run export:pdf -w @jingshi/parent-report   # 导出 PDF
+
+# 测试
+npm test                                       # 内核 + 项目2 的 node 测试
+npm run test:billing-report                    # 项目1 静态站校验
 ```
 
-## 报表口径
+各项目细节见各自 README：
+[项目1](apps/billing-report/README.md) · [项目2](apps/parent-report/README.md) · [共享内核](packages/billing-core/)
+
+## 部署（项目1 → Vercel）
+
+在 Vercel 项目设置里把 **Root Directory** 设为 `apps/billing-report`。
+构建命令与产物目录已在 `apps/billing-report/vercel.json` 声明（`npm run build` → `dist/`）。
+线上页面不保存原始课表，CSV 在浏览器本地解析。
+
+## 报表口径（项目1）
 
 - 学生收费视图：按月份和学生筛选，展示当月上过哪些老师的课。
 - 老师收入视图：按月份和老师筛选，展示当月教过哪些学生。
-- 汇总维度：对方、课程类型、授课类型、取消/上课状态。
-- 同一课程类型但授课类型不同会拆成多行。
+- 汇总维度：对方、课程类型、授课类型、取消/上课状态；同课程类型不同授课类型拆行。
 - 临时取消按 `0h-70%`、`2h-50%`、`6h-30%` 单独列出并计费。
-- 金额优先使用原始表里的 `课程总价格`。
-- 脚本会同时计算规则金额，用于检查原始表金额是否异常。
-- 每个汇总行都可以打开对应原始行明细，方便核查。
-
-## 数据质量提醒
-
-报表会提示这些常见问题：
-
-- 缺少学生
-- 缺少老师
-- 缺少课程类型
-- 缺少授课类型
-- 缺少或无法解析上课时间
-- 未知临时取消标记，例如 `请假`
-- 原始金额与规则计算金额不一致
-- 未进入计费汇总的零金额占位/考试记录
-
-## 目录结构
-
-```text
-data/raw/schedule.csv                         # 默认输入
-index.html                                    # Vercel 上传页面
-assets/report-core.js                         # 浏览器端计费核心
-assets/app.js                                 # 页面交互
-assets/styles.css                             # shadcn 风格样式
-scripts/course_billing_report.py              # 报表生成器
-tests/course_billing_report_test.py           # 计费规则测试
-outputs/course_billing_report/course_billing_report.html
-```
+- 金额优先用原始表 `课程总价格`，同时计算规则金额用于校验异常。

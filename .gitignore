@@ -1,10 +1,18 @@
+# 依赖与环境
 node_modules/
 .vercel/
+.runtime/
 __pycache__/
 *.pyc
 .DS_Store
+
+# 共享输入（含学生数据，本地维护，不入库）
 data/raw/
+
+# 产物 / 生成物
 outputs/
-public/
-scripts/__pycache__/
-tests/__pycache__/
+apps/billing-report/dist/
+apps/billing-report/web/assets/report-core.js   # 由 sync-core 从 billing-core 生成
+
+# 项目2 本地资源（老师图片，可能含 PII，沿用旧 ref/ 未跟踪状态）
+apps/parent-report/assets/teachers/
