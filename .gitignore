@@ -8,6 +8,7 @@ __pycache__/
 
 # 共享输入（含学生数据，本地维护，不入库）
 data/raw/
+data/完整课时费/
 
 # 产物 / 生成物
 outputs/

@@ -8,7 +8,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, "../../..");
 const INPUT = "data/raw/schedule.csv";
 const OUTPUT = "outputs/parent_reports/ivy-2488-2026-03.html";
-const PORTRAIT_SOURCE_DIR = "apps/parent-report/assets/teachers";
+const PORTRAIT_SOURCE_DIR = "apps/parent-report/assets/teacher";
 const PORTRAIT_RENDER_DIR = "outputs/parent_reports/teacher_info";
 const RENDERER_MTIME = fs.statSync(fileURLToPath(import.meta.url)).mtimeMs;
 
@@ -57,6 +57,10 @@ function portraitSourcePathFor(teacher) {
     const candidate = path.join(directory, `${portraitName}${extension}`);
     if (fs.existsSync(candidate)) return candidate;
   }
+  const photo = fs.readdirSync(directory)
+    .filter((file) => /\.(png|jpe?g|webp)$/i.test(file))
+    .find((file) => path.basename(file, path.extname(file)).endsWith(`-${portraitName}`));
+  if (photo) return path.join(directory, photo);
   return "";
 }
 
