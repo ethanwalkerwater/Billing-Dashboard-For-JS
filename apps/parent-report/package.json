@@ -10,9 +10,15 @@
     "playwright-core": "^1.59.1"
   },
   "scripts": {
+    "build:teachers": "node scripts/build-teachers.mjs",
+    "update:template-faculty": "node scripts/update-template-faculty.mjs",
+    "build:faculty": "node scripts/build-teachers.mjs && node scripts/update-template-faculty.mjs",
     "generate": "cd ../.. && node apps/parent-report/src/generate-parent-report.mjs",
     "generate:codex": "cd ../.. && node apps/parent-report/src/generate-codex-parent-report.mjs",
+    "generate:student-billing": "npm run build:teachers && cd ../.. && node apps/parent-report/src/generate-student-billing-reports.mjs",
+    "generate:student-billing-pdf": "npm run generate:student-billing && npm run export:student-billing-pdf",
     "export:pdf": "cd ../.. && node apps/parent-report/src/export-parent-report-pdf.mjs",
+    "export:student-billing-pdf": "cd ../.. && node apps/parent-report/src/export-student-billing-pdfs.mjs",
     "export:web-pdf": "cd ../.. && node apps/parent-report/src/export-web-pdf.mjs",
     "test": "cd ../.. && node --test apps/parent-report/tests/*.test.mjs"
   }
