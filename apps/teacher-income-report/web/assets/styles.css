@@ -1,0 +1,983 @@
+/* 菁仕老师收入详情 · shadcn 风格设计系统
+   分区：① 月度输入 → ② 主数据维护 → ③ 输出选项 → ④ 收入详情 */
+
+:root {
+  color-scheme: light;
+  /* shadcn tokens (slate) */
+  --background: 210 20% 98%;
+  --foreground: 222 47% 11%;
+  --card: 0 0% 100%;
+  --card-foreground: 222 47% 11%;
+  --muted: 210 24% 94%;
+  --muted-foreground: 215 16% 44%;
+  --accent: 210 24% 95%;
+  --accent-foreground: 222 47% 11%;
+  --border: 214 20% 89%;
+  --input: 214 20% 86%;
+  --primary: 222 47% 11%;
+  --primary-foreground: 210 40% 98%;
+  --ring: 222 47% 11%;
+  --positive: 152 45% 32%;
+  --negative: 0 52% 44%;
+  --warn: 34 92% 48%;
+  /* radius 尺度：外层容器大、内部元素小 */
+  --radius-lg: 12px;
+  --radius: 8px;
+  --radius-sm: 6px;
+  --shadow-sm: 0 1px 2px hsl(222 47% 11% / .05);
+  --shadow-md: 0 4px 12px -2px hsl(222 47% 11% / .08);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  min-height: 100dvh;
+  margin: 0;
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font-family: "Geist", ui-sans-serif, system-ui, -apple-system, "PingFang SC", "Hiragino Sans GB", "Segoe UI", sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  letter-spacing: -0.006em;
+  -webkit-font-smoothing: antialiased;
+}
+
+button,
+input,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+button,
+label[for] {
+  cursor: pointer;
+}
+
+/* 数字统一等宽对齐（金额/计数） */
+strong,
+b,
+.numeric,
+select {
+  font-variant-numeric: tabular-nums;
+}
+
+/* 键盘可达性：统一 focus ring */
+:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+.shell {
+  width: min(1440px, calc(100vw - 40px));
+  margin: 0 auto;
+  padding: 28px 0 64px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* ============ 顶栏 ============ */
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 20px;
+  padding-bottom: 4px;
+}
+
+.top-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.eyebrow {
+  margin: 0 0 4px;
+  color: hsl(var(--muted-foreground));
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: .02em;
+}
+
+h1,
+h2,
+h3,
+p {
+  margin-top: 0;
+}
+
+h1 {
+  margin-bottom: 0;
+  font-size: 24px;
+  font-weight: 650;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+}
+
+h2 {
+  margin-bottom: 2px;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+h3 {
+  margin: 0 0 10px;
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+p {
+  color: hsl(var(--muted-foreground));
+}
+
+/* ============ 分区容器 ============ */
+.panel,
+.summary-strip,
+.control-row,
+.ledger-panel {
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius-lg);
+  background: hsl(var(--card));
+  box-shadow: var(--shadow-sm);
+}
+
+.zone-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 16px 20px 14px;
+  border-bottom: 1px solid hsl(var(--border));
+}
+
+.zone-step {
+  margin: 0 0 3px;
+  color: hsl(var(--muted-foreground));
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+.zone-desc {
+  margin-bottom: 0;
+  font-size: 12.5px;
+}
+
+/* ============ ① 输入区 ============ */
+.upload-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  padding: 16px 20px 18px;
+}
+
+.upload-slot {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.upload-slot > .button.ghost {
+  align-self: flex-start;
+}
+
+.upload-card {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+  border: 1.5px dashed hsl(var(--input));
+  border-radius: var(--radius);
+  background: hsl(var(--background));
+  padding: 14px;
+  text-align: left;
+  transition: border-color .16s ease, background-color .16s ease;
+}
+
+.upload-card strong {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.upload-card span {
+  color: hsl(var(--muted-foreground));
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.upload-hint {
+  margin-top: 6px;
+  color: hsl(var(--muted-foreground) / .8);
+  font-size: 11.5px;
+  font-style: normal;
+}
+
+.upload-card.primary {
+  border-color: hsl(var(--primary) / .4);
+  background: hsl(var(--accent) / .6);
+}
+
+.upload-card:hover {
+  border-color: hsl(var(--primary) / .55);
+  background: hsl(var(--accent));
+}
+
+.upload-card input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+}
+
+/* ============ ② 配置区 ============ */
+.template-grid {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.master-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  padding: 16px 20px 18px;
+}
+
+.master-card {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius);
+  background: hsl(var(--card));
+  padding: 13px 14px;
+  text-align: left;
+  transition: border-color .16s ease, box-shadow .16s ease, transform .12s ease;
+}
+
+.master-card:hover {
+  border-color: hsl(var(--primary) / .45);
+  box-shadow: var(--shadow-md);
+}
+
+.master-card:active {
+  transform: scale(.985);
+}
+
+.master-card span {
+  color: hsl(var(--muted-foreground));
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.master-card strong {
+  font-size: 20px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.master-card em {
+  color: hsl(var(--muted-foreground));
+  font-size: 11.5px;
+  font-style: normal;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ============ ③ 选项区（吸顶工具栏） ============ */
+.control-row {
+  position: sticky;
+  top: 12px;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding: 12px 20px;
+  background: hsl(var(--card) / .92);
+  backdrop-filter: blur(8px);
+}
+
+.control-fields,
+.control-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.control-fields .zone-step {
+  margin: 0 6px 0 0;
+}
+
+.control-fields label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.control-row label > span {
+  color: hsl(var(--muted-foreground));
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+/* —— 可搜索下拉（combobox） —— */
+.combobox {
+  position: relative;
+  width: 170px;
+}
+
+.combobox.wide {
+  width: min(300px, 60vw);
+}
+
+.combo-input {
+  width: 100%;
+  height: 36px;
+  border: 1px solid hsl(var(--input));
+  border-radius: var(--radius-sm);
+  background:
+    hsl(var(--card))
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%23737b8a' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")
+    no-repeat right 10px center;
+  padding: 0 30px 0 10px;
+  text-overflow: ellipsis;
+  transition: border-color .16s ease;
+}
+
+.combo-input:hover:not(:disabled) {
+  border-color: hsl(var(--primary) / .4);
+}
+
+.combo-input:disabled {
+  cursor: not-allowed;
+  background-color: hsl(var(--muted) / .5);
+  color: hsl(var(--muted-foreground));
+}
+
+.combobox.open .combo-input {
+  border-color: hsl(var(--ring));
+}
+
+.combo-list[hidden] {
+  display: none; /* 显式 display:flex 会压过 hidden 属性的 UA 样式，必须补这条 */
+}
+
+.combo-list {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 30;
+  display: flex;
+  max-height: 300px;
+  flex-direction: column;
+  gap: 1px;
+  overflow: auto;
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius);
+  background: hsl(var(--card));
+  box-shadow: var(--shadow-md);
+  padding: 4px;
+}
+
+.combo-option,
+.combo-empty {
+  flex-shrink: 0; /* 溢出滚动时不许压扁选项，否则文字重叠 */
+}
+
+.combo-option {
+  display: block;
+  width: 100%;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  padding: 7px 10px;
+  text-align: left;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background-color .12s ease;
+}
+
+.combo-option:hover,
+.combo-option.active {
+  background: hsl(var(--accent));
+}
+
+.combo-option.selected {
+  font-weight: 600;
+}
+
+.combo-option.selected::after {
+  content: "✓";
+  float: right;
+  color: hsl(var(--muted-foreground));
+}
+
+.combo-empty {
+  padding: 14px 10px;
+  color: hsl(var(--muted-foreground));
+  font-size: 12.5px;
+  text-align: center;
+}
+
+/* ============ ④ 收入详情 ============ */
+.detail-zone {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.summary-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  overflow: hidden;
+}
+
+.summary-strip article {
+  min-height: 88px;
+  padding: 16px 20px;
+  border-right: 1px solid hsl(var(--border));
+}
+
+.summary-strip article:last-child {
+  border-right: 0;
+}
+
+.summary-strip span {
+  display: block;
+  margin-bottom: 6px;
+  color: hsl(var(--muted-foreground));
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.summary-strip strong {
+  font-size: 26px;
+  font-weight: 650;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+}
+
+/* —— 收入明细面板 —— */
+.ledger-panel {
+  min-height: 560px;
+  overflow: hidden;
+}
+
+.ledger-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 18px 20px;
+  border-bottom: 1px solid hsl(var(--border));
+  background: hsl(var(--muted) / .3);
+}
+
+.ledger-head h2 {
+  margin-bottom: 4px;
+  font-size: 22px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.ledger-head p {
+  margin-bottom: 0;
+  font-size: 12.5px;
+}
+
+.headline-total {
+  min-width: 220px;
+  text-align: right;
+}
+
+.headline-total span {
+  display: block;
+  color: hsl(var(--muted-foreground));
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.headline-total strong {
+  font-size: 28px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.ledger,
+.lesson-section,
+.source-panel {
+  padding: 16px 20px 18px;
+  border-bottom: 1px solid hsl(var(--border));
+}
+
+.ledger:last-child,
+.source-panel:last-child {
+  border-bottom: 0;
+}
+
+.lesson-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.lesson-section-head p {
+  margin-bottom: 0;
+  font-size: 12px;
+}
+
+.lesson-table-wrap {
+  overflow: auto;
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius-sm);
+}
+
+.lesson-table {
+  width: 100%;
+  min-width: 980px;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.lesson-table.compact {
+  min-width: 640px;
+}
+
+.lesson-table th,
+.lesson-table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid hsl(var(--border));
+  text-align: left;
+  vertical-align: middle;
+}
+
+.lesson-table th {
+  background: hsl(var(--muted) / .6);
+  color: hsl(var(--muted-foreground));
+  font-size: 11.5px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.lesson-table td .badge {
+  min-height: 20px;
+  padding: 1px 6px;
+  font-size: 11px;
+}
+
+.lesson-table tbody tr {
+  transition: background-color .12s ease;
+}
+
+.lesson-table tbody tr:hover {
+  background: hsl(var(--muted) / .35);
+}
+
+.lesson-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.lesson-table .numeric {
+  text-align: right;
+}
+
+.table-input {
+  width: 100%;
+  height: 28px;
+  border: 1px solid hsl(var(--input));
+  border-radius: var(--radius-sm);
+  background: hsl(var(--card));
+  padding: 0 6px;
+  font-size: 13px;
+  transition: border-color .16s ease;
+}
+
+.table-input:hover {
+  border-color: hsl(var(--primary) / .4);
+}
+
+.number-input {
+  max-width: 64px;
+  text-align: right;
+}
+
+.reason-input {
+  max-width: 110px;
+}
+
+/* —— 加减账目行 —— */
+.ledger-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 190px;
+  gap: 14px;
+  align-items: center;
+  min-height: 56px;
+  border-top: 1px solid hsl(var(--border));
+  padding: 4px 0;
+}
+
+.ledger-row:first-of-type {
+  border-top: 0;
+}
+
+.ledger-row div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ledger-row strong {
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.ledger-row span,
+.ledger-row em {
+  color: hsl(var(--muted-foreground));
+  font-size: 12px;
+  font-style: normal;
+}
+
+.ledger-row b {
+  text-align: right;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.ledger-row.plus b {
+  color: hsl(var(--positive));
+}
+
+.ledger-row.minus b {
+  color: hsl(var(--negative));
+}
+
+.ledger-row.subtotal {
+  border-radius: var(--radius-sm);
+  background: hsl(var(--muted) / .4);
+  padding-left: 10px;
+  padding-right: 10px;
+}
+
+.ledger-row.total {
+  min-height: 66px;
+  border-top: 2px solid hsl(var(--foreground));
+}
+
+.ledger-row.total b {
+  color: hsl(var(--foreground));
+  font-size: 20px;
+  font-weight: 650;
+}
+
+.mini-table {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.mini-table div {
+  display: flex;
+  min-height: 64px;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius-sm);
+  background: hsl(var(--background));
+  padding: 10px 12px;
+}
+
+.mini-table span,
+.mini-table em {
+  color: hsl(var(--muted-foreground));
+  font-size: 12px;
+  font-style: normal;
+}
+
+/* ============ 徽标 / 按钮 ============ */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius-sm);
+  background: hsl(var(--card));
+  color: hsl(var(--foreground));
+  padding: 2px 8px;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.badge.muted {
+  background: hsl(var(--muted) / .6);
+  color: hsl(var(--muted-foreground));
+}
+
+.badge.warn {
+  border-color: hsl(var(--warn) / .34);
+  background: hsl(var(--warn) / .12);
+  color: hsl(25 95% 28%);
+}
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 36px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  padding: 0 14px;
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  transition: background-color .16s ease, border-color .16s ease, color .16s ease, transform .12s ease;
+}
+
+.button:active:not(:disabled) {
+  transform: scale(.97);
+}
+
+.button:disabled,
+.template-grid button:disabled {
+  cursor: not-allowed;
+  opacity: .45;
+}
+
+.button.primary {
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+}
+
+.button.primary:hover:not(:disabled) {
+  background: hsl(var(--primary) / .88);
+}
+
+.button.outline {
+  border-color: hsl(var(--input));
+  background: hsl(var(--card));
+}
+
+.button.outline:hover:not(:disabled) {
+  background: hsl(var(--accent));
+  border-color: hsl(var(--primary) / .35);
+}
+
+.button.ghost {
+  height: 32px;
+  padding: 0 10px;
+  color: hsl(var(--muted-foreground));
+  font-size: 12.5px;
+}
+
+.button.ghost:hover:not(:disabled) {
+  background: hsl(var(--accent));
+  color: hsl(var(--foreground));
+}
+
+.empty-state {
+  margin: 18px;
+  padding: 56px 18px;
+  border: 1.5px dashed hsl(var(--border));
+  border-radius: var(--radius);
+  color: hsl(var(--muted-foreground));
+  text-align: center;
+}
+
+.empty-state.small {
+  margin: 0;
+  padding: 24px 12px;
+  font-size: 12px;
+}
+
+/* ============ 主数据编辑抽屉 ============ */
+.drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  display: none;
+  background: hsl(222 47% 11% / .4);
+  z-index: 20;
+}
+
+.drawer {
+  position: fixed;
+  inset: 0 0 0 auto;
+  display: none;
+  width: min(980px, 94vw);
+  flex-direction: column;
+  border-left: 1px solid hsl(var(--border));
+  border-radius: var(--radius-lg) 0 0 var(--radius-lg);
+  background: hsl(var(--card));
+  box-shadow: -24px 0 60px hsl(222 47% 11% / .2);
+  z-index: 21;
+}
+
+.drawer.open,
+.drawer-backdrop.open {
+  display: flex;
+}
+
+.drawer.open {
+  animation: drawer-in .22s ease;
+}
+
+.drawer-backdrop.open {
+  display: block;
+  animation: fade-in .18s ease;
+}
+
+@keyframes drawer-in {
+  from { transform: translateX(24px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.drawer-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 20px;
+  border-bottom: 1px solid hsl(var(--border));
+}
+
+.drawer-head p {
+  margin-bottom: 0;
+  font-size: 12px;
+}
+
+.drawer-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.drawer-body {
+  overflow: auto;
+  padding: 18px 20px;
+}
+
+.editor-table-wrap {
+  overflow: auto;
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius-sm);
+}
+
+.editor-table {
+  width: 100%;
+  min-width: 860px;
+  border-collapse: collapse;
+}
+
+.editor-table th,
+.editor-table td {
+  border-bottom: 1px solid hsl(var(--border));
+  padding: 8px;
+  text-align: left;
+}
+
+.editor-table th {
+  background: hsl(var(--muted) / .6);
+  color: hsl(var(--muted-foreground));
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.editor-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.editor-table input {
+  width: 100%;
+  height: 32px;
+  border: 1px solid hsl(var(--input));
+  border-radius: var(--radius-sm);
+  background: hsl(var(--card));
+  padding: 0 8px;
+  transition: border-color .16s ease;
+}
+
+.editor-table input:hover {
+  border-color: hsl(var(--primary) / .4);
+}
+
+/* ============ 响应式 ============ */
+@media (max-width: 1100px) {
+  .upload-row {
+    grid-template-columns: 1fr;
+  }
+
+  .master-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .shell {
+    width: calc(100vw - 24px);
+    padding-top: 18px;
+  }
+
+  .topbar,
+  .ledger-head {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .headline-total {
+    text-align: left;
+  }
+
+  .control-row {
+    position: static;
+  }
+
+  .summary-strip,
+  .master-grid,
+  .mini-table {
+    grid-template-columns: 1fr;
+  }
+
+  .summary-strip article {
+    border-right: 0;
+    border-bottom: 1px solid hsl(var(--border));
+  }
+
+  .summary-strip article:last-child {
+    border-bottom: 0;
+  }
+
+  .ledger-row {
+    grid-template-columns: 1fr;
+  }
+
+  .ledger-row b {
+    text-align: left;
+  }
+}

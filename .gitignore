@@ -9,9 +9,14 @@ __pycache__/
 # 共享输入（含学生数据，本地维护，不入库）
 data/raw/
 data/完整课时费/
+data/payroll/
 
 # 产物 / 生成物
 outputs/
 apps/billing-report/dist/
+apps/teacher-income-report/dist/
 # 由 sync-core 从 billing-core 生成
 apps/billing-report/web/assets/report-core.js
+apps/teacher-income-report/web/assets/report-core.js
+apps/teacher-income-report/web/assets/payroll-core.js
+apps/teacher-income-report/web/assets/payroll/

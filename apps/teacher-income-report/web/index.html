@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>菁仕老师收入详情</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/assets/styles.css" />
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">Teacher Income Workspace</p>
+        <h1>菁仕老师收入详情</h1>
+      </div>
+      <div class="top-actions">
+        <span id="statusBadge" class="badge">等待课时费 CSV</span>
+        <span class="badge muted">数据仅在浏览器本地处理</span>
+      </div>
+    </header>
+
+    <!-- ① 输入区 · 月度 CSV -->
+    <section class="zone panel">
+      <div class="zone-head">
+        <div>
+          <p class="zone-step">Step 1 · 输入</p>
+          <h2>月度输入</h2>
+          <p class="zone-desc">先下载模板确认列名，再上传本月 CSV</p>
+        </div>
+      </div>
+      <div class="upload-row">
+        <div class="upload-slot">
+          <label class="upload-card primary" for="lessonFeeInput">
+            <strong>课时费 CSV</strong>
+            <span id="lessonFeeStatus">来自 billing-report 的老师课时费导出，或原始课程表 CSV</span>
+            <em class="upload-hint">点击选择文件，或拖入</em>
+            <input id="lessonFeeInput" type="file" accept=".csv,text/csv" />
+          </label>
+          <button type="button" class="button ghost" data-template="lessonFee">下载课时费模板</button>
+        </div>
+        <div class="upload-slot">
+          <label class="upload-card" for="taxSocialInput">
+            <strong>五险 + 个税 CSV</strong>
+            <span id="taxSocialStatus">需要包含：姓名、个税、个人五险、公司五险</span>
+            <em class="upload-hint">点击选择文件，或拖入</em>
+            <input id="taxSocialInput" type="file" accept=".csv,text/csv" />
+          </label>
+          <button type="button" class="button ghost" data-template="taxSocial">下载五险个税模板</button>
+        </div>
+        <div class="upload-slot">
+          <label class="upload-card" for="reimbursementInput">
+            <strong>补贴报销 CSV</strong>
+            <span id="reimbursementStatus">未上传时按 0 处理</span>
+            <em class="upload-hint">点击选择文件，或拖入</em>
+            <input id="reimbursementInput" type="file" accept=".csv,text/csv" />
+          </label>
+          <button type="button" class="button ghost" data-template="reimbursements">下载报销模板</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ② 配置区 · 主数据 -->
+    <section class="zone panel">
+      <div class="zone-head">
+        <div>
+          <p class="zone-step">Step 2 · 配置</p>
+          <h2>主数据维护</h2>
+          <p class="zone-desc">基础薪水、归属服务、评分和参数都在这里维护，点卡片直接编辑</p>
+        </div>
+        <div class="template-grid">
+          <button type="button" class="button ghost" data-template="baseSalaries">基础薪水模板</button>
+          <button type="button" class="button ghost" data-template="studentOwnership">归属服务模板</button>
+          <button type="button" class="button ghost" data-template="teacherScores">评分模板</button>
+        </div>
+      </div>
+      <div id="masterCards" class="master-grid"></div>
+    </section>
+
+    <!-- ③ 选项区 · 月份 / 老师 / 导出 -->
+    <section class="zone control-row">
+      <div class="control-fields">
+        <p class="zone-step">Step 3 · 输出</p>
+        <label>
+          <span>工资月份</span>
+          <div class="combobox">
+            <input id="monthSelect" class="combo-input" type="text" role="combobox" aria-expanded="false" autocomplete="off" placeholder="未上传课时费" disabled />
+            <div class="combo-list" hidden></div>
+          </div>
+        </label>
+        <label>
+          <span>老师</span>
+          <div class="combobox wide">
+            <input id="teacherSelect" class="combo-input" type="text" role="combobox" aria-expanded="false" autocomplete="off" placeholder="未选择老师" disabled />
+            <div class="combo-list" hidden></div>
+          </div>
+        </label>
+      </div>
+      <div class="control-actions">
+        <button id="exportSelectedButton" class="button outline" type="button">下载当前老师</button>
+        <button id="exportAllButton" class="button primary" type="button">下载本月汇总</button>
+      </div>
+    </section>
+
+    <!-- ④ 收入详情 -->
+    <section class="zone detail-zone">
+      <div class="summary-strip">
+        <article>
+          <span>个人总收入</span>
+          <strong id="totalIncome">¥0.00</strong>
+        </article>
+        <article>
+          <span>公司总成本</span>
+          <strong id="totalCost">¥0.00</strong>
+        </article>
+        <article>
+          <span>老师数量</span>
+          <strong id="teacherCount">0</strong>
+        </article>
+        <article>
+          <span>数据提醒</span>
+          <strong id="issueCount">0</strong>
+        </article>
+      </div>
+
+      <section id="ledgerPanel" class="ledger-panel">
+        <div class="empty-state">上传课时费 CSV 后，在上方选择老师查看收入来源、扣减和合计。</div>
+      </section>
+    </section>
+  </main>
+
+  <div id="drawerBackdrop" class="drawer-backdrop"></div>
+  <aside id="masterDrawer" class="drawer" aria-hidden="true">
+    <div class="drawer-head">
+      <div>
+        <h2 id="drawerTitle">主数据</h2>
+        <p id="drawerSubtitle"></p>
+      </div>
+      <div class="drawer-actions">
+        <button id="addMasterRowButton" class="button outline" type="button">新增一行</button>
+        <button id="saveMasterButton" class="button primary" type="button">应用修改</button>
+        <button id="closeDrawerButton" class="button ghost" type="button">关闭</button>
+      </div>
+    </div>
+    <div id="drawerBody" class="drawer-body"></div>
+  </aside>
+
+  <script type="module" src="/assets/app.js"></script>
+</body>
+</html>

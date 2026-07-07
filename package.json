@@ -14,6 +14,9 @@
     "test:billing-report": "npm test -w @jingshi/billing-report",
     "test:parent-report": "npm test -w @jingshi/parent-report",
     "build:billing-report": "npm run build -w @jingshi/billing-report",
-    "dev:billing-report": "npm run dev -w @jingshi/billing-report"
+    "build:teacher-income-report": "npm run build -w @jingshi/teacher-income-report",
+    "dev:billing-report": "npm run dev -w @jingshi/billing-report",
+    "dev:teacher-income-report": "npm run dev -w @jingshi/teacher-income-report",
+    "test:teacher-income-report": "npm test -w @jingshi/teacher-income-report"
   }
 }
