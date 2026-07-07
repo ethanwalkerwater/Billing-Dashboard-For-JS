@@ -1,0 +1,16 @@
+{
+  "name": "@jingshi/teacher-income-report",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "老师收入详情：作为课时费计算 app 的下游，计算个人收入与公司成本。",
+  "dependencies": {
+    "@jingshi/billing-core": "*"
+  },
+  "scripts": {
+    "sync-core": "node scripts/sync-core.mjs",
+    "dev": "npm run sync-core && python3 -m http.server 4174 --directory web",
+    "build": "node scripts/build-static.mjs && node scripts/verify-static-app.mjs",
+    "test": "npm run sync-core && node scripts/verify-static-app.mjs"
+  }
+}
