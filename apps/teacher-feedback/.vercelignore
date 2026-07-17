@@ -1,0 +1,10 @@
+# 真实数据与输出位于仓库根 data/private、outputs，不在本应用目录。
+# 这里排除本地开发、测试和说明文件，缩小 Python Function bundle。
+.venv/
+.claude/
+docs/
+tests/
+**/__pycache__/
+**/*.pyc
+.DS_Store
+**/.DS_Store

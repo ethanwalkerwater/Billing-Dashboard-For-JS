@@ -6,9 +6,12 @@ import { execFileSync } from "node:child_process";
 import { buildParentReportData } from "../src/parent-report-data.mjs";
 import { renderParentReportHtml } from "../src/generate-parent-report.mjs";
 
-const csv = fs.readFileSync("data/raw/schedule.csv", "utf8");
+const privateFixture = "data/raw/schedule.csv";
+const hasPrivateFixture = fs.existsSync(privateFixture);
+const csv = hasPrivateFixture ? fs.readFileSync(privateFixture, "utf8") : "";
+const privateTest = hasPrivateFixture ? test : test.skip;
 
-test("renderParentReportHtml produces the mobile-portrait single-column layout", () => {
+privateTest("renderParentReportHtml produces the mobile-portrait single-column layout", () => {
   const report = buildParentReportData(csv, {
     student: "Ivy-2488",
     month: "2026-03",

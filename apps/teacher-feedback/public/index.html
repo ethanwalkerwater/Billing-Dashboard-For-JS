@@ -1,0 +1,372 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>菁仕教师反馈处理台</title>
+    <style>
+      :root {
+        --bg: #f4efe6;
+        --panel: rgba(255, 250, 242, 0.94);
+        --ink: #1e1c19;
+        --muted: #6c6257;
+        --line: rgba(86, 67, 44, 0.15);
+        --accent: #0e7490;
+        --accent-2: #c26d2f;
+        --shadow: 0 20px 50px rgba(54, 39, 22, 0.12);
+      }
+
+      * { box-sizing: border-box; }
+
+      body {
+        margin: 0;
+        font-family: "PingFang SC", "Noto Sans SC", "Microsoft YaHei", sans-serif;
+        color: var(--ink);
+        background:
+          radial-gradient(circle at top left, rgba(194, 109, 47, 0.16), transparent 34%),
+          radial-gradient(circle at top right, rgba(14, 116, 144, 0.16), transparent 28%),
+          linear-gradient(180deg, #f9f5ee 0%, var(--bg) 100%);
+      }
+
+      .shell {
+        width: min(880px, calc(100% - 32px));
+        margin: 32px auto 56px;
+      }
+
+      .hero, .card {
+        background: var(--panel);
+        border-radius: 24px;
+        box-shadow: var(--shadow);
+        border: 1px solid rgba(255, 255, 255, 0.55);
+      }
+
+      .hero {
+        padding: 28px;
+        margin-bottom: 20px;
+      }
+
+      .hero h1 {
+        margin: 0 0 10px;
+        font-size: clamp(28px, 4vw, 44px);
+        line-height: 1.05;
+      }
+
+      .hero p {
+        margin: 0;
+        color: var(--muted);
+        line-height: 1.7;
+      }
+
+      .card {
+        padding: 24px;
+      }
+
+      .card h2 {
+        margin: 0 0 16px;
+        font-size: 24px;
+      }
+
+      .form-grid {
+        display: grid;
+        gap: 14px;
+      }
+
+      label {
+        display: grid;
+        gap: 6px;
+        font-size: 14px;
+        color: var(--muted);
+      }
+
+      input, select, button {
+        font: inherit;
+      }
+
+      input[type="text"],
+      input[type="month"],
+      input[type="date"],
+      select,
+      input[type="file"] {
+        width: 100%;
+        padding: 12px 14px;
+        border-radius: 14px;
+        border: 1px solid rgba(86, 67, 44, 0.18);
+        background: rgba(255, 255, 255, 0.94);
+        color: var(--ink);
+      }
+
+      .hint {
+        font-size: 12px;
+        color: var(--muted);
+      }
+
+      .actions {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin-top: 8px;
+      }
+
+      button {
+        border: 0;
+        border-radius: 999px;
+        padding: 12px 18px;
+        cursor: pointer;
+      }
+
+      button[type="submit"] {
+        background: linear-gradient(135deg, var(--accent), #155e75);
+        color: white;
+        font-weight: 600;
+      }
+
+      button.secondary {
+        background: rgba(255, 255, 255, 0.92);
+        color: var(--ink);
+        border: 1px solid var(--line);
+      }
+
+      .status {
+        min-height: 24px;
+        margin-top: 12px;
+        color: var(--muted);
+        font-size: 14px;
+      }
+
+      .status.error { color: #b42318; }
+      .status.success { color: #1f7a45; }
+
+      .last-dashboard {
+        margin-top: 20px;
+        padding-top: 18px;
+        border-top: 1px solid rgba(86, 67, 44, 0.12);
+      }
+
+      .last-dashboard.hidden {
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <section class="hero">
+        <h1>菁仕教师反馈处理台</h1>
+        <p>
+          第一步：填写月份、反馈时间窗口并上传反馈表和课表。提交后页面会自动跳转到独立的
+          “老师反馈加权看板” 页面。
+        </p>
+      </section>
+
+      <section class="card">
+        <h2>初始数据填写与文件上传</h2>
+        <form id="processForm" class="form-grid">
+          <label>
+            报表月份
+            <input type="month" name="month" value="2026-04" required />
+          </label>
+
+          <label>
+            反馈起始日期
+            <input type="date" name="feedback_start_date" required />
+            <span class="hint">例如 2026-05-01，包含当天。</span>
+          </label>
+
+          <label>
+            反馈结束日期
+            <input type="date" name="feedback_end_date" />
+            <span class="hint">留空表示统计到上传反馈表里的最新记录。</span>
+          </label>
+
+          <label>
+            排除老师
+            <input type="text" name="exclude_teachers" placeholder="例如：窦,蒋妍" />
+          </label>
+
+          <label>
+            合并模式
+            <select name="combine_mode">
+              <option value="merge_by_student">同老师同学员先合并身份</option>
+              <option value="independent">学生/家长独立计权</option>
+            </select>
+          </label>
+
+          <label>
+            反馈表 CSV
+            <input type="file" name="feedback_file" accept=".csv,text/csv" required />
+          </label>
+
+          <label>
+            课表 CSV
+            <input type="file" name="schedule_file" accept=".csv,text/csv" required />
+          </label>
+
+          <div class="actions">
+            <button type="submit">开始处理并进入看板</button>
+            <button class="secondary" type="reset">重置</button>
+          </div>
+        </form>
+        <div id="status" class="status"></div>
+
+        <div id="lastDashboard" class="last-dashboard hidden">
+          <strong>本浏览器存在最近一次处理结果。</strong>
+          <div class="actions">
+            <button id="openLastDashboard" class="secondary" type="button">进入上次看板</button>
+            <button id="clearLastDashboard" class="secondary" type="button">清除上次结果</button>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <script>
+      const DASHBOARD_STORAGE_KEY = "jingshi-feedback-dashboard";
+      const form = document.getElementById("processForm");
+      const statusEl = document.getElementById("status");
+      const lastDashboardEl = document.getElementById("lastDashboard");
+      const openLastDashboardBtn = document.getElementById("openLastDashboard");
+      const clearLastDashboardBtn = document.getElementById("clearLastDashboard");
+
+      function setStatus(message, type = "") {
+        statusEl.textContent = message;
+        statusEl.className = `status ${type}`.trim();
+      }
+
+      function refreshLastDashboardState() {
+        const hasData = Boolean(localStorage.getItem(DASHBOARD_STORAGE_KEY));
+        lastDashboardEl.classList.toggle("hidden", !hasData);
+      }
+
+      openLastDashboardBtn.addEventListener("click", () => {
+        window.location.href = "/dashboard.html";
+      });
+
+      clearLastDashboardBtn.addEventListener("click", () => {
+        localStorage.removeItem(DASHBOARD_STORAGE_KEY);
+        refreshLastDashboardState();
+      });
+
+      async function gzipFile(file) {
+        if (!("CompressionStream" in window)) {
+          throw new Error("当前浏览器不支持大文件压缩上传，请使用最新版 Chrome、Edge 或 Safari。");
+        }
+
+        const compressedStream = file.stream().pipeThrough(new CompressionStream("gzip"));
+        const compressedBlob = await new Response(compressedStream).blob();
+        return new File([compressedBlob], `${file.name}.gz`, { type: "application/gzip" });
+      }
+
+      async function buildUploadFormData(form) {
+        const source = new FormData(form);
+        const payload = new FormData();
+        const feedbackFile = source.get("feedback_file");
+        const scheduleFile = source.get("schedule_file");
+
+        for (const name of [
+          "month",
+          "feedback_start_date",
+          "feedback_end_date",
+          "exclude_teachers",
+          "combine_mode",
+        ]) {
+          payload.set(name, source.get(name) || "");
+        }
+
+        if (!(feedbackFile instanceof File) || feedbackFile.size === 0) {
+          throw new Error("请上传反馈表 CSV。");
+        }
+        if (!(scheduleFile instanceof File) || scheduleFile.size === 0) {
+          throw new Error("请上传课表 CSV。");
+        }
+
+        const originalBytes = feedbackFile.size + scheduleFile.size;
+        setStatus(`正在压缩文件，原始大小 ${(originalBytes / 1024 / 1024).toFixed(2)} MB。`);
+
+        const [compressedFeedback, compressedSchedule] = await Promise.all([
+          gzipFile(feedbackFile),
+          gzipFile(scheduleFile),
+        ]);
+        const compressedBytes = compressedFeedback.size + compressedSchedule.size;
+
+        payload.set("feedback_file", compressedFeedback);
+        payload.set("schedule_file", compressedSchedule);
+        setStatus(`压缩完成 ${(compressedBytes / 1024 / 1024).toFixed(2)} MB，正在上传并计算。`);
+        return payload;
+      }
+
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        setStatus("正在上传并计算，请稍候。");
+
+        try {
+          const formData = await buildUploadFormData(form);
+          const monthValue = formData.get("month");
+          if (typeof monthValue === "string" && monthValue.includes("-") && monthValue.length === 7) {
+            formData.set("month", monthValue);
+          }
+
+          const response = await fetch("/api/process", {
+            method: "POST",
+            body: formData,
+          });
+          const responseText = await response.text();
+          let data = null;
+          try {
+            data = responseText ? JSON.parse(responseText) : null;
+          } catch (_) {
+            throw new Error(responseText || `请求失败，状态码 ${response.status}`);
+          }
+          if (!response.ok) {
+            throw new Error((data && data.detail) || responseText || "处理失败");
+          }
+
+          const dashboardFile = (data.files || []).find((file) => file.name === "dashboard.html");
+          if (!dashboardFile?.content) {
+            throw new Error("未生成看板内容");
+          }
+
+          const unmapped = (data.runMeta && data.runMeta.unmapped_score_texts) || {};
+          const unmappedCols = Object.keys(unmapped);
+          if (unmappedCols.length > 0) {
+            const lines = unmappedCols
+              .map((col) => {
+                const items = Object.entries(unmapped[col])
+                  .map(([text, count]) => `「${text}」×${count}`)
+                  .join("，");
+                return `· ${col}：${items}`;
+              })
+              .join("\n");
+            const proceed = window.confirm(
+              "检测到以下评分列出现无法对应分值的文本答案，这些反馈的该项评分会按缺失处理：\n\n" +
+                lines +
+                "\n\n建议先在 templates/score_text_map.csv 补充对应关系后重跑。\n仍要继续查看本次看板吗？",
+            );
+            if (!proceed) {
+              setStatus(
+                "已暂停：请补充文本选项与分值的对应关系（templates/score_text_map.csv）后重跑。",
+                "error",
+              );
+              return;
+            }
+          }
+
+          localStorage.setItem(
+            DASHBOARD_STORAGE_KEY,
+            JSON.stringify({
+              savedAt: new Date().toISOString(),
+              summary: data.summary,
+              summaryRows: data.summaryRows || [],
+              runMeta: data.runMeta,
+              files: (data.files || []).filter((file) => file.name !== "dashboard.html"),
+              dashboardHtml: dashboardFile.content,
+            }),
+          );
+          setStatus("处理完成，正在进入老师反馈加权看板。", "success");
+          window.location.href = "/dashboard.html";
+        } catch (error) {
+          setStatus(error.message || "处理失败", "error");
+        }
+      });
+
+      refreshLastDashboardState();
+    </script>
+  </body>
+</html>

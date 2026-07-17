@@ -5,9 +5,12 @@ import fs from "node:fs";
 import { buildParentReportData } from "../src/parent-report-data.mjs";
 import { renderCodexParentReportHtml } from "../src/generate-codex-parent-report.mjs";
 
-const csv = fs.readFileSync("data/raw/schedule.csv", "utf8");
+const privateFixture = "data/raw/schedule.csv";
+const hasPrivateFixture = fs.existsSync(privateFixture);
+const csv = hasPrivateFixture ? fs.readFileSync(privateFixture, "utf8") : "";
+const privateTest = hasPrivateFixture ? test : test.skip;
 
-test("renderCodexParentReportHtml produces a mobile-first parent report", () => {
+privateTest("renderCodexParentReportHtml produces a mobile-first parent report", () => {
   const report = buildParentReportData(csv, {
     student: "Ivy-2488",
     month: "2026-03",

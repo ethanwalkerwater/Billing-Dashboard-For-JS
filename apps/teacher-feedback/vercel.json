@@ -1,0 +1,14 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "npm run build",
+  "functions": {
+    "api/process.py": {
+      "maxDuration": 60,
+      "excludeFiles": "{docs/**,tests/**,**/__pycache__/**,**/*.pyc}"
+    },
+    "api/render_dashboard.py": {
+      "maxDuration": 60,
+      "excludeFiles": "{docs/**,tests/**,**/__pycache__/**,**/*.pyc}"
+    }
+  }
+}

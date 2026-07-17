@@ -22,10 +22,8 @@ function escapeHtml(value) {
 }
 
 function formatMoney(value) {
-  return `¥${Number(value || 0).toLocaleString("zh-CN", {
-    minimumFractionDigits: Number.isInteger(value) ? 0 : 2,
-    maximumFractionDigits: 2,
-  })}`;
+  const integerValue = Math.floor(Number(value || 0));
+  return `¥${integerValue.toLocaleString("zh-CN", { maximumFractionDigits: 0 })}`;
 }
 
 function formatNumber(value) {

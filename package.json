@@ -3,13 +3,16 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "菁仕收费 monorepo：课时收费报表 + 家长报告，共享 billing-core 计算内核。",
+  "packageManager": "npm@11.16.0",
+  "description": "菁仕后台服务 monorepo：课时账单、老师收入、老师反馈与家长报告。",
   "workspaces": [
     "packages/*",
     "apps/*"
   ],
   "scripts": {
-    "test": "node --test packages/billing-core/tests/*.test.mjs apps/parent-report/tests/*.test.mjs",
+    "build": "turbo run build",
+    "test": "npm run test:node && npm run test:feedback",
+    "test:node": "node --test packages/billing-core/tests/*.test.mjs apps/parent-report/tests/*.test.mjs",
     "test:core": "npm test -w @jingshi/billing-core",
     "test:billing-report": "npm test -w @jingshi/billing-report",
     "test:parent-report": "npm test -w @jingshi/parent-report",
@@ -17,6 +20,12 @@
     "build:teacher-income-report": "npm run build -w @jingshi/teacher-income-report",
     "dev:billing-report": "npm run dev -w @jingshi/billing-report",
     "dev:teacher-income-report": "npm run dev -w @jingshi/teacher-income-report",
-    "test:teacher-income-report": "npm test -w @jingshi/teacher-income-report"
+    "test:teacher-income-report": "npm test -w @jingshi/teacher-income-report",
+    "dev:teacher-feedback": "npm run dev -w @jingshi/teacher-feedback",
+    "build:teacher-feedback": "npm run build -w @jingshi/teacher-feedback",
+    "test:feedback": "npm test -w @jingshi/teacher-feedback"
+  },
+  "devDependencies": {
+    "turbo": "^2.10.5"
   }
 }

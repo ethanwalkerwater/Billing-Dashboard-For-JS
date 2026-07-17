@@ -5,15 +5,15 @@ import { renderStudentBillingReportHtml } from "../src/render-student-billing-re
 
 const report = {
   brandName: "菁仕",
-  brandEnglish: "JINGSHI EDUCATION",
+  brandEnglish: "King's Academy",
   studentName: "Ivy",
   month: "2026-03",
   monthLabel: "2026年3月",
   monthEnglish: "March 2026",
   totals: {
-    grossAmount: 3300,
-    discountAmount: 390,
-    payableAmount: 2910,
+    grossAmount: 3300.8,
+    discountAmount: 390.2,
+    payableAmount: 2910.8,
     duration: 4,
     cancelledDuration: 2,
   },
@@ -109,13 +109,19 @@ test("renderStudentBillingReportHtml renders approved sections", () => {
   assert.match(html, /<strong>2026年3月<\/strong>/);
   assert.match(html, /March 2026/);
   assert.match(html, /¥2,910/);
+  assert.doesNotMatch(html, /¥2,910\.80/);
   assert.match(html, /<table>/);
+  assert.doesNotMatch(html, /class="quote-summary"/);
+  assert.doesNotMatch(html, /报价摘要/);
   assert.match(html, /Alevel物理/);
   assert.match(html, /请假 70%/);
   assert.match(html, /class="calendar-wrap"/);
   assert.match(html, /class="lesson-pill leave"/);
+  assert.doesNotMatch(html, /class="schedule-ledger"/);
   assert.match(html, /授课老师/);
   assert.match(html, /更多老师/);
+  assert.match(html, /grid-template-columns:\s*repeat\(7, minmax\(0, 1fr\)\);/);
+  assert.match(html, /grid-template-columns:\s*1fr;/);
   assert.match(html, /<h3>李品轩<\/h3>/);
   assert.match(html, /<h3>应雁心<\/h3>/);
 });

@@ -11,6 +11,7 @@
   },
   "scripts": {
     "build:teachers": "node scripts/build-teachers.mjs",
+    "build:teacher-score-averages": "node scripts/build-teacher-score-averages.mjs",
     "update:template-faculty": "node scripts/update-template-faculty.mjs",
     "build:faculty": "node scripts/build-teachers.mjs && node scripts/update-template-faculty.mjs",
     "generate": "cd ../.. && node apps/parent-report/src/generate-parent-report.mjs",

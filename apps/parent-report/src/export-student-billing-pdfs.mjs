@@ -25,6 +25,17 @@ export function listStudentBillingHtmlFiles(inputDir = DEFAULT_HTML_DIR) {
     .map((entry) => path.join(absoluteInputDir, entry));
 }
 
+export function buildStudentBillingPdfExportOptions({
+  widthPx = DEFAULT_WIDTH_PX,
+} = {}) {
+  return {
+    widthPx,
+    sectionSelector: ".page",
+    variableSectionPages: true,
+    optimizeForPreview: true,
+  };
+}
+
 export async function exportStudentBillingPdfs({
   inputDir = DEFAULT_HTML_DIR,
   outputDir = DEFAULT_PDF_DIR,
@@ -32,13 +43,14 @@ export async function exportStudentBillingPdfs({
 } = {}) {
   const files = listStudentBillingHtmlFiles(inputDir);
   const results = [];
+  const pdfOptions = buildStudentBillingPdfExportOptions({ widthPx });
 
   for (const inputPath of files) {
     const outputPath = deriveStudentBillingPdfOutputPath(inputPath, outputDir);
     const result = await exportWebHtmlToPdf({
       inputPath,
       outputPath,
-      widthPx,
+      ...pdfOptions,
     });
     results.push(result);
   }
@@ -62,12 +74,25 @@ async function main() {
 
   console.log(`Exported ${result.results.length} student billing PDFs`);
   for (const pdf of result.results) {
-    const widthPt = (pdf.widthPx * 72) / 96;
-    const heightPt = (pdf.heightPx * 72) / 96;
-    console.log(
-      pdf.outputPath,
-      `(${widthPt.toFixed(0)}pt × ${heightPt.toFixed(0)}pt, vector)`,
-    );
+    if (pdf.variableSectionPages) {
+      const pageSummary = pdf.sections
+        .map((section) => {
+          const widthPt = (section.widthPx * 72) / 96;
+          const heightPt = (section.heightPx * 72) / 96;
+          return `${widthPt.toFixed(0)}×${heightPt.toFixed(0)}pt`;
+        })
+        .join(", ");
+      console.log(pdf.outputPath, `(${pdf.sections.length} section pages: ${pageSummary}, vector)`);
+    } else {
+      const widthPt = (pdf.widthPx * 72) / 96;
+      const heightPt = ((pdf.continuous === false ? pdf.pageHeightPx : pdf.heightPx) * 72) / 96;
+      console.log(
+        pdf.outputPath,
+        pdf.continuous === false
+          ? `(${widthPt.toFixed(0)}pt × ${heightPt.toFixed(0)}pt pages, vector)`
+          : `(${widthPt.toFixed(0)}pt × ${heightPt.toFixed(0)}pt, vector)`,
+      );
+    }
   }
 }
 
