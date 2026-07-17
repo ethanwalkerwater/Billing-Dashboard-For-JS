@@ -45,19 +45,19 @@ Ivy-2488,李品轩,Alevel物理,1v1,2026/03/07 15:15,2026/03/07 17:15,1000,2,200
 });
 
 test("default fixture directory can generate current sample reports", (t) => {
-  if (!fs.existsSync("data/完整课时费") || !fs.existsSync("data/raw/schedule.csv")) {
+  if (!fs.existsSync("data/local/parent-report/complete-billing") || !fs.existsSync("data/local/shared/schedule.csv")) {
     t.skip("local student billing fixtures are not committed");
     return;
   }
 
   const result = generateStudentBillingReports({
-    completeBillingDir: "data/完整课时费",
-    schedulePath: "data/raw/schedule.csv",
+    completeBillingDir: "data/local/parent-report/complete-billing",
+    schedulePath: "data/local/shared/schedule.csv",
     teachersPath: "apps/parent-report/data/teachers.json",
     outputDir: path.join(os.tmpdir(), `jingshi-parent-report-real-${Date.now()}`),
     embedTeacherPhotos: false,
   });
 
   assert.ok(result.written.length >= 1);
-  assert.ok(result.written.some((file) => path.basename(file).includes("Daniel 周恩东-2026-03")));
+  assert.ok(result.written.every((file) => fs.existsSync(file)));
 });

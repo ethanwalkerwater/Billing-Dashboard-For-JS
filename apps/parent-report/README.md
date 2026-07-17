@@ -25,15 +25,15 @@ npm run test        -w @jingshi/parent-report
 ```
 
 ## 共享数据约定
-- 输入 CSV：仓库根 `data/raw/schedule.csv`（与项目1 共用同一份）
+- 公共课表：仓库根 `data/local/shared/schedule.csv`（与课时账单、老师反馈共用同一份）
 - 产物：仓库根 `outputs/parent_reports/`、`outputs/parent_reports_web/`
 - 脚本内 `PROJECT_ROOT` 锚定到仓库根（`path.resolve(__dirname, "../../..")`），
   故无论从哪运行，data/outputs 路径都稳定。
 
 ## 批量生成学生课时费明细 HTML
 
-1. 把完整课时费 CSV 放到仓库根目录的 `data/完整课时费/`。
-2. 确认原始课表位于 `data/raw/schedule.csv`。
+1. 把完整课时费 CSV 放到仓库根目录的 `data/local/parent-report/complete-billing/`。
+2. 确认原始课表位于 `data/local/shared/schedule.csv`。
 3. 如需更新师资卡，编辑 `apps/parent-report/assets/teacher/老师卡片.txt` 和同目录头像。
 4. 运行：
 

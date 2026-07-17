@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
@@ -25,7 +26,19 @@ from typing import Dict, Iterable, List, Optional, Tuple
 
 APP_ROOT = Path(__file__).resolve().parent.parent
 REPO_ROOT = APP_ROOT.parent.parent
-PRIVATE_DATA_ROOT = REPO_ROOT / "data/private/teacher-feedback"
+LOCAL_DATA_ROOT = REPO_ROOT / "data/local"
+DEFAULT_FEEDBACK = Path(
+    os.environ.get(
+        "JINGSHI_FEEDBACK_PATH",
+        LOCAL_DATA_ROOT / "teacher-feedback/feedback.csv",
+    )
+)
+DEFAULT_SCHEDULE = Path(
+    os.environ.get(
+        "JINGSHI_SCHEDULE_PATH",
+        LOCAL_DATA_ROOT / "shared/schedule.csv",
+    )
+)
 DEFAULT_OUTPUT_ROOT = REPO_ROOT / "outputs/teacher-feedback"
 DEFAULT_NAME_MAP = APP_ROOT / "templates/name_mapping.csv"
 
@@ -274,12 +287,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--month", required=True, help="统计月份，例如 2026-02")
     parser.add_argument(
         "--feedback",
-        default=str(PRIVATE_DATA_ROOT / "feedback.csv"),
+        default=str(DEFAULT_FEEDBACK),
         help="反馈 CSV 路径",
     )
     parser.add_argument(
         "--schedule",
-        default=str(PRIVATE_DATA_ROOT / "schedule.csv"),
+        default=str(DEFAULT_SCHEDULE),
         help="课表 CSV 路径",
     )
     parser.add_argument(

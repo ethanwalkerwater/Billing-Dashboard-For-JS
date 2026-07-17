@@ -1,19 +1,20 @@
 {
-  "name": "jingshi-monorepo",
+  "name": "jingshi-education-services",
   "version": "1.0.0",
   "private": true,
   "type": "module",
   "packageManager": "npm@11.16.0",
-  "description": "菁仕后台服务 monorepo：课时账单、老师收入、老师反馈与家长报告。",
+  "description": "菁仕教育服务 monorepo：课时账单、老师收入、老师反馈与家长报告。",
   "workspaces": [
     "packages/*",
     "apps/*"
   ],
   "scripts": {
     "build": "turbo run build",
-    "test": "npm run test:node && npm run test:feedback",
+    "test": "npm run test:node && npm run test:billing-python && npm run test:feedback",
     "test:node": "node --test packages/billing-core/tests/*.test.mjs apps/parent-report/tests/*.test.mjs",
     "test:core": "npm test -w @jingshi/billing-core",
+    "test:billing-python": "npm run test:python -w @jingshi/billing-report",
     "test:billing-report": "npm test -w @jingshi/billing-report",
     "test:parent-report": "npm test -w @jingshi/parent-report",
     "build:billing-report": "npm run build -w @jingshi/billing-report",
@@ -23,7 +24,9 @@
     "test:teacher-income-report": "npm test -w @jingshi/teacher-income-report",
     "dev:teacher-feedback": "npm run dev -w @jingshi/teacher-feedback",
     "build:teacher-feedback": "npm run build -w @jingshi/teacher-feedback",
-    "test:feedback": "npm test -w @jingshi/teacher-feedback"
+    "test:feedback": "npm test -w @jingshi/teacher-feedback",
+    "generate:billing-report": "python3 apps/billing-report/python/course_billing_report.py",
+    "generate:parent-reports": "npm run generate:student-billing -w @jingshi/parent-report"
   },
   "devDependencies": {
     "turbo": "^2.10.5"

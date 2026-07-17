@@ -1,7 +1,6 @@
 # Monorepo 的各 Vercel Project 会从 apps/* 构建，并可能读取 packages/*。
 # 这里只排除私有数据、生成物和测试，不排除任何应用源码。
-data/raw/
-data/private/
+data/local/
 outputs/
 docs/
 .venv/

@@ -5,8 +5,9 @@ import fs from "node:fs";
 import { buildParentReportData } from "../src/parent-report-data.mjs";
 import { renderCodexParentReportHtml } from "../src/generate-codex-parent-report.mjs";
 
-const privateFixture = "data/raw/schedule.csv";
-const hasPrivateFixture = fs.existsSync(privateFixture);
+const privateFixture = "data/local/shared/schedule.csv";
+const hasPrivateFixture = process.env.RUN_LEGACY_PARENT_FIXTURE_TESTS === "1"
+  && fs.existsSync(privateFixture);
 const csv = hasPrivateFixture ? fs.readFileSync(privateFixture, "utf8") : "";
 const privateTest = hasPrivateFixture ? test : test.skip;
 

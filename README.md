@@ -1,6 +1,6 @@
-# 菁仕后台服务 Monorepo
+# 菁仕教育服务
 
-菁仕内部管理服务统一仓库。每个线上服务独立开发和部署，课时账单与老师收入共享同一套计算内核。
+菁仕教育内部服务统一仓库。每个线上模块独立开发和部署，课时账单与老师收入共享同一套计算内核。
 
 ## 服务地图
 
@@ -26,8 +26,8 @@
 ├── packages/
 │   └── billing-core/             # 账单与收入唯一计算真源
 ├── data/
-│   ├── raw/                      # 本地账单/薪资输入，不入 Git
-│   └── private/teacher-feedback/ # feedback.csv + schedule.csv，不入 Git
+│   ├── README.md                 # 数据用途、放置路径和测试说明
+│   └── local/                    # 所有本地真实输入，不入 Git/Vercel
 ├── outputs/                      # 所有生成结果，不入 Git
 ├── package.json                  # npm workspaces 和统一命令
 └── turbo.json                    # Monorepo 构建依赖
@@ -49,12 +49,16 @@ npm run dev:teacher-income-report # http://localhost:4174
 npm run dev:teacher-feedback      # http://localhost:4175
 ```
 
-反馈系统本地输入使用固定路径：
+所有本地真实数据统一放在 `data/local/`。完整说明见 [`data/README.md`](data/README.md)，最常用的输入是：
 
 ```text
-data/private/teacher-feedback/feedback.csv
-data/private/teacher-feedback/schedule.csv
+data/local/shared/schedule.csv
+data/local/teacher-feedback/feedback.csv
+data/local/teacher-income/
+data/local/parent-report/complete-billing/
 ```
+
+网页模块不会自动读取电脑文件夹；启动本地网页后，按 `data/README.md` 的表格选择对应文件上传。命令行脚本才会自动读取上述默认路径。
 
 ## 测试与构建
 
@@ -65,7 +69,7 @@ npm run build:teacher-income-report
 npm run build:teacher-feedback
 ```
 
-`npm test` 会运行共享内核、家长报告和老师反馈测试。依赖真实课表的家长报告验收测试在缺少私有 fixture 时自动跳过，其余测试必须通过。
+`npm test` 会运行共享内核、家长报告和老师反馈测试。依赖旧版 Ivy 私有样本具体数值的视觉验收测试默认跳过，避免每次更换业务课表就误报；其余测试必须通过。
 
 ## 数据流
 
@@ -95,6 +99,6 @@ npm run build:teacher-feedback
 ## 隐私规则
 
 - 真实课表、学员反馈、工资、报销、生成报告都不能提交。
-- `.vercel/`、`.venv/`、`outputs/`、`data/raw/`、`data/private/` 均已忽略。
+- `.vercel/`、`.venv/`、`outputs/`、`data/local/` 均已忽略。
 - 只提交匿名化测试样本、源代码和不含个人数据的模板。
 - 部署前使用 `git status` 和 `git check-ignore` 再次确认原始数据未进入暂存区。

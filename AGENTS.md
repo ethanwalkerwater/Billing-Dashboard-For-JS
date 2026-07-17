@@ -1,4 +1,4 @@
-# AGENTS.md — 菁仕后台服务
+# AGENTS.md — 菁仕教育服务
 
 ## 领域地图
 
@@ -25,7 +25,7 @@ npm run build:teacher-feedback
 
 ## 数据安全
 
-真实数据只允许出现在 `data/raw/`、`data/private/` 和 `outputs/`。这些目录不入 Git。不得把真实 CSV 复制到应用源码目录或 Vercel 静态目录。
+真实输入只允许出现在 `data/local/`，生成结果只允许出现在 `outputs/`。两者都不入 Git 或 Vercel。各模块的数据接口以 `data/README.md` 为准，不得重新创建 `data/raw/`、`data/private/`、`data/payroll/` 等旧目录，也不得把真实 CSV 复制到应用源码或 Vercel 静态目录。
 
 ## 部署边界
 

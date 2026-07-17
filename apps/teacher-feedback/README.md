@@ -1,7 +1,7 @@
 # 菁仕老师反馈系统
 
 本应用属于菁仕后台服务 Monorepo。真实反馈表和课表统一放在仓库根
-`data/private/teacher-feedback/`，输出统一写入仓库根
+`data/local/teacher-feedback/`，公共课表读取 `data/local/shared/`，输出统一写入仓库根
 `outputs/teacher-feedback/`；这两个目录都不会进入 Git 或 Vercel。
 
 ## 0. 先看这些文件
@@ -100,7 +100,7 @@ cd /path/to/jingshi-monorepo
 下载最新的 `菁仕反馈总表_3️⃣ 【学员】月度教学满意度反馈`，并覆盖当前目录里的同名文件：
 
 ```text
-data/private/teacher-feedback/feedback.csv
+data/local/teacher-feedback/feedback.csv
 ```
 
 检查项：
@@ -112,7 +112,7 @@ data/private/teacher-feedback/feedback.csv
 下载最新课表，并覆盖当前目录里的：
 
 ```text
-data/private/teacher-feedback/schedule.csv
+data/local/shared/schedule.csv
 ```
 
 检查项：
