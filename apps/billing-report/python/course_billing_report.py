@@ -7,6 +7,7 @@ import argparse
 import csv
 import json
 import math
+import os
 import re
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -15,8 +16,19 @@ from pathlib import Path
 from typing import Any
 
 
-DEFAULT_INPUT = Path("data/raw/schedule.csv")
-DEFAULT_OUTPUT = Path("outputs/course_billing_report/course_billing_report.html")
+REPO_ROOT = Path(__file__).resolve().parents[3]
+DEFAULT_INPUT = Path(
+    os.environ.get(
+        "JINGSHI_SCHEDULE_PATH",
+        REPO_ROOT / "data/local/shared/schedule.csv",
+    )
+)
+DEFAULT_OUTPUT = Path(
+    os.environ.get(
+        "JINGSHI_BILLING_OUTPUT_PATH",
+        REPO_ROOT / "outputs/course_billing_report/course_billing_report.html",
+    )
+)
 
 CANCELLATION_RATES = {
     "0h-70%": 0.7,

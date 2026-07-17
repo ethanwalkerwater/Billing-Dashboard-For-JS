@@ -13,8 +13,12 @@ import { renderStudentBillingReportHtml } from "./render-student-billing-report.
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, "../../..");
 
-const DEFAULT_COMPLETE_DIR = path.resolve(PROJECT_ROOT, "data/完整课时费");
-const DEFAULT_SCHEDULE = path.resolve(PROJECT_ROOT, "data/raw/schedule.csv");
+const DEFAULT_COMPLETE_DIR = process.env.JINGSHI_COMPLETE_BILLING_DIR
+  ? path.resolve(process.env.JINGSHI_COMPLETE_BILLING_DIR)
+  : path.resolve(PROJECT_ROOT, "data/local/parent-report/complete-billing");
+const DEFAULT_SCHEDULE = process.env.JINGSHI_SCHEDULE_PATH
+  ? path.resolve(process.env.JINGSHI_SCHEDULE_PATH)
+  : path.resolve(PROJECT_ROOT, "data/local/shared/schedule.csv");
 const DEFAULT_TEACHERS = path.resolve(PROJECT_ROOT, "apps/parent-report/data/teachers.json");
 const DEFAULT_OUTPUT = path.resolve(PROJECT_ROOT, "outputs/parent_reports/generated");
 

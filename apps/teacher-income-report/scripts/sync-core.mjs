@@ -14,10 +14,15 @@ for (const file of ["report-core.js", "payroll-core.js"]) {
   console.log(`synced billing-core -> ${path.relative(REPO_ROOT, dest)}`);
 }
 
-const payrollDefaults = path.resolve(REPO_ROOT, "data/payroll/normalized/master/defaults.json");
+const payrollDefaults = process.env.JINGSHI_PAYROLL_DEFAULTS_PATH
+  ? path.resolve(process.env.JINGSHI_PAYROLL_DEFAULTS_PATH)
+  : path.resolve(REPO_ROOT, "data/local/teacher-income/defaults.json");
+const payrollDefaultsDest = path.resolve(APP_ROOT, "web/assets/payroll/defaults.json");
 if (fs.existsSync(payrollDefaults)) {
-  const dest = path.resolve(APP_ROOT, "web/assets/payroll/defaults.json");
-  fs.mkdirSync(path.dirname(dest), { recursive: true });
-  fs.copyFileSync(payrollDefaults, dest);
-  console.log(`synced payroll defaults -> ${path.relative(REPO_ROOT, dest)}`);
+  fs.mkdirSync(path.dirname(payrollDefaultsDest), { recursive: true });
+  fs.copyFileSync(payrollDefaults, payrollDefaultsDest);
+  console.log(`synced payroll defaults -> ${path.relative(REPO_ROOT, payrollDefaultsDest)}`);
+} else {
+  fs.rmSync(payrollDefaultsDest, { force: true });
+  console.log(`no local payroll defaults at ${path.relative(REPO_ROOT, payrollDefaults)}`);
 }
