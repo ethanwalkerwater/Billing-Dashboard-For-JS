@@ -1,13 +1,12 @@
-# 部署的是项目1（apps/billing-report，Vercel Root Directory 指向它）。
-# 以下与该静态站构建无关，无需上传。
+# Monorepo 的各 Vercel Project 会从 apps/* 构建，并可能读取 packages/*。
+# 这里只排除私有数据、生成物和测试，不排除任何应用源码。
 data/raw/
+data/private/
 outputs/
 docs/
+.venv/
 .runtime/
 __pycache__/
 *.pyc
-apps/parent-report/
-apps/teacher-income-report/
-apps/teacher-feedback/
 apps/billing-report/python/
 **/tests/
