@@ -61,7 +61,7 @@ Ivy-2488,李品轩,Alevel物理,1v1,2026/03/22 10:00,2026/03/22 12:00,650,2,910,
 test("buildStudentMonthReports joins grouped billing rows to raw schedule details", () => {
   const billingRows = parseCompleteBillingCsv(`学生名,月份,老师,课程类型,授课类型,取消/上课状态,总时长（h）,取消时长（h）,课程单价（¥）,折扣（%）,折扣原因,总金额（¥）,实际金额（¥）,原始行
 Ivy-2488,2026-03,李品轩,Alevel物理,1v1,正常上课,2,0,1000,100,,2000,2000,"2"
-Ivy-2488,2026-03,李品轩,Alevel物理,1v1,0h-70%,2,2,650,70,临时请假,1300,910,"3"`);
+Ivy-2488,2026-03,李品轩,Alevel物理,1v1,0h-70%,2,2,650.8,70,临时请假,1301.6,910.8,"3"`);
   const scheduleLookup = buildRawScheduleLookup(`学生,老师,课程类型,授课类型,上课时间,下课时间,课程单价,课程时长,课程总价格,临时取消,上课地点,学员课程ID,老师课程ID,日程 ID
 Ivy-2488,李品轩,Alevel物理,1v1,2026/03/07 15:15,2026/03/07 17:15,1000,2,2000,,校区,S1,T1,D1
 Ivy-2488,李品轩,Alevel物理,1v1,2026/03/22 10:00,2026/03/22 12:00,650,2,910,0h-70%,校区,S2,T2,D2`);
@@ -72,10 +72,26 @@ Ivy-2488,李品轩,Alevel物理,1v1,2026/03/22 10:00,2026/03/22 12:00,650,2,910,
   assert.equal(reports[0].studentName, "Ivy");
   assert.equal(reports[0].studentId, "Ivy-2488");
   assert.equal(reports[0].month, "2026-03");
-  assert.equal(reports[0].totals.grossAmount, 3300);
-  assert.equal(reports[0].totals.payableAmount, 2910);
+  assert.equal(reports[0].totals.grossAmount, 3301.6);
+  assert.equal(reports[0].totals.payableAmount, 2910.8);
+  assert.equal(reports[0].courseLines[1].unitPriceLabel, "650");
   assert.equal(reports[0].courseLines.length, 2);
   assert.equal(reports[0].lessons.length, 2);
   assert.equal(reports[0].lessons[1].isLeave, true);
   assert.deepEqual(reports[0].activeTeacherNames, ["李品轩"]);
+});
+
+test("buildStudentMonthReports matches calendar lessons by student and month instead of raw rows", () => {
+  const billingRows = parseCompleteBillingCsv(`学生名,月份,老师,课程类型,授课类型,取消/上课状态,总时长（h）,取消时长（h）,课程单价（¥）,折扣（%）,折扣原因,总金额（¥）,实际金额（¥）,原始行
+Ivy-2488,2026-03,李品轩,Alevel物理,1v1,正常上课,2,0,1000,100,,2000,2000,"2"`);
+  const scheduleLookup = buildRawScheduleLookup(`学生,老师,课程类型,授课类型,上课时间,下课时间,课程单价,课程时长,课程总价格,临时取消,上课地点,学员课程ID,老师课程ID,日程 ID
+Other-0001,张文豪,Alevel数学,1v1,2026/03/01 10:00,2026/03/01 12:00,1000,2,2000,,校区,S0,T0,D0
+Ivy-2488,李品轩,Alevel物理,1v1,2026/03/07 15:15,2026/03/07 17:15,1000,2,2000,,校区,S1,T1,D1
+Ivy-2488,李品轩,Alevel物理,1v1,2026/04/07 15:15,2026/04/07 17:15,1000,2,2000,,校区,S2,T2,D2`);
+
+  const reports = buildStudentMonthReports(billingRows, scheduleLookup);
+
+  assert.equal(reports[0].lessons.length, 1);
+  assert.equal(reports[0].lessons[0].teacher, "李品轩");
+  assert.equal(reports[0].lessons[0].date, "2026-03-07");
 });

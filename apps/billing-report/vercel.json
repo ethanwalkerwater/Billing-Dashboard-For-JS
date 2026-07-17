@@ -2,6 +2,6 @@
   "version": 2,
   "cleanUrls": true,
   "trailingSlash": false,
-  "buildCommand": "npm run build",
+  "buildCommand": "cd ../.. && npx turbo run build --filter=@jingshi/billing-report",
   "outputDirectory": "dist"
 }

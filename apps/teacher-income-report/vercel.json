@@ -1,6 +1,5 @@
 {
-  "installCommand": "true",
-  "buildCommand": "true",
+  "buildCommand": "cd ../.. && npx turbo run build --filter=@jingshi/teacher-income-report",
   "outputDirectory": "dist",
   "cleanUrls": true,
   "trailingSlash": false

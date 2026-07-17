@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 
 import {
+  buildStudentBillingPdfExportOptions,
   deriveStudentBillingPdfOutputPath,
   listStudentBillingHtmlFiles,
 } from "../src/export-student-billing-pdfs.mjs";
@@ -38,5 +39,17 @@ test("listStudentBillingHtmlFiles returns sorted html files only", () => {
   assert.deepEqual(
     listStudentBillingHtmlFiles(tmp).map((file) => path.basename(file)),
     ["Archer-2026-03.html", "Mobby-2026-03.html"],
+  );
+});
+
+test("buildStudentBillingPdfExportOptions exports each report section as its own page", () => {
+  assert.deepEqual(
+    buildStudentBillingPdfExportOptions({ widthPx: 1120 }),
+    {
+      widthPx: 1120,
+      sectionSelector: ".page",
+      variableSectionPages: true,
+      optimizeForPreview: true,
+    },
   );
 });

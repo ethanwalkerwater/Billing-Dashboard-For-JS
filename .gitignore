@@ -1,13 +1,20 @@
 # 依赖与环境
 node_modules/
+.turbo/
 .vercel/
+.venv/
 .runtime/
 __pycache__/
 *.pyc
 .DS_Store
+.claude/
+.codegraph/
+h1.png
+h2.png
 
 # 共享输入（含学生数据，本地维护，不入库）
 data/raw/
+data/private/
 data/完整课时费/
 data/payroll/
 
@@ -15,6 +22,11 @@ data/payroll/
 outputs/
 apps/billing-report/dist/
 apps/teacher-income-report/dist/
+apps/teacher-feedback/.venv/
+apps/teacher-feedback/.vercel_python_packages/
+apps/teacher-feedback/templates/name_mapping.local.csv
+apps/parent-report/data/teacher-score-averages.csv
+apps/parent-report/data/teacher-score-averages.json
 # 由 sync-core 从 billing-core 生成
 apps/billing-report/web/assets/report-core.js
 apps/teacher-income-report/web/assets/report-core.js

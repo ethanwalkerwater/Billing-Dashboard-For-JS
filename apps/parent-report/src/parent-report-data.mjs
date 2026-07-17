@@ -275,7 +275,7 @@ export function buildParentReportData(csvText, options) {
 
   return {
     brandName: "菁仕",
-    brandEnglish: "JINGSHI EDUCATION",
+    brandEnglish: "King's Academy",
     studentId: student,
     studentName: displayStudentName(student),
     month,

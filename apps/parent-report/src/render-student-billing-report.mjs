@@ -16,10 +16,8 @@ const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({
 }[char]));
 
 function formatMoney(value) {
-  return `¥${Number(value || 0).toLocaleString("zh-CN", {
-    minimumFractionDigits: Number.isInteger(value) ? 0 : 2,
-    maximumFractionDigits: 2,
-  })}`;
+  const integerValue = Math.floor(Number(value || 0));
+  return `¥${integerValue.toLocaleString("zh-CN", { maximumFractionDigits: 0 })}`;
 }
 
 function formatNumber(value) {
@@ -118,33 +116,43 @@ export function renderStudentBillingReportHtml(report, teachers, options = {}) {
     body {
       margin: 0;
       color: var(--ink);
-      background: var(--paper);
-      font-family: -apple-system, "PingFang SC", "Hiragino Sans GB", "Helvetica Neue", sans-serif;
+      background:
+        linear-gradient(90deg, rgba(20,24,33,.045) 1px, transparent 1px),
+        linear-gradient(180deg, rgba(20,24,33,.035) 1px, transparent 1px),
+        var(--paper);
+      background-size: 30px 30px;
+      font-family: "Avenir Next", "Helvetica Neue", "PingFang SC", "Hiragino Sans GB", sans-serif;
       font-size: 14px;
       line-height: 1.6;
       -webkit-font-smoothing: antialiased;
     }
-    .document { width: min(1120px, 100%); margin: 0 auto; padding: 0 18px 40px; background: var(--paper); }
+    .document { width: min(1120px, 100%); margin: 0 auto; padding: 28px 18px 42px; }
     .page {
       position: relative;
-      min-height: 760px;
-      padding: 54px 44px;
-      margin: 0 auto 20px;
+      width: min(920px, 100%);
+      min-height: 980px;
+      padding: 58px 58px;
+      margin: 0 auto 28px;
       background: var(--ivory);
-      overflow: hidden;
-      border-bottom: 1px solid var(--hairline);
-      box-shadow: 0 2px 12px rgba(20,24,33,.06);
+      overflow: visible;
+      box-shadow: 0 28px 90px rgba(20,24,33,.16);
     }
     .page::before {
       content: "";
       position: absolute;
-      inset: 16px;
+      inset: 28px;
       border: 1px solid var(--hairline);
-      border-radius: 6px;
       pointer-events: none;
     }
     .page > * { position: relative; z-index: 1; }
-    .cover { display: flex; flex-direction: column; justify-content: space-between; min-height: 760px; }
+    .cover {
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      min-height: 1080px;
+      background:
+        linear-gradient(180deg, rgba(255,255,255,.94), rgba(255,253,248,.98)),
+        var(--ivory);
+    }
     .cover-lines {
       position: absolute;
       inset: 0;
@@ -154,17 +162,17 @@ export function renderStudentBillingReportHtml(report, teachers, options = {}) {
     .cover-brandline, .closing-brandline { display: flex; align-items: baseline; gap: 10px; }
     .brand-mark { font-family: "Songti SC", "STSong", serif; font-size: 30px; font-weight: 600; }
     .brand-en { font-size: 11px; letter-spacing: .22em; color: var(--muted); text-transform: uppercase; }
-    .cover-main { text-align: center; margin: auto 0; padding: 42px 0; }
+    .cover-main { display: flex; flex-direction: column; justify-content: center; max-width: 620px; padding-top: 120px; }
     .cover-student-name {
-      margin: 0 0 28px;
-      font-family: "Songti SC", "STSong", serif;
-      font-size: 86px;
-      line-height: 1.05;
+      margin: 260px 0 0;
+      font-family: "Baskerville", "Times New Roman", "Songti SC", serif;
+      font-size: 112px;
+      line-height: .92;
       font-weight: 500;
     }
-    .cover-ref-divider { width: 48px; height: 1px; margin: 0 auto 24px; background: var(--ink); opacity: .55; }
-    .cover-report-title { font-size: 36px; font-weight: 300; letter-spacing: .04em; }
-    .cover-month-block { margin-top: 72px; }
+    .cover-ref-divider { width: 100%; height: 1px; margin: 34px 0 54px; background: rgba(20,24,33,.72); }
+    .cover-report-title { font-size: 44px; font-weight: 300; letter-spacing: .02em; }
+    .cover-month-block { margin-top: 132px; }
     .cover-month-block strong { display: block; font-family: "Songti SC", "STSong", serif; font-size: 28px; font-weight: 500; }
     .cover-footer, .closing-footer {
       display: grid;
@@ -177,8 +185,8 @@ export function renderStudentBillingReportHtml(report, teachers, options = {}) {
     .cover-footer-meta { color: var(--muted); font-size: 11px; letter-spacing: .16em; text-transform: uppercase; }
     .cover-footer-date { margin-top: 5px; color: var(--muted); font-size: 12px; letter-spacing: .12em; }
     .cover-footer-amount strong, .closing-footer-amount { font-size: 42px; font-weight: 500; letter-spacing: 0; }
-    .page-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 24px; }
-    .kicker { color: var(--champagne); font-size: 11px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; }
+    .page-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 32px; margin-bottom: 32px; }
+    .kicker { color: var(--champagne); font-size: 12px; font-weight: 800; letter-spacing: .18em; text-transform: uppercase; }
     h2 { margin: 6px 0 0; font-family: "Songti SC", "STSong", serif; font-size: 36px; line-height: 1.2; font-weight: 600; }
     .page-num { color: var(--indigo); font-size: 12px; letter-spacing: .12em; }
     table { width: 100%; border-collapse: collapse; margin-top: 10px; background: white; border: 1px solid var(--hairline); }
@@ -192,29 +200,54 @@ export function renderStudentBillingReportHtml(report, teachers, options = {}) {
     .total-row p { margin: 0 0 14px; color: var(--muted); font-size: 12px; }
     .section-label { display: block; margin-bottom: 5px; color: var(--muted); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
     .total-row strong { font-size: 36px; font-weight: 600; }
-    .calendar-wrap { overflow-x: auto; }
-    .calendar { display: grid; grid-template-columns: repeat(7, minmax(126px, 1fr)); gap: 8px; min-width: 900px; }
-    .weekday { padding: 8px 10px; color: var(--muted); font-size: 12px; font-weight: 700; text-align: center; }
-    .day { min-height: 132px; padding: 8px; border: 1px solid var(--hairline); border-radius: 8px; background: white; }
-    .day.muted { background: var(--platinum); opacity: .5; }
-    .day.has-leave { border-color: rgba(164,82,63,.4); }
-    .day-num { color: var(--indigo-deep); font-weight: 700; }
-    .day-lessons { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
-    .lesson-pill { padding: 6px 7px; border-left: 3px solid var(--indigo); border-radius: 0 6px 6px 0; background: var(--indigo-soft); font-size: 11px; }
+    .calendar-wrap { overflow: visible; }
+    .calendar {
+      display: grid;
+      grid-template-columns: repeat(7, minmax(0, 1fr));
+      gap: 5px;
+    }
+    .weekday { padding: 5px 4px; color: var(--muted); font-size: 10px; font-weight: 700; text-align: center; }
+    .day { min-height: 98px; padding: 5px; border: 1px solid var(--hairline); background: white; overflow: hidden; }
+    .day.muted { background: var(--platinum); opacity: .45; }
+    .day.has-leave { border-color: rgba(164,82,63,.45); background: #fffaf5; }
+    .day-num { color: var(--indigo-deep); font-size: 11px; font-weight: 800; line-height: 1.1; }
+    .day-lessons { display: flex; flex-direction: column; gap: 3px; margin-top: 4px; }
+    .lesson-pill {
+      padding: 4px 5px;
+      border-left: 2px solid var(--indigo);
+      background: var(--indigo-soft);
+      font-size: 9px;
+      line-height: 1.25;
+      overflow: hidden;
+    }
     .lesson-pill.leave { border-left-color: var(--leave); background: var(--champagne-soft); }
-    .lesson-pill span, .lesson-pill b, .lesson-pill em { display: block; }
-    .lesson-pill span { color: var(--muted); }
-    .lesson-pill b { line-height: 1.35; }
+    .lesson-pill span, .lesson-pill b, .lesson-pill em { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .lesson-pill span { color: var(--indigo-deep); font-weight: 700; }
+    .lesson-pill b { margin-top: 1px; }
     .lesson-pill em { color: var(--muted); font-style: normal; }
-    mark { display: inline-block; margin-top: 4px; border-radius: 999px; padding: 2px 7px; background: rgba(164,82,63,.12); color: var(--leave); font-size: 10px; font-weight: 700; }
-    .legend { display: flex; gap: 18px; margin-top: 16px; color: var(--muted); font-size: 12px; }
+    mark {
+      display: inline-block;
+      max-width: 100%;
+      margin-top: 2px;
+      border: 1px solid var(--hairline);
+      border-radius: 999px;
+      padding: 1px 4px;
+      background: rgba(164,82,63,.12);
+      color: var(--leave);
+      font-size: 8px;
+      font-weight: 700;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .legend { display: flex; gap: 18px; margin-top: 22px; color: var(--muted); font-size: 12px; }
     .legend span { display: inline-flex; align-items: center; gap: 6px; }
     .legend i { width: 10px; height: 10px; border-radius: 50%; background: var(--indigo); }
     .legend .leave i { background: var(--leave); }
     .faculty-section { margin-top: 22px; }
     .faculty-section:first-of-type { margin-top: 0; }
     .faculty-section h3 { margin: 0 0 14px; font-family: "Songti SC", "STSong", serif; font-size: 22px; font-weight: 600; }
-    .faculty-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+    .faculty-grid { display: grid; grid-template-columns: 1fr; gap: 14px; }
     .faculty-card { display: flex; gap: 14px; min-height: 156px; border: 1px solid var(--hairline); border-radius: var(--radius); background: white; overflow: hidden; }
     .faculty-photo { flex: 0 0 152px; background: #edf0f5; }
     .faculty-photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
@@ -225,7 +258,7 @@ export function renderStudentBillingReportHtml(report, teachers, options = {}) {
     .faculty-desc { margin: 0; color: var(--ink); opacity: .82; font-size: 13px; line-height: 1.72; }
     .faculty-metrics { display: flex; gap: 24px; margin-top: auto; padding-top: 12px; border-top: 1px solid var(--hairline); }
     .faculty-metric-label { display: block; color: var(--muted); font-size: 11px; }
-    .faculty-metric-value { display: block; margin-top: 2px; color: var(--indigo); font-size: 18px; white-space: nowrap; }
+    .faculty-metric-value { display: block; margin-top: 2px; color: #596273; font-size: 16px; font-weight: 600; white-space: nowrap; }
     .closing { display: flex; flex-direction: column; justify-content: space-between; min-height: 680px; }
     .closing-main { text-align: center; margin: auto 0; padding: 40px 0; }
     .closing-main h2 { margin: 0 0 24px; font-family: "Songti SC", "STSong", serif; font-size: 48px; font-weight: 500; letter-spacing: .06em; }

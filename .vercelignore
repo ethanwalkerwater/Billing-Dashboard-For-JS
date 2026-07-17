@@ -7,5 +7,7 @@ docs/
 __pycache__/
 *.pyc
 apps/parent-report/
+apps/teacher-income-report/
+apps/teacher-feedback/
 apps/billing-report/python/
 **/tests/

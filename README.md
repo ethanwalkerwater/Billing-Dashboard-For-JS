@@ -1,82 +1,100 @@
-# 菁仕收费 Monorepo
+# 菁仕后台服务 Monorepo
 
-一个仓库，两个项目，共享同一套课时收费计算内核。
+菁仕内部管理服务统一仓库。每个线上服务独立开发和部署，课时账单与老师收入共享同一套计算内核。
 
-```
-菁仕收费2/
-├─ packages/
-│  └─ billing-core/        ★ 共享计算内核（唯一真源）
-│                            从 CSV 计算每个学生/老师的收费与收入
-├─ apps/
-│  ├─ billing-report/      【项目1】课时收费报表（上游）
-│  │                         上传 CSV → 交互式收费报表（网页版 + Python 版）
-│  └─ parent-report/       【项目2】家长报告（下游）
-│                            基于学生收费计算 → 每位家长的 PPT/PDF
-├─ data/raw/              共享输入：schedule.csv（不入库）
-└─ outputs/              共享产物目录（不入库）
-   ├─ course_billing_report/   ← 项目1
-   ├─ parent_reports/          ← 项目2
-   └─ parent_reports_web/      ← 项目2
-```
+## 服务地图
 
-## 怎么分清哪个文件属于哪个项目
+| 目录 | 服务 | 线上地址 | 技术 |
+|---|---|---|---|
+| `apps/billing-report/` | 课时账单 | https://jingshi-course-billing.vercel.app/ | 静态 HTML/CSS/JS |
+| `apps/teacher-income-report/` | 老师收入计算 | https://jingshi-teacher-income.vercel.app/ | 静态 HTML/CSS/JS |
+| `apps/teacher-feedback/` | 老师反馈系统 | https://jingshi-feedback-service.vercel.app/ | FastAPI/Python |
+| `apps/parent-report/` | 家长报告 | 本地生成，不部署 | Node.js/PDF |
+| `packages/billing-core/` | 共享课时与薪资内核 | 不独立部署 | JavaScript |
 
-看路径前缀即可，无需记忆：
+统一入口：https://jingshi.vercel.app/
 
-| 前缀 | 归属 | 说明 |
-|------|------|------|
-| `packages/billing-core/` | 共享内核 | 两个项目都 import 它，改这里两边同时生效 |
-| `apps/billing-report/` | 项目1 | 收费报表（网页 + Python） |
-| `apps/parent-report/` | 项目2 | 家长报告生成与导出 |
-| `data/`、`outputs/` | 共享 I/O | 输入 CSV 与各项目产物（按子目录区分） |
+## 目录结构
 
-## 上下游关系
-
-```
-data/raw/schedule.csv
-        │
-        ▼
-packages/billing-core  ──► apps/billing-report   （项目1：报表）
-        │
-        └──────────────►  apps/parent-report     （项目2：家长报告依赖费用计算）
+```text
+.
+├── apps/                         # 可独立运行、测试、部署的应用
+│   ├── billing-report/
+│   ├── teacher-income-report/
+│   ├── teacher-feedback/
+│   └── parent-report/
+├── packages/
+│   └── billing-core/             # 账单与收入唯一计算真源
+├── data/
+│   ├── raw/                      # 本地账单/薪资输入，不入 Git
+│   └── private/teacher-feedback/ # feedback.csv + schedule.csv，不入 Git
+├── outputs/                      # 所有生成结果，不入 Git
+├── package.json                  # npm workspaces 和统一命令
+└── turbo.json                    # Monorepo 构建依赖
 ```
 
-项目2 通过 `import { buildReportFromCsv } from "@jingshi/billing-core"` 拿到费用计算，
-不重复实现计算逻辑。npm workspaces 把 `@jingshi/billing-core` 软链接到本地包，改内核无需发版。
-
-## 常用命令（都在仓库根运行）
+## 初始化
 
 ```bash
-npm install                                    # 安装并建立 workspace 软链接
-
-# 项目1 课时收费报表
-npm run dev   -w @jingshi/billing-report       # 本地静态站 http://localhost:4173
-npm run build -w @jingshi/billing-report       # 生成 dist/ 并校验
-npm run test:python -w @jingshi/billing-report # Python 版测试
-
-# 项目2 家长报告
-npm run generate   -w @jingshi/parent-report   # 生成报告 HTML
-npm run export:pdf -w @jingshi/parent-report   # 导出 PDF
-
-# 测试
-npm test                                       # 内核 + 项目2 的 node 测试
-npm run test:billing-report                    # 项目1 静态站校验
+npm install
+python3 -m venv .venv
+.venv/bin/pip install -r apps/teacher-feedback/requirements.txt
 ```
 
-各项目细节见各自 README：
-[项目1](apps/billing-report/README.md) · [项目2](apps/parent-report/README.md) · [共享内核](packages/billing-core/)
+## 开发
 
-## 部署（项目1 → Vercel）
+```bash
+npm run dev:billing-report        # http://localhost:4173
+npm run dev:teacher-income-report # http://localhost:4174
+npm run dev:teacher-feedback      # http://localhost:4175
+```
 
-Vercel 项目的 **Root Directory 保持为仓库根**。根 `vercel.json` 负责 monorepo 构建：
-安装 workspace 后执行 `npm run build -w @jingshi/billing-report`，产物输出到
-`apps/billing-report/dist/`。推送到 `main` 即自动部署，无需改 Vercel 后台设置。
-线上页面不保存原始课表，CSV 在浏览器本地解析。
+反馈系统本地输入使用固定路径：
 
-## 报表口径（项目1）
+```text
+data/private/teacher-feedback/feedback.csv
+data/private/teacher-feedback/schedule.csv
+```
 
-- 学生收费视图：按月份和学生筛选，展示当月上过哪些老师的课。
-- 老师收入视图：按月份和老师筛选，展示当月教过哪些学生。
-- 汇总维度：对方、课程类型、授课类型、取消/上课状态；同课程类型不同授课类型拆行。
-- 临时取消按 `0h-70%`、`2h-50%`、`6h-30%` 单独列出并计费。
-- 金额优先用原始表 `课程总价格`，同时计算规则金额用于校验异常。
+## 测试与构建
+
+```bash
+npm test
+npm run build:billing-report
+npm run build:teacher-income-report
+npm run build:teacher-feedback
+```
+
+`npm test` 会运行共享内核、家长报告和老师反馈测试。依赖真实课表的家长报告验收测试在缺少私有 fixture 时自动跳过，其余测试必须通过。
+
+## 数据流
+
+```text
+课表 CSV ──> packages/billing-core ──> 课时账单
+                         └───────────> 老师收入
+
+反馈 CSV + 课表 CSV ──> 老师反馈 ──> outputs/teacher-feedback/<月份>/
+                                      └─> 家长报告老师评分汇总
+```
+
+`apps/parent-report/scripts/build-teacher-score-averages.mjs` 默认读取
+`outputs/teacher-feedback/`，不包含个人电脑绝对路径。
+
+## Vercel
+
+同一个 GitHub 仓库连接三个 Vercel Project：
+
+| Project | Root Directory | Output |
+|---|---|---|
+| `jingshi-course-billing` | `apps/billing-report` | `dist` |
+| `jingshi-teacher-income` | `apps/teacher-income-report` | `dist` |
+| `jingshi-feedback-service` | `apps/teacher-feedback` | `public` + Python Functions |
+
+生产分支为 `main`。功能分支生成 Preview，合并到 `main` 后更新生产域名。Vercel 的 Skip Unaffected Projects 应保持开启，使无关服务不重复构建。
+
+## 隐私规则
+
+- 真实课表、学员反馈、工资、报销、生成报告都不能提交。
+- `.vercel/`、`.venv/`、`outputs/`、`data/raw/`、`data/private/` 均已忽略。
+- 只提交匿名化测试样本、源代码和不含个人数据的模板。
+- 部署前使用 `git status` 和 `git check-ignore` 再次确认原始数据未进入暂存区。

@@ -9,6 +9,10 @@ export function cleanStudentName(value) {
     .trim();
 }
 
+function studentMatchKey(value) {
+  return cleanStudentName(value).replace(/\s+/g, " ").toLowerCase();
+}
+
 export function safeFileName(value) {
   return cleanText(value)
     .replace(/[\\/:*?"<>|]/g, "")
@@ -58,6 +62,10 @@ function roundMoney(value) {
   return Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
 }
 
+function formatIntegerAmount(value) {
+  return Math.floor(Number(value || 0)).toLocaleString("zh-CN", { maximumFractionDigits: 0 });
+}
+
 function monthLabel(month) {
   const [year, value] = String(month).split("-");
   return `${year}年${Number(value)}月`;
@@ -76,10 +84,25 @@ function formatMonthEnglish(monthValue) {
 
 export function buildRawScheduleLookup(scheduleCsvText) {
   const rows = parseCsv(scheduleCsvText);
-  return new Map(rows.map((row, index) => {
+  const lookup = new Map(rows.map((row, index) => {
     const rawRow = index + 2;
     return [rawRow, normalizeRow(row, rawRow)];
   }));
+  const byStudentMonth = new Map();
+
+  for (const record of lookup.values()) {
+    if (!record.month) continue;
+    for (const student of record.studentList || []) {
+      const studentKey = studentMatchKey(student);
+      if (!studentKey) continue;
+      const key = JSON.stringify([studentKey, record.month]);
+      if (!byStudentMonth.has(key)) byStudentMonth.set(key, []);
+      byStudentMonth.get(key).push(record);
+    }
+  }
+
+  lookup.byStudentMonth = byStudentMonth;
+  return lookup;
 }
 
 function billingNote(row) {
@@ -100,7 +123,7 @@ function buildCourseLine(row) {
     unitPrice: row.unitPrice,
     unitPriceLabel: row.unitPrice == null
       ? "缺失"
-      : row.unitPrice.toLocaleString("zh-CN", { maximumFractionDigits: 2 }),
+      : formatIntegerAmount(row.unitPrice),
     discountRate: row.discountRate,
     discountReason: row.discountReason,
     grossAmount: roundMoney(row.grossAmount),
@@ -156,6 +179,20 @@ function buildCalendar(month, lessons) {
   return { weekdays: WEEKDAYS, cells };
 }
 
+function scheduleRecordsForStudentMonth(scheduleLookup, studentId, month, billingRows) {
+  const studentKey = studentMatchKey(studentId);
+  const byStudentMonth = scheduleLookup?.byStudentMonth;
+  if (byStudentMonth) {
+    return [...(byStudentMonth.get(JSON.stringify([studentKey, month])) || [])]
+      .sort((a, b) => `${a.date} ${a.startTime}`.localeCompare(`${b.date} ${b.startTime}`));
+  }
+
+  return [...new Set(billingRows.flatMap((row) => row.rawRows))]
+    .map((rawRow) => scheduleLookup.get(rawRow))
+    .filter(Boolean)
+    .sort((a, b) => `${a.date} ${a.startTime}`.localeCompare(`${b.date} ${b.startTime}`));
+}
+
 export function buildStudentMonthReports(billingRows, scheduleLookup) {
   const byStudentMonth = new Map();
   for (const row of billingRows) {
@@ -167,17 +204,13 @@ export function buildStudentMonthReports(billingRows, scheduleLookup) {
   return [...byStudentMonth.entries()].map(([key, rows]) => {
     const [studentId, month] = JSON.parse(key);
     const courseLines = rows.map(buildCourseLine);
-    const lessons = [...new Set(rows.flatMap((row) => row.rawRows))]
-      .map((rawRow) => scheduleLookup.get(rawRow))
-      .filter(Boolean)
-      .sort((a, b) => `${a.date} ${a.startTime}`.localeCompare(`${b.date} ${b.startTime}`))
-      .map(lessonFromRecord);
+    const lessons = scheduleRecordsForStudentMonth(scheduleLookup, studentId, month, rows).map(lessonFromRecord);
     const activeTeacherNames = [...new Set(lessons.map((lesson) => lesson.teacher).filter(Boolean))]
       .sort((a, b) => a.localeCompare(b, "zh-CN"));
 
     return {
       brandName: "菁仕",
-      brandEnglish: "JINGSHI EDUCATION",
+      brandEnglish: "King's Academy",
       studentId,
       studentName: cleanStudentName(studentId),
       month,

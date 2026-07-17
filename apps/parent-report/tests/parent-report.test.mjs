@@ -4,9 +4,12 @@ import fs from "node:fs";
 
 import { buildParentReportData } from "../src/parent-report-data.mjs";
 
-const csv = fs.readFileSync("data/raw/schedule.csv", "utf8");
+const privateFixture = "data/raw/schedule.csv";
+const hasPrivateFixture = fs.existsSync(privateFixture);
+const csv = hasPrivateFixture ? fs.readFileSync(privateFixture, "utf8") : "";
+const privateTest = hasPrivateFixture ? test : test.skip;
 
-test("buildParentReportData summarizes Ivy March billing", () => {
+privateTest("buildParentReportData summarizes Ivy March billing", () => {
   const report = buildParentReportData(csv, {
     student: "Ivy-2488",
     month: "2026-03",
@@ -23,7 +26,7 @@ test("buildParentReportData summarizes Ivy March billing", () => {
   assert.equal(report.courseLines.length, 7);
 });
 
-test("buildParentReportData exposes the leave/cancellation lesson in the calendar", () => {
+privateTest("buildParentReportData exposes the leave/cancellation lesson in the calendar", () => {
   const report = buildParentReportData(csv, {
     student: "Ivy-2488",
     month: "2026-03",
@@ -40,7 +43,7 @@ test("buildParentReportData exposes the leave/cancellation lesson in the calenda
   assert.equal(cancelled.date, "2026-03-22");
 });
 
-test("buildParentReportData labels leave billing without discount language", () => {
+privateTest("buildParentReportData labels leave billing without discount language", () => {
   const report = buildParentReportData(csv, {
     student: "Ivy-2488",
     month: "2026-03",
@@ -54,7 +57,7 @@ test("buildParentReportData labels leave billing without discount language", () 
   assert.equal(leaveLine.billingNote, "请假扣费 70%");
 });
 
-test("buildParentReportData builds teacher team facts from raw lessons", () => {
+privateTest("buildParentReportData builds teacher team facts from raw lessons", () => {
   const report = buildParentReportData(csv, {
     student: "Ivy-2488",
     month: "2026-03",

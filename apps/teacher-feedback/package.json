@@ -1,0 +1,11 @@
+{
+  "name": "@jingshi/teacher-feedback",
+  "version": "1.0.0",
+  "private": true,
+  "description": "菁仕老师反馈系统：上传反馈表和课表，生成月度反馈分析。",
+  "scripts": {
+    "dev": "python3 -m uvicorn api.process:app --reload --port 4175",
+    "build": "python3 -m compileall -q api scripts",
+    "test": "python3 -m unittest discover -s tests -p 'test_*.py'"
+  }
+}

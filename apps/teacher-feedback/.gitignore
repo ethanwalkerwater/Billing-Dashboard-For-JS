@@ -1,0 +1,5 @@
+.vercel
+.venv/
+.vercel_python_packages/
+__pycache__/
+*.pyc

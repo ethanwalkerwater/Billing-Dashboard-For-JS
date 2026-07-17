@@ -1,0 +1,353 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>老师反馈加权看板</title>
+    <style>
+      :root {
+        --bg: #eef4ff;
+        --panel: rgba(255, 255, 255, 0.94);
+        --ink: #1d2433;
+        --muted: #5d6a82;
+        --line: rgba(76, 104, 156, 0.16);
+        --accent: #2f6fed;
+        --good: #0f766e;
+        --shadow: 0 24px 60px rgba(45, 71, 128, 0.14);
+      }
+
+      * { box-sizing: border-box; }
+
+      body {
+        margin: 0;
+        font-family: "PingFang SC", "Noto Sans SC", "Microsoft YaHei", sans-serif;
+        color: var(--ink);
+        background:
+          radial-gradient(circle at top left, rgba(47, 111, 237, 0.18), transparent 34%),
+          radial-gradient(circle at top right, rgba(15, 118, 110, 0.12), transparent 26%),
+          linear-gradient(180deg, #f6f9ff 0%, var(--bg) 100%);
+      }
+
+      .shell {
+        width: min(1400px, calc(100% - 32px));
+        margin: 28px auto 56px;
+      }
+
+      .header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 20px;
+        margin-bottom: 18px;
+      }
+
+      .header h1 {
+        margin: 0 0 10px;
+        font-size: clamp(28px, 4vw, 48px);
+      }
+
+      .header p {
+        margin: 0;
+        color: var(--muted);
+        line-height: 1.7;
+      }
+
+      .actions {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+
+      button, a.download {
+        font: inherit;
+        border: 0;
+        border-radius: 999px;
+        padding: 11px 16px;
+        cursor: pointer;
+        text-decoration: none;
+      }
+
+      button.primary {
+        background: linear-gradient(135deg, var(--accent), #2954c8);
+        color: white;
+      }
+
+      button.secondary, a.download {
+        background: rgba(255, 255, 255, 0.94);
+        color: var(--ink);
+        border: 1px solid var(--line);
+      }
+
+      .stats {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+        gap: 12px;
+        margin-bottom: 18px;
+      }
+
+      .stat, .downloads, .dashboard-shell, .empty {
+        background: var(--panel);
+        border-radius: 22px;
+        box-shadow: var(--shadow);
+        border: 1px solid rgba(255, 255, 255, 0.55);
+      }
+
+      .stat {
+        padding: 16px;
+      }
+
+      .stat .label {
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .stat .value {
+        margin-top: 8px;
+        font-size: 28px;
+        font-weight: 700;
+      }
+
+      .downloads {
+        padding: 18px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-bottom: 18px;
+      }
+
+      .dashboard-shell {
+        overflow: hidden;
+      }
+
+      iframe {
+        display: block;
+        width: 100%;
+        min-height: 1200px;
+        border: 0;
+        background: white;
+      }
+
+      .empty {
+        padding: 28px;
+      }
+
+      .empty h2 {
+        margin: 0 0 12px;
+        font-size: 28px;
+      }
+
+      .empty p {
+        margin: 0;
+        color: var(--muted);
+        line-height: 1.7;
+      }
+
+      @media (max-width: 900px) {
+        .header {
+          flex-direction: column;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <div id="app"></div>
+    </div>
+
+    <script>
+      const DASHBOARD_STORAGE_KEY = "jingshi-feedback-dashboard";
+      const app = document.getElementById("app");
+      const objectUrls = [];
+
+      function revokeUrls() {
+        objectUrls.splice(0).forEach((url) => URL.revokeObjectURL(url));
+      }
+
+      function makeDownloadUrl(file) {
+        const blob = new Blob([file.content], { type: file.contentType || "text/plain;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        objectUrls.push(url);
+        return url;
+      }
+
+      function renderEmpty() {
+        app.innerHTML = `
+          <section class="empty">
+            <h2>还没有可展示的看板</h2>
+            <p>请先回到上传页，填写初始数据并上传反馈表、课表。处理完成后会自动跳转回来。</p>
+            <div class="actions" style="margin-top:16px;">
+              <button class="primary" id="goUpload">返回上传页</button>
+            </div>
+          </section>
+        `;
+        document.getElementById("goUpload").addEventListener("click", () => {
+          window.location.href = "/";
+        });
+      }
+
+      function renderLoading() {
+        app.innerHTML = `
+          <section class="empty">
+            <h2>正在加载最新看板</h2>
+            <p>统计数据仍保存在当前浏览器中，正在使用线上最新版本重新生成界面。</p>
+          </section>
+        `;
+      }
+
+      async function refreshDashboardHtml(payload) {
+        if (!Array.isArray(payload.summaryRows)) {
+          return payload;
+        }
+
+        const respondentDetailFile = (payload.files || []).find(
+          (file) => file.name === "respondent_detail.csv",
+        );
+        const requestBody = {
+          month: payload.summary?.month || payload.runMeta?.month || "",
+          summaryRows: payload.summaryRows,
+        };
+
+        if (respondentDetailFile?.content) {
+          requestBody.respondentDetailCsv = respondentDetailFile.content;
+        } else {
+          requestBody.respondentDetailCsv = "";
+        }
+
+        const response = await fetch("/api/render_dashboard", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(requestBody),
+        });
+        const responseText = await response.text();
+        let data = null;
+        try {
+          data = responseText ? JSON.parse(responseText) : null;
+        } catch (_) {
+          throw new Error(responseText || `看板刷新失败，状态码 ${response.status}`);
+        }
+        if (!response.ok || !data?.dashboardHtml) {
+          throw new Error(data?.detail || "无法加载最新看板界面");
+        }
+
+        payload.dashboardHtml = data.dashboardHtml;
+        payload.templateRefreshedAt = new Date().toISOString();
+        localStorage.setItem(DASHBOARD_STORAGE_KEY, JSON.stringify(payload));
+        return payload;
+      }
+
+      function renderDashboard(payload) {
+        const summary = payload.summary || {};
+        const files = payload.files || [];
+        const savedAt = payload.savedAt ? new Date(payload.savedAt).toLocaleString("zh-CN") : "-";
+
+        const statItems = [
+          ["月份", summary.month || "-"],
+          ["老师数", summary.teacherCount ?? "-"],
+          ["匹配反馈", summary.matchedCount ?? "-"],
+          ["反馈记录", summary.feedbackRecordCount ?? "-"],
+          ["未匹配", summary.unmatchedCount ?? "-"],
+          ["总课时", summary.totalTeacherHours != null ? Number(summary.totalTeacherHours).toFixed(2) : "-"],
+        ];
+
+        app.innerHTML = `
+          <section class="header">
+            <div>
+              <h1>${summary.month || ""} 老师反馈加权看板</h1>
+              <p>最近生成时间：${savedAt}</p>
+            </div>
+            <div class="actions">
+              <button class="primary" id="backToUpload">重新上传数据</button>
+              <button class="secondary" id="clearDashboard">清除本次结果</button>
+            </div>
+          </section>
+          <section class="stats">
+            ${statItems
+              .map(
+                ([label, value]) => `
+                  <div class="stat">
+                    <div class="label">${label}</div>
+                    <div class="value">${value}</div>
+                  </div>
+                `,
+              )
+              .join("")}
+          </section>
+          <section class="downloads" id="downloads"></section>
+          <section class="dashboard-shell">
+            <iframe id="dashboardFrame" title="老师反馈加权看板"></iframe>
+          </section>
+        `;
+
+        document.getElementById("backToUpload").addEventListener("click", () => {
+          window.location.href = "/";
+        });
+        document.getElementById("clearDashboard").addEventListener("click", () => {
+          localStorage.removeItem(DASHBOARD_STORAGE_KEY);
+          revokeUrls();
+          renderEmpty();
+        });
+
+        const downloadsEl = document.getElementById("downloads");
+        files.forEach((file) => {
+          const link = document.createElement("a");
+          link.className = "download";
+          link.href = makeDownloadUrl(file);
+          link.download = file.name;
+          link.textContent = `下载 ${file.name}`;
+          downloadsEl.appendChild(link);
+        });
+
+        const frame = document.getElementById("dashboardFrame");
+        frame.srcdoc = payload.dashboardHtml || "";
+        frame.addEventListener("load", () => {
+          try {
+            const body = frame.contentWindow.document.body;
+            const html = frame.contentWindow.document.documentElement;
+            const height = Math.max(
+              body ? body.scrollHeight : 0,
+              html ? html.scrollHeight : 0,
+              1200,
+            );
+            frame.style.height = `${height + 24}px`;
+          } catch (_) {
+            frame.style.height = "1400px";
+          }
+        });
+      }
+
+      async function initializeDashboard() {
+        const raw = localStorage.getItem(DASHBOARD_STORAGE_KEY);
+        if (!raw) {
+          renderEmpty();
+          return;
+        }
+
+        let payload = null;
+        try {
+          payload = JSON.parse(raw);
+        } catch (_) {
+          localStorage.removeItem(DASHBOARD_STORAGE_KEY);
+          renderEmpty();
+          return;
+        }
+
+        renderLoading();
+        try {
+          payload = await refreshDashboardHtml(payload);
+        } catch (error) {
+          console.warn("加载最新看板界面失败，继续使用已保存版本。", error);
+        }
+
+        if (payload.dashboardHtml) {
+          renderDashboard(payload);
+        } else {
+          renderEmpty();
+        }
+      }
+
+      initializeDashboard();
+
+      window.addEventListener("beforeunload", revokeUrls);
+    </script>
+  </body>
+</html>

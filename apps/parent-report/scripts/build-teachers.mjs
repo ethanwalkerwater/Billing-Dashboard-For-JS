@@ -5,11 +5,14 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { mergeTeacherScoresFromFile } from "../src/teacher-scores.mjs";
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const APP_ROOT = path.resolve(__dirname, "..");
 const TEACHER_DIR = path.resolve(APP_ROOT, "assets/teacher");
 const SRC = path.resolve(TEACHER_DIR, "老师卡片.txt");
 const OUT = path.resolve(APP_ROOT, "data/teachers.json");
+const DEFAULT_SCORE_AVERAGES = path.resolve(APP_ROOT, "data/teacher-score-averages.csv");
 
 const SUBJECT_ORDER = ["数学", "物理", "化学", "经济", "英语"];
 const FIELD = { 姓名: "name", 学科: "subject", 头像: "photo", 标签: "tag", 简介: "desc", 学习提升: "improve", 责任心: "responsibility", 个人魅力: "charisma" };
@@ -23,7 +26,7 @@ const blocks = raw.split(/^---\s*$/m)
 
 const score = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n.toFixed(1) : null; };
 
-const teachers = [];
+let teachers = [];
 for (const block of blocks) {
   const o = {};
   for (const line of block.split("\n")) {
@@ -44,6 +47,18 @@ for (const block of blocks) {
     desc: o.desc || "",
     scores: { 学习提升: score(o.improve), 责任心: score(o.responsibility), 个人魅力: score(o.charisma) },
   });
+}
+
+const scoreCsvPath = process.env.TEACHER_SCORES_CSV
+  || (fs.existsSync(DEFAULT_SCORE_AVERAGES) ? DEFAULT_SCORE_AVERAGES : "");
+
+if (scoreCsvPath) {
+  const result = mergeTeacherScoresFromFile(teachers, scoreCsvPath);
+  teachers = result.teachers;
+  console.log(`合并老师评分 ${result.matched.length} 位 ← ${scoreCsvPath}`);
+  if (result.unmatchedSourceNames.length) {
+    console.warn("⚠ 评分表未匹配到老师卡片:", result.unmatchedSourceNames.join(", "));
+  }
 }
 
 teachers.sort((a, b) => {
