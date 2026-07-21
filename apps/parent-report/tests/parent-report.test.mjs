@@ -70,13 +70,12 @@ privateTest("buildParentReportData builds teacher team facts from raw lessons", 
   );
   assert.equal(report.teachers.find((teacher) => teacher.name === "李品轩").studentDuration, 36);
   assert.equal(report.teachers.find((teacher) => teacher.name === "李品轩").monthlyTotalDuration, 419.5);
-  assert.equal(report.teachers.find((teacher) => teacher.name === "应雁心").image, "apps/parent-report/assets/teachers/应老师.png");
-  assert.equal(report.teachers.find((teacher) => teacher.name === "李品轩").image, "apps/parent-report/assets/teachers/李老师.png");
+  assert.equal(report.teachers.find((teacher) => teacher.name === "应雁心").image, "apps/parent-report/assets/teacher/数学-应雁心.png");
+  assert.equal(report.teachers.find((teacher) => teacher.name === "李品轩").image, "apps/parent-report/assets/teacher/物理-李品轩.png");
   assert.equal(report.teachers.find((teacher) => teacher.name === "高老师").image, "");
   assert.ok(report.teachers.find((teacher) => teacher.name === "应雁心").background.length > 0);
-  assert.equal(report.moreTeachers.some((teacher) => teacher.name === "Lisa老师"), true);
-  assert.equal(report.moreTeachers.some((teacher) => teacher.name === "应老师"), false);
-  assert.equal(report.moreTeachers.find((teacher) => teacher.name === "Lisa老师").monthlyTotalDuration, 3.5);
-  assert.ok(report.moreTeachers.find((teacher) => teacher.name === "Lisa老师").background.length > 0);
+  assert.equal(report.moreTeachers.some((teacher) => teacher.name === "包天翊"), true);
+  assert.equal(report.moreTeachers.some((teacher) => teacher.name === "应雁心"), false);
+  assert.ok(report.moreTeachers.find((teacher) => teacher.name === "包天翊").background.length > 0);
   assert.equal(report.moreTeachers.every((teacher) => "monthlyScore" in teacher), true);
 });

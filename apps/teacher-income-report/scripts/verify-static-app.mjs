@@ -32,6 +32,7 @@ assert.match(html, /ledgerPanel/, "must render income ledger panel");
 
 const app = fs.readFileSync(f("web/assets/app.js"), "utf8");
 assert.match(app, /buildPayrollReport/, "must calculate payroll through billing-core");
+assert.match(app, /nameAliases: state\.master\.nameAliases/, "local defaults must pass custom name aliases to payroll core");
 assert.match(app, /openMasterEditor/, "master data must be editable");
 assert.match(app, /addMasterRow/, "master data editor must support new rows");
 assert.match(app, /renderLedger/, "must render add/subtotal ledger");

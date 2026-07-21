@@ -7,7 +7,11 @@ import { spawnSync } from "node:child_process";
 
 import { renderFacultyCard } from "../src/render-faculty.mjs";
 
-test("renderFacultyCard can optimize embedded photos as jpeg data uris", () => {
+const hasImageMagick = spawnSync("magick", ["-version"]).status === 0;
+
+test("renderFacultyCard can optimize embedded photos as jpeg data uris", {
+  skip: !hasImageMagick && "ImageMagick is not installed",
+}, () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "jingshi-faculty-photo-"));
   const photo = path.join(tmp, "老师.png");
   const result = spawnSync("magick", [

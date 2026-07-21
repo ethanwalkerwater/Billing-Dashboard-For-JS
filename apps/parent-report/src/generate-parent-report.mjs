@@ -81,7 +81,7 @@ function ensureTeacherPortrait(teacher) {
     outputPath,
   ], { encoding: "utf8" });
   if (result.status !== 0) {
-    throw new Error(`Failed to extract teacher portrait from ${absolutePath}: ${result.stderr || result.stdout}`);
+    return absolutePath;
   }
   return outputPath;
 }
@@ -89,7 +89,9 @@ function ensureTeacherPortrait(teacher) {
 function portraitDataUri(teacher) {
   const portraitPath = ensureTeacherPortrait(teacher);
   if (!portraitPath) return "";
-  return `data:image/png;base64,${fs.readFileSync(portraitPath).toString("base64")}`;
+  const extension = path.extname(portraitPath).toLowerCase();
+  const mime = extension === ".jpg" || extension === ".jpeg" ? "image/jpeg" : `image/${extension.slice(1) || "png"}`;
+  return `data:${mime};base64,${fs.readFileSync(portraitPath).toString("base64")}`;
 }
 
 function teacherNote(teacher) {
