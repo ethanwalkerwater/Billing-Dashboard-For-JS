@@ -5,8 +5,9 @@
 `outputs/teacher-feedback/`；这两个目录都不会进入 Git 或 Vercel。
 
 ## 0. 先看这些文件
+- [全仓库数据目录与接口约定](../../data/README.md)
 - [AI 工作台说明](docs/AI工作台说明.md)
-- [本次目录整理计划](docs/plans/2026-04-12-workspace-cleanup.md)
+- [历史目录整理计划](docs/plans/2026-04-12-workspace-cleanup.md)
 - [主脚本](scripts/monthly_teacher_feedback.py)
 - [测试](tests/test_monthly_teacher_feedback.py)
 - [当前姓名映射](templates/name_mapping.csv)

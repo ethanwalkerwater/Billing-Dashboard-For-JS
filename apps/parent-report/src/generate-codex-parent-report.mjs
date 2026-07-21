@@ -9,7 +9,7 @@ const PROJECT_ROOT = path.resolve(__dirname, "../../..");
 const INPUT = process.env.JINGSHI_SCHEDULE_PATH || "data/local/shared/schedule.csv";
 const OUTPUT = "outputs/parent_reports/codex-ivy-2488-2026-03.html";
 const PORTRAIT_RENDER_DIR = path.resolve(PROJECT_ROOT, "outputs/parent_reports/teacher_info");
-const PORTRAIT_SOURCE_DIR = path.resolve(PROJECT_ROOT, "apps/parent-report/assets/teachers");
+const PORTRAIT_SOURCE_DIR = path.resolve(PROJECT_ROOT, "apps/parent-report/assets/teacher");
 
 function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>"']/g, (char) => ({
@@ -60,6 +60,16 @@ function portraitDataUri(teacher) {
     if (fs.existsSync(source)) {
       return `data:image/${ext.slice(1) === "jpg" ? "jpeg" : ext.slice(1)};base64,${fs.readFileSync(source).toString("base64")}`;
     }
+  }
+
+  const matchedPhoto = fs.readdirSync(PORTRAIT_SOURCE_DIR)
+    .find((file) => /\.(png|jpe?g|webp)$/iu.test(file)
+      && path.basename(file, path.extname(file)).endsWith(`-${name}`));
+  if (matchedPhoto) {
+    const source = path.join(PORTRAIT_SOURCE_DIR, matchedPhoto);
+    const ext = path.extname(matchedPhoto).toLowerCase();
+    const mime = ext === ".jpg" || ext === ".jpeg" ? "image/jpeg" : `image/${ext.slice(1)}`;
+    return `data:${mime};base64,${fs.readFileSync(source).toString("base64")}`;
   }
 
   return "";

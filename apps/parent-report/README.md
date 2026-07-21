@@ -12,7 +12,7 @@ src/
   export-parent-report-pdf.mjs    HTML → PDF（playwright-core）
   export-web-pdf.mjs
 tests/
-assets/teachers/                  老师头像图源
+assets/teacher/                   老师头像和师资卡数据源
 ```
 
 ## 命令（在仓库根用 workspace 调用）
@@ -29,6 +29,7 @@ npm run test        -w @jingshi/parent-report
 - 产物：仓库根 `outputs/parent_reports/`、`outputs/parent_reports_web/`
 - 脚本内 `PROJECT_ROOT` 锚定到仓库根（`path.resolve(__dirname, "../../..")`），
   故无论从哪运行，data/outputs 路径都稳定。
+- 完整的跨 app 数据约定见 [`data/README.md`](../../data/README.md)。
 
 ## 批量生成学生课时费明细 HTML
 
@@ -64,3 +65,7 @@ outputs/parent_reports/generated_pdfs/
 ```
 
 PDF 使用 Chromium 的矢量 PDF 输出，保留背景和图片，单份报告是一页连续长页，避免 A4 分页截断。
+
+## 图片工具
+
+ImageMagick 是可选优化依赖。安装 `magick` 后，报告会压缩和裁剪老师头像；未安装时会直接使用原图，不会阻断 HTML 生成。

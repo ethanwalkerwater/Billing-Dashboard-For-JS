@@ -14,6 +14,17 @@
 
 统一入口：https://jingshi.vercel.app/
 
+## 文档入口
+
+操作、字段和业务规则跟随对应模块维护，不再放在根 `docs/` 中产生多份过期副本。
+
+- [课时账单](apps/billing-report/README.md)
+- [老师收入](apps/teacher-income-report/README.md)
+- [老师反馈](apps/teacher-feedback/README.md)
+- [家长报告](apps/parent-report/README.md)
+- [计费内核](packages/billing-core/README.md)
+- [数据目录与接口约定](data/README.md)
+
 ## 目录结构
 
 ```text
@@ -69,7 +80,7 @@ npm run build:teacher-income-report
 npm run build:teacher-feedback
 ```
 
-`npm test` 会运行共享内核、家长报告和老师反馈测试。依赖旧版 Ivy 私有样本具体数值的视觉验收测试默认跳过，避免每次更换业务课表就误报；其余测试必须通过。
+`npm test` 会运行共享内核、课时账单 Python、老师收入静态校验、家长报告和老师反馈测试。依赖旧版 Ivy 私有样本具体数值的视觉验收测试默认跳过；依赖 ImageMagick 的图片优化测试在工具未安装时跳过。其余测试必须通过。
 
 ## 数据流
 

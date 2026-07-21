@@ -26,6 +26,20 @@ npm run test:python -w @jingshi/billing-report
 
 计算逻辑不在本项目，统一在 [`packages/billing-core`](../../packages/billing-core)。
 
+## 数据契约
+
+- 网页端：用户手动上传课表 CSV，数据只在浏览器内处理。
+- Python CLI 默认读取仓库根 `data/local/shared/schedule.csv`。
+- Python CLI 默认写入 `outputs/course_billing_report/course_billing_report.html`。
+- 课表标准字段和隐私规则见 [`data/README.md`](../../data/README.md)。
+
+如需临时指定其他课表：
+
+```bash
+python3 apps/billing-report/python/course_billing_report.py --input /path/to/schedule.csv
+```
+
 ## Vercel 部署
 在 Vercel 项目设置里把 **Root Directory** 设为 `apps/billing-report`。
 构建产物为 `dist/`（`vercel.json` 已声明 buildCommand / outputDirectory）。
+真实 CSV 不进入构建产物。

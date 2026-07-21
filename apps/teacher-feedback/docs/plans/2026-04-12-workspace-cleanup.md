@@ -1,4 +1,6 @@
-# Workspace Cleanup Implementation Plan
+# Workspace Cleanup Implementation Plan（历史）
+
+> 本文档记录 2026-04-12 的执行过程。当前数据和输出路径以 app README 与仓库 `data/README.md` 为准。
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
@@ -14,8 +16,8 @@
 - Create: `docs/AI工作台说明.md`
 - Reference: `README_月度反馈处理模板.md`
 - Reference: `scripts/monthly_teacher_feedback.py`
-- Reference: `outputs/2026-02/run_meta.json`
-- Reference: `outputs/2026-03/run_meta.json`
+- Reference: `outputs/teacher-feedback/2026-02/run_meta.json`
+- Reference: `outputs/teacher-feedback/2026-03/run_meta.json`
 
 1. 识别根目录中的原始输入、脚本、模板、测试与产出物。
 2. 明确保留项、可删除项与谨慎删除项。
@@ -35,7 +37,7 @@
 **Files:**
 - Delete content from: `./.DS_Store`
 - Delete content from: `./docs/.DS_Store`
-- Delete content from: `./outputs/.DS_Store`
+- Delete content from: `./outputs/teacher-feedback/.DS_Store`
 - Delete content from: `./scripts/.DS_Store`
 - Delete directory contents from: `./scripts/__pycache__/`
 - Delete directory contents from: `./tests/__pycache__/`
@@ -52,4 +54,4 @@
 
 1. 运行 `find . -name '.DS_Store' -o -name '__pycache__'`，预期无输出。
 2. 运行 `python3 -m unittest tests/test_monthly_teacher_feedback.py`，预期通过。
-3. 复查目录结构，确认 `outputs/2026-02` 与 `outputs/2026-03` 仍保留。
+3. 复查目录结构，确认 `outputs/teacher-feedback/2026-02` 与 `outputs/teacher-feedback/2026-03` 仍保留。

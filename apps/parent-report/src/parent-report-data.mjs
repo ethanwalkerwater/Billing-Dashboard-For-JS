@@ -1,34 +1,19 @@
 import { buildReportFromCsv } from "@jingshi/billing-core";
+import { createRequire } from "node:module";
 
 const WEEKDAYS = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
-const TEACHER_IMAGES = {
-  应雁心: "apps/parent-report/assets/teachers/应老师.png",
-  李品轩: "apps/parent-report/assets/teachers/李老师.png",
-};
-
-const TEACHER_PROFILES = [
-  { name: "Lisa老师", actualName: "Lisa老师", image: "apps/parent-report/assets/teachers/Lisa老师.png", background: ["国际双语物理教学背景，擅长 IGCSE 与 Alevel 物理基础搭建。"] },
-  { name: "傅老师", actualName: "傅威程", image: "apps/parent-report/assets/teachers/傅老师.png", background: ["金融科技与数学竞赛背景，擅长数学竞赛、逻辑训练与阶段性拔高。"] },
-  { name: "包老师", actualName: "包天翊", image: "apps/parent-report/assets/teachers/包老师.png", background: ["金融数学背景，擅长 Alevel 数学、IB 数学与高阶数学思维训练。"] },
-  { name: "应老师", actualName: "应雁心", image: "apps/parent-report/assets/teachers/应老师.png", background: ["国际课程亲历者，擅长 Alevel 高数、数学刷题与体系化复盘。"] },
-  { name: "张老师", actualName: "张文豪", image: "apps/parent-report/assets/teachers/张老师.png", background: ["数学与应用数学背景，擅长 Alevel 数学、IB 数学与 AP 数学。"] },
-  { name: "张老师", actualName: "张劭景", image: "apps/parent-report/assets/teachers/张老师-1.png", background: ["英式数学教育背景，擅长 IGCSE 与 A-level 数学。"] },
-  { name: "朱老师", actualName: "朱毅博", image: "apps/parent-report/assets/teachers/朱老师.png", background: ["化学工程与生物科技背景，擅长 SAT 科学、Alevel 生化与竞赛辅导。"] },
-  { name: "朱老师", actualName: "朱凯宁", image: "apps/parent-report/assets/teachers/朱老师-1.png", background: ["中文教育背景，擅长语文阅读、写作表达与国际学校中文课程。"] },
-  { name: "李老师", actualName: "李品轩", image: "apps/parent-report/assets/teachers/李老师.png", background: ["国际教育与生物科学背景，擅长 Alevel 物理、物理刷题与科学课程。"] },
-  { name: "林老师", actualName: "Valentina Lin", image: "apps/parent-report/assets/teachers/林老师.png", background: ["英语文学背景，擅长英语文学、写作、EFL/ESL 与学术表达。"] },
-  { name: "汤老师", actualName: "汤朔", image: "apps/parent-report/assets/teachers/汤老师.png", background: ["建筑与物理背景，擅长 AMC、IGCSE 数学与物理课程。"] },
-  { name: "王老师", actualName: "王储君", image: "apps/parent-report/assets/teachers/王老师.png", background: ["英语教学背景，擅长雅思、托福、剑桥英语与青少年英语能力培养。"] },
-  { name: "秦北辰", actualName: "秦北辰", image: "apps/parent-report/assets/teachers/秦北辰.png", background: ["经济学背景，擅长 Alevel 经济与申请方向学术支持。"] },
-  { name: "罗建文", actualName: "罗健文", image: "apps/parent-report/assets/teachers/罗建文.png", background: ["会计金融背景，擅长 Alevel 会计、IGCSE 会计与商科课程。"] },
-  { name: "蒋老师", actualName: "蒋妍", image: "apps/parent-report/assets/teachers/蒋老师.png", background: ["工商管理与双语教学背景，擅长中文、PBL 项目与低龄学科启蒙。"] },
-  { name: "蓝老师", actualName: "蓝浪", image: "apps/parent-report/assets/teachers/蓝老师.png", background: ["教育政策与英语语言文学背景，擅长雅思、托福与英文阅读写作。"] },
-  { name: "邓老师", actualName: "邓老师（地理）", image: "apps/parent-report/assets/teachers/邓老师.png", background: ["统计与计算机背景，擅长数学、统计、计算机课程与美高体系辅导。"] },
-  { name: "郑老师", actualName: "郑唯梓", image: "apps/parent-report/assets/teachers/郑老师.png", background: ["北大理科背景，擅长 IGCSE/A-Level 数学与物理、数学竞赛。"] },
-  { name: "陈老师", actualName: "陈璐怡", image: "apps/parent-report/assets/teachers/陈老师.png", background: ["TESOL 与英语教学背景，擅长托福、SAT/ACT 文法与英语全科。"] },
-  { name: "陈老师", actualName: "陈依依", image: "apps/parent-report/assets/teachers/陈老师-1.png", background: ["牛津生物化学研究背景，擅长 IGCSE/A-Level 数学、物理、化学与 IB 课程。"] },
-  { name: "黄老师", actualName: "黄钢", image: "apps/parent-report/assets/teachers/黄老师.png", background: ["翻译学背景，擅长雅思、托福、Alevel 文学与英文写作。"] },
-];
+const require = createRequire(import.meta.url);
+const TEACHER_CATALOG = require("../data/teachers.json").teachers || [];
+const TEACHER_ASSET_ROOT = "apps/parent-report/assets/teacher";
+const TEACHER_IMAGES = Object.fromEntries(TEACHER_CATALOG
+  .filter((teacher) => teacher.photo)
+  .map((teacher) => [teacher.name, `${TEACHER_ASSET_ROOT}/${teacher.photo}`]));
+const TEACHER_PROFILES = TEACHER_CATALOG.map((teacher) => ({
+  name: teacher.name,
+  actualName: teacher.name,
+  image: teacher.photo ? `${TEACHER_ASSET_ROOT}/${teacher.photo}` : "",
+  background: teacher.desc ? [teacher.desc] : ["菁仕授课团队成员。"],
+}));
 
 const TEACHER_BACKGROUND = {
   应雁心: [

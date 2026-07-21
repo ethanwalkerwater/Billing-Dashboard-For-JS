@@ -20,6 +20,7 @@ const state = {
     studentOwnership: [],
     teacherScores: [],
     parameters: { ...DEFAULT_PAYROLL_PARAMETERS },
+    nameAliases: {},
   },
   monthly: {
     taxSocial: [],
@@ -399,6 +400,7 @@ function payrollInput() {
     studentOwnership: state.master.studentOwnership,
     teacherScores: state.master.teacherScores,
     parameters: state.master.parameters,
+    nameAliases: state.master.nameAliases,
     taxSocial: state.monthly.taxSocial,
     reimbursements: state.monthly.reimbursements,
   };
@@ -437,6 +439,7 @@ async function loadDefaults() {
     state.master.studentOwnership = defaults.studentOwnership || [];
     state.master.teacherScores = defaults.teacherScores || [];
     state.master.parameters = { ...DEFAULT_PAYROLL_PARAMETERS, ...(defaults.parameters || {}) };
+    state.master.nameAliases = defaults.nameAliases || {};
     render();
   } catch {
     render();
