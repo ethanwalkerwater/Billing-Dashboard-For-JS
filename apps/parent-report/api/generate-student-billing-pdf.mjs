@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,8 +15,31 @@ const PHOTO_DIR = path.resolve(APP_ROOT, "assets/teacher-optimized");
 const CJK_FONT_PATH = path.resolve(APP_ROOT, "assets/fonts/NotoSerifSC-Regular.ttf");
 const LOCAL_CHROME = process.env.CHROME_EXECUTABLE_PATH
   || "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+const PDF_TEMP_ROOT = path.join(tmpdir(), "jingshi-parent-report");
+const PDF_TEMP_PREFIX = "session-";
+const PDF_TEMP_STALE_MS = 15 * 60 * 1_000;
+const PDF_TEMP_MIN_FREE_BYTES = 96 * 1024 * 1024;
+const PDF_DISK_CACHE_BYTES = 1024 * 1024;
+const RUNTIME_INSTANCE_ID = randomUUID().slice(0, 8);
 const photoCache = new Map();
 let cjkFontDataUriPromise;
+let serverlessChromiumRuntimePromise;
+
+class PdfInfrastructureError extends Error {
+  constructor(message, options = {}) {
+    super(message, options);
+    this.name = "PdfInfrastructureError";
+    this.statusCode = 503;
+  }
+}
+
+class PdfInputError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "PdfInputError";
+    this.statusCode = 422;
+  }
+}
 
 function isServerlessRuntime() {
   return Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
@@ -73,34 +97,237 @@ export async function ensureServerlessFontconfig() {
   process.env.FONTCONFIG_FILE = configPath;
 }
 
-async function browserLaunchOptions() {
+export function serverlessChromiumArgs(args, cacheDirectory) {
+  return [
+    ...args.filter((argument) => (
+      !argument.startsWith("--disk-cache-size=")
+      && !argument.startsWith("--disk-cache-dir=")
+    )),
+    `--disk-cache-size=${PDF_DISK_CACHE_BYTES}`,
+    `--disk-cache-dir=${cacheDirectory}`,
+  ];
+}
+
+export async function availableTemporaryBytes(directory = tmpdir()) {
+  const statistics = await fs.statfs(directory);
+  return Number(statistics.bavail) * Number(statistics.bsize);
+}
+
+export async function cleanupStalePdfSessions({
+  root = PDF_TEMP_ROOT,
+  now = Date.now(),
+  staleAfterMs = PDF_TEMP_STALE_MS,
+} = {}) {
+  await fs.mkdir(root, { recursive: true });
+  const entries = await fs.readdir(root, { withFileTypes: true });
+  let removed = 0;
+
+  await Promise.all(entries.map(async (entry) => {
+    if (!entry.isDirectory() || !entry.name.startsWith(PDF_TEMP_PREFIX)) return;
+    const directory = path.join(root, entry.name);
+    const statistics = await fs.stat(directory).catch(() => null);
+    if (!statistics || now - statistics.mtimeMs <= staleAfterMs) return;
+    try {
+      await fs.rm(directory, {
+        recursive: true,
+        force: true,
+        maxRetries: 3,
+        retryDelay: 50,
+      });
+      removed += 1;
+    } catch (error) {
+      console.error(`[pdf-runtime] 无法回收陈旧临时目录 ${entry.name}`, error);
+    }
+  }));
+
+  return removed;
+}
+
+export async function createPdfTemporarySession({ root = PDF_TEMP_ROOT } = {}) {
+  await cleanupStalePdfSessions({ root });
+  const freeBytes = await availableTemporaryBytes(path.dirname(root));
+  if (freeBytes < PDF_TEMP_MIN_FREE_BYTES) {
+    throw new PdfInfrastructureError(
+      `PDF 服务临时空间不足（剩余 ${Math.floor(freeBytes / 1024 / 1024)} MiB）`,
+    );
+  }
+
+  const directory = await fs.mkdtemp(path.join(root, PDF_TEMP_PREFIX));
+  const profileDirectory = path.join(directory, "profile");
+  const artifactsDirectory = path.join(directory, "artifacts");
+  const cacheDirectory = path.join(directory, "cache");
+  try {
+    await Promise.all([
+      fs.mkdir(profileDirectory),
+      fs.mkdir(artifactsDirectory),
+      fs.mkdir(cacheDirectory),
+    ]);
+  } catch (error) {
+    await fs.rm(directory, { recursive: true, force: true }).catch(() => {});
+    throw error;
+  }
+
+  return {
+    directory,
+    profileDirectory,
+    artifactsDirectory,
+    cacheDirectory,
+    async cleanup() {
+      await fs.rm(directory, {
+        recursive: true,
+        force: true,
+        maxRetries: 3,
+        retryDelay: 50,
+      });
+    },
+  };
+}
+
+async function browserLaunchOptions({ cacheDirectory } = {}) {
   if (isServerlessRuntime()) {
-    const { default: serverlessChromium } = await import("@sparticuz/chromium");
-    // PDF 生成不需要 WebGL；关闭 graphics mode 后 args 里的 SwiftShader/ANGLE
-    // 旗标会换成 --disable-webgl，避免 serverless Chromium 在 Page.printToPDF
-    // 阶段崩溃（线上实测报 Printing failed）。
-    serverlessChromium.setGraphicsMode = false;
-    // Register the font with fontconfig instead of embedding its 23 MB binary
-    // as a 33 MB base64 data URI in every report page. Large data-URI pages can
-    // make serverless Chromium fail in Page.printToPDF before it returns a PDF.
-    // @sparticuz/chromium's font() creates /tmp/fonts before executablePath()
-    // can unpack its fonts.conf there. Own the config explicitly so a cold or
-    // warm Lambda always starts Chromium with a valid fontconfig setup.
-    await ensureServerlessFontconfig();
-    await serverlessChromium.font(CJK_FONT_PATH);
+    if (!serverlessChromiumRuntimePromise) {
+      serverlessChromiumRuntimePromise = (async () => {
+        const { default: serverlessChromium } = await import("@sparticuz/chromium");
+        // PDF 生成不需要 WebGL；关闭 graphics mode 后 args 里的 SwiftShader/ANGLE
+        // 旗标会换成 --disable-webgl，避免 serverless Chromium 在 Page.printToPDF
+        // 阶段崩溃（线上实测报 Printing failed）。
+        serverlessChromium.setGraphicsMode = false;
+        // Register the font with fontconfig instead of embedding its 23 MB binary
+        // as a 33 MB base64 data URI in every report page. Large data-URI pages can
+        // make serverless Chromium fail in Page.printToPDF before it returns a PDF.
+        // A shared initialization promise prevents concurrent cold invocations in
+        // one Fluid Compute instance from extracting the same Chromium files twice.
+        await ensureServerlessFontconfig();
+        await serverlessChromium.font(CJK_FONT_PATH);
+        return {
+          args: serverlessChromium.args,
+          executablePath: await serverlessChromium.executablePath(),
+          headless: serverlessChromium.headless ?? true,
+        };
+      })().catch((error) => {
+        serverlessChromiumRuntimePromise = undefined;
+        throw error;
+      });
+    }
+    const runtime = await serverlessChromiumRuntimePromise;
     return {
-      args: serverlessChromium.args,
-      executablePath: await serverlessChromium.executablePath(),
+      args: serverlessChromiumArgs(runtime.args, cacheDirectory),
+      executablePath: runtime.executablePath,
       // v138 的 args 已内置 --headless='shell'（chrome-headless-shell），
       // serverlessChromium.headless 在该版本已被移除，保持 undefined 让
       // Playwright 用默认 headless 即可，用户 args 里的 shell 旗标优先生效。
-      headless: serverlessChromium.headless ?? true,
+      headless: runtime.headless,
     };
   }
   return {
     executablePath: LOCAL_CHROME,
     headless: true,
   };
+}
+
+// "Target page, context or browser has been closed" 只是症状：它说明 Chromium
+// 进程在 launch 之后死亡（崩溃、被系统杀死、或本地 Chrome 自动更新替换了二进制）。
+// 真正的错误永远是被这条通用消息盖住的上游异常，所以重试逻辑必须区分
+// “浏览器已经死了”（只能换浏览器重来）和“页面级错误”（可在原浏览器内换页重试）。
+export function isBrowserDisconnectError(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  return /has been closed|target closed|connection closed|browser disconnected/i.test(message);
+}
+
+async function logTemporarySpace(event) {
+  if (!isServerlessRuntime()) return;
+  const freeBytes = await availableTemporaryBytes().catch(() => null);
+  const freeMiB = freeBytes == null ? null : Math.floor(freeBytes / 1024 / 1024);
+  console.info(`[pdf-runtime] ${event} instance=${RUNTIME_INSTANCE_ID} tmpFreeMiB=${freeMiB ?? "unknown"}`);
+}
+
+async function launchLocalBrowser(viewport) {
+  const browser = await playwrightChromium.launch(await browserLaunchOptions());
+  let closeRequested = false;
+  browser.on("disconnected", () => {
+    if (!closeRequested) {
+      console.error("[pdf] Chromium 进程意外断开（崩溃或被系统杀死）");
+    }
+  });
+  return {
+    isConnected: () => browser.isConnected(),
+    initialPage: () => browser.newPage({ viewport, deviceScaleFactor: 1 }),
+    newPage: () => browser.newPage({ viewport, deviceScaleFactor: 1 }),
+    async close() {
+      closeRequested = true;
+      await browser.close().catch(() => {});
+    },
+  };
+}
+
+async function launchServerlessBrowser(viewport) {
+  const temporarySession = await createPdfTemporarySession();
+  let context;
+  let closeRequested = false;
+  let contextClosed = false;
+
+  try {
+    const options = await browserLaunchOptions({
+      cacheDirectory: temporarySession.cacheDirectory,
+    });
+    const freeBytes = await availableTemporaryBytes();
+    if (freeBytes < PDF_TEMP_MIN_FREE_BYTES) {
+      throw new PdfInfrastructureError(
+        `Chromium 解压后临时空间不足（剩余 ${Math.floor(freeBytes / 1024 / 1024)} MiB）`,
+      );
+    }
+    context = await playwrightChromium.launchPersistentContext(
+      temporarySession.profileDirectory,
+      {
+        ...options,
+        artifactsDir: temporarySession.artifactsDirectory,
+        viewport,
+        deviceScaleFactor: 1,
+      },
+    );
+    context.on("close", () => {
+      contextClosed = true;
+      if (!closeRequested) {
+        void logTemporarySpace("chromium-disconnected");
+      }
+    });
+
+    return {
+      isConnected: () => !contextClosed,
+      initialPage: async () => context.pages().find((page) => !page.isClosed())
+        || context.newPage(),
+      newPage: () => context.newPage(),
+      async close() {
+        closeRequested = true;
+        try {
+          await context.close().catch(() => {});
+        } finally {
+          await temporarySession.cleanup().catch((error) => {
+            console.error("[pdf-runtime] 本次请求临时目录清理失败", error);
+          });
+          await logTemporarySpace("session-cleaned");
+        }
+      },
+    };
+  } catch (error) {
+    await context?.close().catch(() => {});
+    await temporarySession.cleanup().catch(() => {});
+    throw error;
+  }
+}
+
+async function launchBrowser(viewport) {
+  return isServerlessRuntime()
+    ? launchServerlessBrowser(viewport)
+    : launchLocalBrowser(viewport);
+}
+
+export async function runPdfSession(session, render) {
+  try {
+    return await render(session);
+  } finally {
+    await session.close();
+  }
 }
 
 async function prepareReportPage(page, html) {
@@ -224,13 +451,18 @@ function sectionPdfOptions(section) {
   };
 }
 
-async function printSectionPdf(browser, html, page, section, viewport) {
+async function printSectionPdf(session, html, page, section) {
   await showOnlySection(page, section.index);
   try {
     return await page.pdf(sectionPdfOptions(section));
   } catch (error) {
+    // 浏览器进程已死时不能再 newPage——那只会抛出 "browser has been closed"
+    // 把 page.pdf 的真实崩溃原因吞掉。直接上抛，交给外层换浏览器重试。
+    if (!session.isConnected() || isBrowserDisconnectError(error)) {
+      throw error;
+    }
     // serverless Chromium 偶发在 Page.printToPDF 崩溃；用全新 page 重试一次。
-    const retryPage = await browser.newPage({ viewport, deviceScaleFactor: 1 });
+    const retryPage = await session.newPage();
     try {
       await prepareReportPage(retryPage, html);
       await showOnlySection(retryPage, section.index);
@@ -243,10 +475,10 @@ async function printSectionPdf(browser, html, page, section, viewport) {
 
 export async function generateStudentBillingPdfBuffer({ report, teachers }) {
   if (!report?.studentName || !Array.isArray(report.courseLines)) {
-    throw new Error("报告数据不完整");
+    throw new PdfInputError("报告数据不完整");
   }
   if (!Array.isArray(teachers)) {
-    throw new Error("老师资料不完整");
+    throw new PdfInputError("老师资料不完整");
   }
 
   const [preparedTeachers, cjkFontDataUri] = await Promise.all([
@@ -258,21 +490,54 @@ export async function generateStudentBillingPdfBuffer({ report, teachers }) {
     cjkFontDataUri,
     cjkFontFormat: "truetype",
   });
-  const browser = await playwrightChromium.launch(await browserLaunchOptions());
 
-  try {
-    const viewport = { width: 1120, height: 1200 };
-    const page = await browser.newPage({
-      viewport,
-      deviceScaleFactor: 1,
-    });
+  // 浏览器进程崩溃是环境性故障（内存压力、serverless 回收、本地 Chrome 自动更新），
+  // 与报告内容无关，换一个全新浏览器多半能成功。内容性错误（数据缺失、字体断言）
+  // 重试无意义，原样抛出。最多两次尝试，避免把瞬时故障放大成死循环。
+  let lastError;
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    try {
+      return await renderReportPdfWithFreshBrowser(html);
+    } catch (error) {
+      lastError = error;
+      if (!isBrowserDisconnectError(error) || attempt === 2) {
+        if (isBrowserDisconnectError(error)) {
+          throw new PdfInfrastructureError("Chromium 在生成 PDF 时意外退出", {
+            cause: error,
+          });
+        }
+        throw error;
+      }
+      const freeBytes = isServerlessRuntime()
+        ? await availableTemporaryBytes().catch(() => 0)
+        : Number.POSITIVE_INFINITY;
+      if (freeBytes < PDF_TEMP_MIN_FREE_BYTES) {
+        throw new PdfInfrastructureError(
+          `PDF 服务临时空间不足（剩余 ${Math.floor(freeBytes / 1024 / 1024)} MiB）`,
+          { cause: error },
+        );
+      }
+      console.error(
+        `[pdf] 第 ${attempt} 次生成中断（${error instanceof Error ? error.message : String(error)}），换全新浏览器重试`,
+      );
+    }
+  }
+  throw lastError;
+}
+
+async function renderReportPdfWithFreshBrowser(html) {
+  const viewport = { width: 1120, height: 1200 };
+  const session = await launchBrowser(viewport);
+
+  return runPdfSession(session, async () => {
+    const page = await session.initialPage();
     await prepareReportPage(page, html);
     const sections = await sectionMeasurements(page);
 
     const buffers = [];
 
     for (const section of sections) {
-      buffers.push(await printSectionPdf(browser, html, page, section, viewport));
+      buffers.push(await printSectionPdf(session, html, page, section));
     }
     const output = await mergePdfBuffers(buffers);
     try {
@@ -280,9 +545,8 @@ export async function generateStudentBillingPdfBuffer({ report, teachers }) {
       return output;
     } catch (error) {
       if (!isServerlessRuntime()) throw error;
-      return renderRasterPdf(page, sections);
+      // 必须等待截图和 PDF 保存结束后才能进入 runPdfSession 的 finally 关闭 context。
+      return await renderRasterPdf(page, sections);
     }
-  } finally {
-    await browser.close();
-  }
+  });
 }

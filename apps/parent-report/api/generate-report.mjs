@@ -25,6 +25,13 @@ export default async function handler(request, response) {
     response.status(200).send(buffer);
   } catch (error) {
     console.error(error);
-    response.status(400).send(error instanceof Error ? error.message : String(error));
+    const statusCode = Number(error?.statusCode);
+    const status = Number.isInteger(statusCode) && statusCode >= 400 && statusCode < 600
+      ? statusCode
+      : 500;
+    const message = status >= 500
+      ? "PDF 生成服务暂时不可用，请稍后重试"
+      : error instanceof Error ? error.message : String(error);
+    response.status(status).send(message);
   }
 }
