@@ -93,6 +93,8 @@ Vercel Lambda 没有 macOS 中文字体。Function 随部署包携带 `NotoSerif
 
 生成前会等待 `document.fonts` 和全部老师图片；生成后会检查每一页是否包含字体资源。Serverless 矢量打印如仍异常，会对已完成字体渲染的页面做逐页图像降级，避免返回只有边框和图片、没有可见文字的 PDF。
 
+Vercel 的可写 `/tmp` 只有 500 MB，而解压后的 Chromium 与运行库会固定占用约 203 MiB。每次 PDF 请求必须使用 `/tmp/jingshi-parent-report/session-*` 下独立的 profile、artifacts 和 1 MiB 磁盘缓存，并在浏览器 context 关闭后删除整个请求目录。只允许回收超过 15 分钟的同前缀陈旧目录；不得清空 `/tmp`，也不得删除共享的 `/tmp/chromium`、`/tmp/fonts` 或 `/tmp/fonts-cache`。这项隔离同时保护 Vercel Fluid Compute 下可能并行执行的请求。
+
 字体或 PDF 逻辑变更不能只做本地验证。至少需要：
 
 ```bash

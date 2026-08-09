@@ -20,7 +20,11 @@ import {
 } from "../src/student-billing-batch-data.mjs";
 import {
   assertPdfHasTextResources,
+  cleanupStalePdfSessions,
+  createPdfTemporarySession,
   ensureServerlessFontconfig,
+  runPdfSession,
+  serverlessChromiumArgs,
 } from "../api/generate-student-billing-pdf.mjs";
 import { renderStudentBillingReportHtml } from "../src/render-student-billing-report.mjs";
 
@@ -169,5 +173,73 @@ test("serverless fontconfig is initialized even when the font directory already 
     if (previousFile === undefined) delete process.env.FONTCONFIG_FILE;
     else process.env.FONTCONFIG_FILE = previousFile;
     await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("serverless Chromium cache is bounded inside the request-owned directory", () => {
+  const args = serverlessChromiumArgs([
+    "--no-sandbox",
+    "--disk-cache-size=33554432",
+    "--disk-cache-dir=/tmp/shared-cache",
+  ], "/tmp/jingshi-parent-report/session-test/cache");
+
+  assert.equal(args.includes("--disk-cache-size=33554432"), false);
+  assert.equal(args.includes("--disk-cache-dir=/tmp/shared-cache"), false);
+  assert.equal(args.includes("--disk-cache-size=1048576"), true);
+  assert.equal(
+    args.includes("--disk-cache-dir=/tmp/jingshi-parent-report/session-test/cache"),
+    true,
+  );
+});
+
+test("PDF session waits for rendering before closing browser resources", async () => {
+  const events = [];
+  const session = {
+    async close() {
+      events.push("close");
+    },
+  };
+
+  const result = await runPdfSession(session, async () => {
+    events.push("render-start");
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    events.push("render-finished");
+    return "pdf";
+  });
+
+  assert.equal(result, "pdf");
+  assert.deepEqual(events, ["render-start", "render-finished", "close"]);
+});
+
+test("temporary PDF cleanup removes only stale owned sessions", async () => {
+  const root = await fs.mkdtemp(path.join(tmpdir(), "parent-report-session-root-"));
+  const oldSession = path.join(root, "session-old");
+  const activeSession = path.join(root, "session-active");
+  const unrelated = path.join(root, "unrelated-data");
+  await Promise.all([
+    fs.mkdir(oldSession),
+    fs.mkdir(activeSession),
+    fs.mkdir(unrelated),
+  ]);
+  const now = Date.now();
+  const oldDate = new Date(now - 20 * 60 * 1_000);
+  await fs.utimes(oldSession, oldDate, oldDate);
+
+  try {
+    const removed = await cleanupStalePdfSessions({ root, now });
+    assert.equal(removed, 1);
+    await assert.rejects(fs.access(oldSession));
+    await assert.doesNotReject(fs.access(activeSession));
+    await assert.doesNotReject(fs.access(unrelated));
+
+    const session = await createPdfTemporarySession({ root });
+    assert.equal(session.directory.startsWith(`${root}/session-`), true);
+    await assert.doesNotReject(fs.access(session.profileDirectory));
+    await assert.doesNotReject(fs.access(session.artifactsDirectory));
+    await assert.doesNotReject(fs.access(session.cacheDirectory));
+    await session.cleanup();
+    await assert.rejects(fs.access(session.directory));
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
   }
 });
