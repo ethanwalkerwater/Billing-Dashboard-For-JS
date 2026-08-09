@@ -91,7 +91,7 @@ export function buildRawScheduleLookup(scheduleCsvText) {
   const byStudentMonth = new Map();
 
   for (const record of lookup.values()) {
-    if (!record.month) continue;
+    if (!record.month || !record.reportable) continue;
     for (const student of record.studentList || []) {
       const studentKey = studentMatchKey(student);
       if (!studentKey) continue;

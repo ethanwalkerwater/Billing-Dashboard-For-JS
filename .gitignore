@@ -19,6 +19,7 @@ data/local/
 outputs/
 apps/billing-report/dist/
 apps/teacher-income-report/dist/
+apps/parent-report/dist/
 apps/teacher-feedback/.venv/
 apps/teacher-feedback/.vercel_python_packages/
 apps/teacher-feedback/templates/name_mapping.local.csv
@@ -29,3 +30,4 @@ apps/billing-report/web/assets/report-core.js
 apps/teacher-income-report/web/assets/report-core.js
 apps/teacher-income-report/web/assets/payroll-core.js
 apps/teacher-income-report/web/assets/payroll/
+.vercel

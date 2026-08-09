@@ -1,0 +1,9 @@
+{
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@sparticuz/chromium": "^138.0.2",
+    "pdf-lib": "^1.17.1",
+    "playwright-core": "^1.59.1"
+  }
+}

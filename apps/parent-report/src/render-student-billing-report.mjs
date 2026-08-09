@@ -83,6 +83,18 @@ function facultyOptions(options) {
   };
 }
 
+function embeddedCjkFontCss(source, format = "truetype") {
+  if (!source) return "";
+  return `
+    @font-face {
+      font-family: "Noto Serif SC";
+      src: url("${source}") format("${format}");
+      font-style: normal;
+      font-weight: 400;
+      font-display: block;
+    }`;
+}
+
 export function renderStudentBillingReportHtml(report, teachers, options = {}) {
   const facultySections = renderFacultyByRole(
     teachers,
@@ -97,6 +109,7 @@ export function renderStudentBillingReportHtml(report, teachers, options = {}) {
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>${esc(report.studentName)} ${esc(report.monthLabel)}课时费明细</title>
   <style>
+    ${embeddedCjkFontCss(options.cjkFontDataUri, options.cjkFontFormat)}
     :root {
       --paper: #eef1f6;
       --ivory: #fffdf8;
@@ -111,6 +124,7 @@ export function renderStudentBillingReportHtml(report, teachers, options = {}) {
       --platinum: #f5f6f8;
       --leave: #a4523f;
       --radius: 10px;
+      --report-serif: "Noto Serif SC", "Noto Serif CJK SC", "Songti SC", "STSong", SimSun, Georgia, "Times New Roman", serif;
     }
     * { box-sizing: border-box; }
     body {
@@ -121,7 +135,7 @@ export function renderStudentBillingReportHtml(report, teachers, options = {}) {
         linear-gradient(180deg, rgba(20,24,33,.035) 1px, transparent 1px),
         var(--paper);
       background-size: 30px 30px;
-      font-family: "Avenir Next", "Helvetica Neue", "PingFang SC", "Hiragino Sans GB", sans-serif;
+      font-family: var(--report-serif);
       font-size: 14px;
       line-height: 1.6;
       -webkit-font-smoothing: antialiased;
@@ -160,12 +174,12 @@ export function renderStudentBillingReportHtml(report, teachers, options = {}) {
       z-index: 0;
     }
     .cover-brandline, .closing-brandline { display: flex; align-items: baseline; gap: 10px; }
-    .brand-mark { font-family: "Songti SC", "STSong", serif; font-size: 30px; font-weight: 600; }
+    .brand-mark { font-family: var(--report-serif); font-size: 30px; font-weight: 600; }
     .brand-en { font-size: 11px; letter-spacing: .22em; color: var(--muted); text-transform: uppercase; }
     .cover-main { display: flex; flex-direction: column; justify-content: center; max-width: 620px; padding-top: 120px; }
     .cover-student-name {
       margin: 260px 0 0;
-      font-family: "Baskerville", "Times New Roman", "Songti SC", serif;
+      font-family: var(--report-serif);
       font-size: 112px;
       line-height: .92;
       font-weight: 500;
@@ -173,7 +187,7 @@ export function renderStudentBillingReportHtml(report, teachers, options = {}) {
     .cover-ref-divider { width: 100%; height: 1px; margin: 34px 0 54px; background: rgba(20,24,33,.72); }
     .cover-report-title { font-size: 44px; font-weight: 300; letter-spacing: .02em; }
     .cover-month-block { margin-top: 132px; }
-    .cover-month-block strong { display: block; font-family: "Songti SC", "STSong", serif; font-size: 28px; font-weight: 500; }
+    .cover-month-block strong { display: block; font-family: var(--report-serif); font-size: 28px; font-weight: 500; }
     .cover-footer, .closing-footer {
       display: grid;
       grid-template-columns: 1fr auto;
@@ -187,7 +201,7 @@ export function renderStudentBillingReportHtml(report, teachers, options = {}) {
     .cover-footer-amount strong, .closing-footer-amount { font-size: 42px; font-weight: 500; letter-spacing: 0; }
     .page-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 32px; margin-bottom: 32px; }
     .kicker { color: var(--champagne); font-size: 12px; font-weight: 800; letter-spacing: .18em; text-transform: uppercase; }
-    h2 { margin: 6px 0 0; font-family: "Songti SC", "STSong", serif; font-size: 36px; line-height: 1.2; font-weight: 600; }
+    h2 { margin: 6px 0 0; font-family: var(--report-serif); font-size: 36px; line-height: 1.2; font-weight: 600; }
     .page-num { color: var(--indigo); font-size: 12px; letter-spacing: .12em; }
     table { width: 100%; border-collapse: collapse; margin-top: 10px; background: white; border: 1px solid var(--hairline); }
     th, td { padding: 14px 12px; border-bottom: 1px solid var(--hairline); text-align: left; vertical-align: top; }
@@ -246,7 +260,7 @@ export function renderStudentBillingReportHtml(report, teachers, options = {}) {
     .legend .leave i { background: var(--leave); }
     .faculty-section { margin-top: 22px; }
     .faculty-section:first-of-type { margin-top: 0; }
-    .faculty-section h3 { margin: 0 0 14px; font-family: "Songti SC", "STSong", serif; font-size: 22px; font-weight: 600; }
+    .faculty-section h3 { margin: 0 0 14px; font-family: var(--report-serif); font-size: 22px; font-weight: 600; }
     .faculty-grid { display: grid; grid-template-columns: 1fr; gap: 14px; }
     .faculty-card { display: flex; gap: 14px; min-height: 156px; border: 1px solid var(--hairline); border-radius: var(--radius); background: white; overflow: hidden; }
     .faculty-photo { flex: 0 0 152px; background: #edf0f5; }
@@ -261,7 +275,7 @@ export function renderStudentBillingReportHtml(report, teachers, options = {}) {
     .faculty-metric-value { display: block; margin-top: 2px; color: #596273; font-size: 16px; font-weight: 600; white-space: nowrap; }
     .closing { display: flex; flex-direction: column; justify-content: space-between; min-height: 680px; }
     .closing-main { text-align: center; margin: auto 0; padding: 40px 0; }
-    .closing-main h2 { margin: 0 0 24px; font-family: "Songti SC", "STSong", serif; font-size: 48px; font-weight: 500; letter-spacing: .06em; }
+    .closing-main h2 { margin: 0 0 24px; font-family: var(--report-serif); font-size: 48px; font-weight: 500; letter-spacing: .06em; }
     .closing-divider { width: 40px; height: 1px; background: var(--champagne); margin: 0 auto 20px; }
     .closing-thanks { margin-bottom: 12px; font-size: 12px; letter-spacing: .22em; text-transform: uppercase; }
     .closing-note { margin: 0; color: var(--muted); font-size: 14px; }

@@ -125,3 +125,18 @@ test("renderStudentBillingReportHtml renders approved sections", () => {
   assert.match(html, /<h3>李品轩<\/h3>/);
   assert.match(html, /<h3>应雁心<\/h3>/);
 });
+
+test("renderStudentBillingReportHtml embeds the bundled CJK font for server PDFs", () => {
+  const html = renderStudentBillingReportHtml(report, teachers, {
+    embedTeacherPhotos: false,
+    cjkFontDataUri: "data:font/ttf;base64,Zm9udA==",
+    cjkFontFormat: "truetype",
+  });
+
+  assert.match(html, /@font-face\s*{/);
+  assert.match(html, /font-family:\s*"Noto Serif SC"/);
+  assert.match(html, /data:font\/ttf;base64,Zm9udA==/);
+  assert.match(html, /format\("truetype"\)/);
+  assert.match(html, /--report-serif:\s*"Noto Serif SC",\s*"Noto Serif CJK SC",\s*"Songti SC"/);
+  assert.match(html, /body\s*{[^}]*font-family:\s*var\(--report-serif\)/s);
+});

@@ -55,9 +55,9 @@ export function renderFacultyCard(t, {
   photoDir = "",
   optimizeEmbeddedPhotos = false,
 } = {}) {
-  const src = !t.photo ? ""
+  const src = t.photoDataUri || (!t.photo ? ""
     : embed && photoDir ? embedPhoto(photoDir, t.photo, { optimize: optimizeEmbeddedPhotos })
-    : photoBase + encodeURIComponent(t.photo);
+    : photoBase + encodeURIComponent(t.photo));
   const metrics = METRIC_KEYS.map((k) => {
     const v = t.scores && t.scores[k] ? t.scores[k] : "—";
     return `            <div class="faculty-metric"><span class="faculty-metric-label">${k}</span><strong class="faculty-metric-value">${esc(v)}</strong></div>`;

@@ -1,0 +1,16 @@
+{
+  "version": 2,
+  "cleanUrls": true,
+  "trailingSlash": false,
+  "installCommand": "npm install --workspaces=false --install-strategy=nested --include=optional",
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "functions": {
+    "api/generate-report.mjs": {
+      "maxDuration": 300,
+      "memory": 2048,
+      "includeFiles": "assets/**",
+      "excludeFiles": "assets/teacher/**"
+    }
+  }
+}
