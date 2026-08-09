@@ -52,6 +52,30 @@ python3 apps/teacher-feedback/scripts/monthly_teacher_feedback.py --month 2026-0
 - `outputs/teacher-feedback/2026-02/dashboard.html`：可视化看板（指标独立切换 + 总/学生/家长维度切换）
 - `outputs/teacher-feedback/2026-02/run_meta.json`：本次运行配置与统计信息
 
+## 历史累计总评分
+
+累计评分先逐月复用上述月度算法，再按老师每个月的实际授课课时对月度评分加权。这样课程量大的月份影响更大，且继续保留“次月反馈对应上月月报”、学生/家长合并、未反馈学员按月均分补齐等口径。默认还会接续 `outputs/teacher-feedback/<YYYY-MM>/` 中已有的历史月度结果：存在 `respondent_detail.csv` 时，会结合当前课表按最新算法重算；只有明细缺失时才回退到 `teacher_summary.csv`。当前反馈 CSV 能重新计算的月份优先，自动覆盖同月份的历史产物。
+
+```bash
+npm run generate:teacher-feedback-cumulative
+```
+
+默认读取 `data/local/teacher-feedback/feedback.csv`，自动发现其中最早至最晚的反馈提交月份，并写入：
+
+- `outputs/teacher-feedback/cumulative/teacher_scores.csv`：与月度精简评分表相同的三个评分维度，并增加前三项算术平均得到的“总评分”和并列排名。指标显示两位、总评分显示三位，按未截断的三项平均值降序排列；真正同分时使用相同排名。
+- `outputs/teacher-feedback/cumulative/teacher_summary.csv`：包含累计课时、覆盖率、参与评分的月份与课时，便于审计。
+- `outputs/teacher-feedback/cumulative/monthly_score_contributions.csv`：逐月评分与课时权重贡献，可直接复算累计结果。
+- `outputs/teacher-feedback/cumulative/run_meta.json`：输入、月份范围和累计口径。
+
+如果确认不需要已有历史结果，只计算当前反馈 CSV 覆盖的月份，可追加 `--ignore-historical-outputs`。
+
+使用其他反馈文件时：
+
+```bash
+python3 apps/teacher-feedback/scripts/cumulative_teacher_feedback.py \
+  --feedback "data/local/teacher-feedback/你的反馈文件.csv"
+```
+
 ## 4. 常用参数
 ```bash
 python3 apps/teacher-feedback/scripts/monthly_teacher_feedback.py \

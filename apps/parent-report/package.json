@@ -5,11 +5,20 @@
   "type": "module",
   "description": "项目2 · 家长报告：基于学生收费计算，为每位家长生成 PPT/PDF。下游，依赖 billing-core。",
   "dependencies": {
-    "@jingshi/billing-core": "*",
+    "@phosphor-icons/web": "^2.1.2",
+    "@sparticuz/chromium": "^138.0.2",
+    "@jingshi/billing-core": "file:../../packages/billing-core",
+    "jszip": "^3.10.1",
     "pdf-lib": "^1.17.1",
     "playwright-core": "^1.59.1"
   },
+  "devDependencies": {
+    "vite": "^7.0.5"
+  },
   "scripts": {
+    "dev": "vite --config vite.config.mjs",
+    "build": "npm run build:teachers && vite build --config vite.config.mjs",
+    "verify:web": "vite build --config vite.config.mjs",
     "build:teachers": "node scripts/build-teachers.mjs",
     "build:teacher-score-averages": "node scripts/build-teacher-score-averages.mjs",
     "update:template-faculty": "node scripts/update-template-faculty.mjs",

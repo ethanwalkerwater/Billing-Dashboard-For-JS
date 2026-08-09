@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "python3 -m uvicorn api.process:app --reload --port 4175",
     "build": "python3 -m compileall -q api scripts",
+    "generate:cumulative": "python3 scripts/cumulative_teacher_feedback.py",
     "test": "python3 -m unittest discover -s tests -p 'test_*.py'"
   }
 }

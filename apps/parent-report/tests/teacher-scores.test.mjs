@@ -10,11 +10,11 @@ test("mergeTeacherScores maps feedback score columns onto teacher cards", () => 
     { name: "黄钢", scores: {} },
   ];
 
-  const result = mergeTeacherScores(teachers, `老师,学习提升效果,责任心与服务态度,个人魅力
-Valentina林,4.9,4.92,4.89
-马,4.8,4.8,4.8
-黄钢,4.99,5.0,4.99
-未入库老师,5,5,5`);
+  const result = mergeTeacherScores(teachers, `老师,学习提升效果,责任心与服务态度,个人魅力,总评分
+Valentina林,4.9,4.92,4.89,4.9
+马,4.8,4.8,4.8,4.8
+黄钢,4.99,5.0,4.99,4.99
+未入库老师,5,5,5,5`);
 
   assert.deepEqual(result.matched, [
     { teacher: "Valentina Lin", sourceName: "Valentina林" },

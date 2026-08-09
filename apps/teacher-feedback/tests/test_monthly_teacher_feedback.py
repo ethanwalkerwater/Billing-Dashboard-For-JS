@@ -14,6 +14,16 @@ assert SPEC and SPEC.loader
 sys.modules[SPEC.name] = MODULE
 SPEC.loader.exec_module(MODULE)
 
+CUMULATIVE_SCRIPT_PATH = APP_ROOT / "scripts/cumulative_teacher_feedback.py"
+CUMULATIVE_SPEC = importlib.util.spec_from_file_location(
+    "cumulative_teacher_feedback",
+    CUMULATIVE_SCRIPT_PATH,
+)
+CUMULATIVE_MODULE = importlib.util.module_from_spec(CUMULATIVE_SPEC)
+assert CUMULATIVE_SPEC and CUMULATIVE_SPEC.loader
+sys.modules[CUMULATIVE_SPEC.name] = CUMULATIVE_MODULE
+CUMULATIVE_SPEC.loader.exec_module(CUMULATIVE_MODULE)
+
 
 class MonthlyTeacherFeedbackTests(unittest.TestCase):
     def write_csv(self, path: Path, fieldnames, rows):
@@ -107,12 +117,131 @@ class MonthlyTeacherFeedbackTests(unittest.TestCase):
     def test_build_teacher_score_table_outputs_three_metrics(self):
         summary_rows = [self.make_summary_row("包天翊")]
         rows, fieldnames = MODULE.build_teacher_score_table(summary_rows)
-        self.assertEqual(["老师", "学习提升效果", "责任心与服务态度", "个人魅力"], fieldnames)
+        self.assertEqual(
+            ["排名", "老师", "学习提升效果", "责任心与服务态度", "个人魅力", "总评分"],
+            fieldnames,
+        )
+        self.assertEqual(1, rows[0]["排名"])
         self.assertEqual("包天翊", rows[0]["老师"])
         # make_summary_row sets each total normalized_avg to scale_max (5)
         self.assertEqual(5.0, rows[0]["学习提升效果"])
         self.assertEqual(5.0, rows[0]["责任心与服务态度"])
         self.assertEqual(5.0, rows[0]["个人魅力"])
+        self.assertEqual("5.000", rows[0]["总评分"])
+
+    def test_build_teacher_score_table_sorts_by_total_score_descending(self):
+        lower = self.make_summary_row("老师A")
+        higher = self.make_summary_row("老师B")
+        for metric_id, _ in MODULE.TEACHER_SCORE_EXPORT_METRICS:
+            lower[f"metric_{metric_id}_total_normalized_avg"] = 4
+            higher[f"metric_{metric_id}_total_normalized_avg"] = 5
+
+        rows, _ = MODULE.build_teacher_score_table([lower, higher])
+
+        self.assertEqual(["老师B", "老师A"], [row["老师"] for row in rows])
+
+    def test_teacher_score_sort_preserves_sub_hundredth_total_differences(self):
+        lower = self.make_summary_row("A老师")
+        higher = self.make_summary_row("B老师")
+        lower["metric_learning_effect_total_normalized_avg"] = 4.98
+        lower["metric_responsibility_total_normalized_avg"] = 5
+        lower["metric_charisma_total_normalized_avg"] = 4.99
+        higher["metric_learning_effect_total_normalized_avg"] = 4.99
+        higher["metric_responsibility_total_normalized_avg"] = 5
+        higher["metric_charisma_total_normalized_avg"] = 4.99
+
+        rows, _ = MODULE.build_teacher_score_table([lower, higher])
+
+        self.assertEqual(["B老师", "A老师"], [row["老师"] for row in rows])
+        self.assertEqual("4.993", rows[0]["总评分"])
+        self.assertEqual("4.990", rows[1]["总评分"])
+
+    def test_cumulative_scores_weight_monthly_scores_by_teacher_hours(self):
+        first_month = self.make_summary_row("包天翊")
+        first_month["teacher_total_hours"] = 10
+        second_month = self.make_summary_row("包天翊")
+        second_month["teacher_total_hours"] = 30
+        for metric_id, _ in MODULE.TEACHER_SCORE_EXPORT_METRICS:
+            first_month[f"metric_{metric_id}_total_normalized_avg"] = 5
+            second_month[f"metric_{metric_id}_total_normalized_avg"] = 3
+
+        summaries, scores = CUMULATIVE_MODULE.aggregate_monthly_summaries(
+            [
+                ("2026-05", [first_month]),
+                ("2026-06", [second_month]),
+            ]
+        )
+
+        self.assertEqual(40, summaries[0]["teacher_total_hours"])
+        self.assertEqual(2, summaries[0]["report_month_count"])
+        self.assertEqual(3.5, scores[0]["学习提升效果"])
+        self.assertEqual(3.5, scores[0]["责任心与服务态度"])
+        self.assertEqual(3.5, scores[0]["个人魅力"])
+        self.assertEqual("3.500", scores[0]["总评分"])
+        self.assertEqual(1, scores[0]["排名"])
+
+    def test_cumulative_feedback_month_discovery_supports_range(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            feedback_csv = Path(tmp) / "feedback.csv"
+            self.write_csv(
+                feedback_csv,
+                ["提交时间"],
+                [
+                    {"提交时间": "2026/06/01"},
+                    {"提交时间": "2026/07/12"},
+                    {"提交时间": "2026/08/03"},
+                ],
+            )
+            months = CUMULATIVE_MODULE.discover_feedback_source_months(
+                feedback_csv,
+                start_month="2026-07",
+                end_month="2026-08",
+            )
+            self.assertEqual(["2026-07", "2026-08"], months)
+
+    def test_cumulative_history_loader_uses_valid_monthly_outputs_through_cutoff(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            history_root = Path(tmp)
+            for month in ["2026-02", "2026-07"]:
+                month_dir = history_root / month
+                month_dir.mkdir()
+                self.write_csv(
+                    month_dir / "teacher_summary.csv",
+                    ["teacher", "teacher_total_hours"],
+                    [{"teacher": "包天翊", "teacher_total_hours": 10}],
+                )
+                (month_dir / "run_meta.json").write_text(
+                    f'{{"month": "{month}"}}',
+                    encoding="utf-8",
+                )
+
+            results = CUMULATIVE_MODULE.load_historical_monthly_results(
+                history_root,
+                through_report_month="2026-06",
+            )
+
+            self.assertEqual(["2026-02"], sorted(results))
+            self.assertEqual(
+                "historical_monthly_output",
+                results["2026-02"]["source_kind"],
+            )
+
+    def test_cumulative_legacy_detail_scores_map_to_current_total_metrics(self):
+        record = CUMULATIVE_MODULE.feedback_record_from_detail_row(
+            {
+                "teacher": "包天翊",
+                "student": "Alice",
+                "score_learning_effect_student": "4",
+                "score_responsibility": "5",
+                "score_charisma": "3",
+                "score_recommendation": "9",
+            }
+        )
+
+        self.assertEqual(4, record.scores["learning_effect_student"])
+        self.assertEqual(5, record.scores["responsibility_student"])
+        self.assertEqual(3, record.scores["charisma_student"])
+        self.assertEqual(9, record.scores["recommendation_student"])
 
     def test_generate_report_writes_teacher_scores_csv(self):
         with tempfile.TemporaryDirectory() as tmp:

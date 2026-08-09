@@ -20,6 +20,7 @@ import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
@@ -1203,10 +1204,48 @@ TEACHER_SCORE_EXPORT_METRICS = [
 ]
 
 
+def finalize_teacher_score_rows(
+    rows: List[Dict[str, object]],
+) -> List[Dict[str, object]]:
+    metric_labels = [label for _, label in TEACHER_SCORE_EXPORT_METRICS]
+    scored_rows = []
+    blank_rows = []
+
+    for row in rows:
+        metric_values = [row.get(label) for label in metric_labels]
+        if all(value not in ("", None) for value in metric_values):
+            precise_total = sum(
+                (Decimal(str(value)) for value in metric_values),
+                start=Decimal("0"),
+            ) / Decimal(len(metric_values))
+            row["总评分"] = format(
+                precise_total.quantize(Decimal("0.001"), rounding=ROUND_HALF_UP),
+                ".3f",
+            )
+            scored_rows.append((precise_total, row))
+        else:
+            row["总评分"] = ""
+            row["排名"] = ""
+            blank_rows.append(row)
+
+    scored_rows.sort(key=lambda item: (-item[0], str(item[1]["老师"])))
+    last_total: Optional[Decimal] = None
+    current_rank = 0
+    for position, (precise_total, row) in enumerate(scored_rows, start=1):
+        if last_total is None or precise_total != last_total:
+            current_rank = position
+            last_total = precise_total
+        row["排名"] = current_rank
+
+    blank_rows.sort(key=lambda row: str(row["老师"]))
+    return [row for _, row in scored_rows] + blank_rows
+
+
 def build_teacher_score_table(
     summary_rows: List[Dict[str, object]],
 ) -> Tuple[List[Dict[str, object]], List[str]]:
-    fieldnames = ["老师"] + [label for _, label in TEACHER_SCORE_EXPORT_METRICS]
+    metric_labels = [label for _, label in TEACHER_SCORE_EXPORT_METRICS]
+    fieldnames = ["排名", "老师", *metric_labels, "总评分"]
     rows: List[Dict[str, object]] = []
     for row in summary_rows:
         out: Dict[str, object] = {"老师": row["teacher"]}
@@ -1214,7 +1253,7 @@ def build_teacher_score_table(
             value = row.get(f"metric_{metric_id}_total_normalized_avg", "")
             out[label] = round(float(value), 2) if value not in ("", None) else ""
         rows.append(out)
-    return rows, fieldnames
+    return finalize_teacher_score_rows(rows), fieldnames
 
 
 def write_csv(path: Path, rows: List[Dict[str, object]], fieldnames: Iterable[str]) -> None:

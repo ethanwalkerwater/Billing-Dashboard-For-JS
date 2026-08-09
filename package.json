@@ -25,6 +25,7 @@
     "dev:teacher-feedback": "npm run dev -w @jingshi/teacher-feedback",
     "build:teacher-feedback": "npm run build -w @jingshi/teacher-feedback",
     "test:feedback": "npm test -w @jingshi/teacher-feedback",
+    "generate:teacher-feedback-cumulative": "npm run generate:cumulative -w @jingshi/teacher-feedback",
     "generate:billing-report": "python3 apps/billing-report/python/course_billing_report.py",
     "generate:parent-reports": "npm run generate:student-billing -w @jingshi/parent-report"
   },
