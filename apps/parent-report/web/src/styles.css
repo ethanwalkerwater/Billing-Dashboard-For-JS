@@ -90,69 +90,92 @@ textarea:focus-visible {
 .app-shell {
   min-height: 100vh;
   display: grid;
-  grid-template-columns: 198px minmax(620px, 1fr) minmax(320px, 490px);
+  grid-template-columns: minmax(720px, 1fr) clamp(310px, 21vw, 380px);
+  grid-template-rows: auto 1fr;
+  grid-template-areas:
+    "rail rail"
+    "workspace preview";
 }
 
 .rail {
-  min-height: 100vh;
-  padding: 32px 24px 28px;
-  border-right: 1px solid var(--line);
+  grid-area: rail;
+  min-height: 0;
+  height: auto;
+  padding: 10px 24px;
+  border-bottom: 1px solid var(--line);
   background: color-mix(in srgb, var(--paper) 96%, white);
   display: flex;
-  flex-direction: column;
+  align-items: center;
+  gap: 24px;
   position: sticky;
   top: 0;
-  height: 100vh;
+  z-index: 10;
 }
 
 .brand {
   display: flex;
   align-items: baseline;
-  gap: 10px;
-  margin-bottom: 58px;
+  flex: 0 0 auto;
+  gap: 8px;
+  margin: 0;
 }
 
 .brand-cn {
   font-family: var(--serif);
-  font-size: 28px;
+  font-size: 22px;
   letter-spacing: 0.08em;
   line-height: 1;
 }
 
 .brand-en {
   color: var(--muted);
-  font-size: 9px;
+  font-size: 8px;
   letter-spacing: 0.24em;
   text-transform: uppercase;
 }
 
 .step-list {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(118px, 1fr));
+  flex: 1;
+  max-width: 760px;
   list-style: none;
   margin: 0;
   padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--paper);
 }
 
 .step {
   position: relative;
   display: grid;
-  grid-template-columns: 34px 1fr;
-  gap: 10px;
-  min-height: 92px;
+  grid-template-columns: 26px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 6px 12px;
+}
+
+.step.is-current {
+  background: var(--secondary);
 }
 
 .step:not(:last-child)::after {
   content: "";
   position: absolute;
-  left: 16px;
-  top: 32px;
-  bottom: 0;
+  top: 8px;
+  right: 0;
+  bottom: 8px;
+  left: auto;
   width: 1px;
   background: var(--line-strong);
 }
 
 .step-number {
-  width: 32px;
-  height: 32px;
+  width: 24px;
+  height: 24px;
   border: 1px solid var(--line-strong);
   border-radius: 50%;
   display: grid;
@@ -160,7 +183,7 @@ textarea:focus-visible {
   color: var(--muted);
   background: var(--paper);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12px;
+  font-size: 10px;
   z-index: 1;
 }
 
@@ -178,30 +201,36 @@ textarea:focus-visible {
 
 .step-copy strong {
   display: block;
-  margin-top: 4px;
+  margin-top: 0;
   font-family: var(--sans);
-  font-size: 14px;
+  font-size: 12px;
   font-weight: 600;
 }
 
 .step-copy span {
   display: block;
-  margin-top: 3px;
+  margin-top: 0;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 10px;
 }
 
 .rail-footer {
-  margin-top: auto;
+  flex: 0 0 auto;
+  margin: 0;
   color: var(--muted);
   font-size: 11px;
+}
+
+.rail-footer > strong {
+  display: none;
 }
 
 .privacy-note {
   display: flex;
   gap: 8px;
-  align-items: flex-start;
-  margin-top: 12px;
+  align-items: center;
+  margin-top: 0;
+  white-space: nowrap;
 }
 
 .privacy-note i {
@@ -210,8 +239,9 @@ textarea:focus-visible {
 }
 
 .workspace {
+  grid-area: workspace;
   min-width: 0;
-  padding: 34px 34px 56px;
+  padding: 30px 38px 56px;
 }
 
 .workspace-head {
@@ -589,6 +619,7 @@ textarea:focus-visible {
   align-items: center;
   gap: 12px;
   margin-top: 28px;
+  white-space: nowrap;
 }
 
 .button {
@@ -605,6 +636,7 @@ textarea:focus-visible {
   cursor: pointer;
   font-size: 14px;
   font-weight: 500;
+  white-space: nowrap;
   transition: background 160ms ease, color 160ms ease, border-color 160ms ease;
 }
 
@@ -687,8 +719,9 @@ textarea:focus-visible {
 }
 
 .preview-pane {
+  grid-area: preview;
   min-width: 0;
-  padding: 34px 30px 40px;
+  padding: 30px 22px 40px;
   border-left: 1px solid var(--line);
   background: var(--paper-deep);
 }
@@ -701,6 +734,10 @@ textarea:focus-visible {
   margin-bottom: 20px;
 }
 
+.preview-pane-head > div {
+  min-width: 0;
+}
+
 .preview-pane-head h2 {
   margin: 0;
   font-family: var(--sans);
@@ -709,12 +746,14 @@ textarea:focus-visible {
 }
 
 .preview-pane-head p {
+  max-width: 190px;
   margin: 5px 0 0;
   color: var(--muted);
   font-size: 11px;
 }
 
 .preview-link {
+  flex: 0 0 auto;
   padding: 0;
   border: 0;
   color: var(--primary);
@@ -724,6 +763,7 @@ textarea:focus-visible {
   font-weight: 500;
   text-decoration: underline;
   text-underline-offset: 3px;
+  white-space: nowrap;
 }
 
 .preview-link:disabled {
@@ -737,8 +777,8 @@ textarea:focus-visible {
 
 .preview-page {
   width: 100%;
-  min-height: 410px;
-  padding: clamp(22px, 3vw, 38px);
+  min-height: 350px;
+  padding: clamp(20px, 2vw, 28px);
   border: 1px solid color-mix(in srgb, var(--brass) 22%, var(--line));
   background: var(--paper);
   box-shadow: var(--shadow);
@@ -767,7 +807,7 @@ textarea:focus-visible {
 }
 
 .preview-cover-name {
-  margin: 88px 0 0;
+  margin: 68px 0 0;
   padding-bottom: 16px;
   border-bottom: 1px solid var(--line-strong);
   font-family: var(--serif);
@@ -786,7 +826,7 @@ textarea:focus-visible {
   align-items: flex-end;
   justify-content: space-between;
   gap: 16px;
-  margin-top: 88px;
+  margin-top: 68px;
   padding-top: 15px;
   border-top: 1px solid var(--line);
 }
@@ -1655,11 +1695,15 @@ textarea:focus-visible {
 
 @media (max-width: 1180px) {
   .app-shell {
-    grid-template-columns: 168px minmax(600px, 1fr);
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto auto;
+    grid-template-areas:
+      "rail"
+      "workspace"
+      "preview";
   }
 
   .preview-pane {
-    grid-column: 2;
     border-top: 1px solid var(--line);
     border-left: 0;
   }
@@ -1676,54 +1720,43 @@ textarea:focus-visible {
 }
 
 @media (max-width: 860px) {
-  .app-shell {
-    display: block;
-  }
-
   .rail {
-    position: static;
-    width: 100%;
-    height: auto;
-    min-height: 0;
-    padding: 18px 20px;
-    border-right: 0;
-    border-bottom: 1px solid var(--line);
+    gap: 14px;
+    padding: 9px 16px;
   }
 
   .rail .brand {
-    margin-bottom: 18px;
+    margin: 0;
   }
 
   .step-list {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(4, minmax(86px, 1fr));
   }
 
   .step {
-    display: block;
-    min-height: auto;
-    text-align: center;
+    grid-template-columns: 22px minmax(0, 1fr);
+    gap: 6px;
+    padding: 6px 8px;
   }
 
   .step:not(:last-child)::after {
-    top: 15px;
-    left: calc(50% + 18px);
-    right: calc(-50% + 18px);
-    bottom: auto;
-    width: auto;
-    height: 1px;
+    top: 8px;
+    right: 0;
+    bottom: 8px;
+    left: auto;
+    width: 1px;
+    height: auto;
   }
 
   .step-number {
-    margin: 0 auto;
+    width: 21px;
+    height: 21px;
   }
 
   .step-copy strong {
-    font-family: var(--sans);
-    font-size: 11px;
+    font-size: 10px;
   }
 
-  .step-copy span,
   .rail-footer {
     display: none;
   }
@@ -1765,6 +1798,33 @@ textarea:focus-visible {
 }
 
 @media (max-width: 600px) {
+  .rail {
+    flex-wrap: wrap;
+  }
+
+  .step-list {
+    order: 2;
+    flex-basis: 100%;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .step {
+    display: block;
+    text-align: center;
+  }
+
+  .step-number {
+    margin: 0 auto;
+  }
+
+  .step-copy strong {
+    margin-top: 3px;
+  }
+
+  .step-copy span {
+    display: none;
+  }
+
   .workspace-head,
   .upload-actions,
   .workspace-actions {
