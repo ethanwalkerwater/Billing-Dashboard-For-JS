@@ -669,7 +669,7 @@ function stepRail() {
     ["04", "生成下载", "待生成"],
   ];
   return `
-    <aside class="rail">
+    <nav class="rail" aria-label="报告生成流程">
       <div class="brand">
         <span class="brand-cn">菁仕</span>
         <span class="brand-en">King's Academy</span>
@@ -692,7 +692,7 @@ function stepRail() {
           <span>原始 CSV 未保存到服务器</span>
         </div>
       </div>
-    </aside>
+    </nav>
   `;
 }
 
