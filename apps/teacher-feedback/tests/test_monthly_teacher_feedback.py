@@ -942,6 +942,12 @@ class MonthlyTeacherFeedbackTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp) / "dashboard.html"
             summary_rows = [self.make_summary_row(f"老师{index:02d}") for index in range(30)]
+            for row in summary_rows[20:]:
+                row["response_record_count"] = 0
+                for metric in MODULE.METRIC_VIEWS:
+                    for variant in metric["variants"]:
+                        prefix = f"metric_{metric['id']}_{variant['id']}"
+                        row[f"{prefix}_value_count"] = 0
 
             MODULE.write_dashboard_html(out, "2026-07", summary_rows, [])
             html = out.read_text(encoding="utf-8")
@@ -957,6 +963,14 @@ class MonthlyTeacherFeedbackTests(unittest.TestCase):
             self.assertIn("function downloadFullChartPng", html)
             self.assertIn("chartRows.length > CHART_SCROLL_THRESHOLD", html)
             self.assertIn("exportCanvas.toBlob", html)
+            self.assertNotIn("if (valueCount === null || valueCount <= 0) return null;", html)
+            self.assertNotIn("if (responseCount <= 0) return null;", html)
+            self.assertIn('id: "missingScoreLabelPlugin"', html)
+            self.assertIn('ctx.fillText("暂无评分"', html)
+            self.assertIn("value: hasScore ? value : null", html)
+            self.assertIn("有评分：${scoredCount}", html)
+            self.assertIn("暂无评分：${missingCount}", html)
+            self.assertIn("rows.filter(row => row.hasScore && row.totalHours > 0)", html)
 
     def test_web_frontend_uses_separate_dashboard_page(self):
         index_html = (APP_ROOT / "public/index.html").read_text(encoding="utf-8")
