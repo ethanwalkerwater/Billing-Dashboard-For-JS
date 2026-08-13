@@ -157,6 +157,21 @@ class MonthlyTeacherFeedbackTests(unittest.TestCase):
         self.assertEqual("4.844", rows[0]["责任心与服务态度"])
         self.assertEqual("4.500", rows[0]["个人魅力"])
 
+    def test_build_teacher_score_table_marks_zero_count_as_no_score(self):
+        summary = self.make_summary_row("无反馈老师")
+        for metric_id, _ in MODULE.TEACHER_SCORE_EXPORT_METRICS:
+            summary[f"metric_{metric_id}_total_value_count"] = 0
+            # 兼容旧汇总产物：即使残留了历史均值，也必须以有效评分数为准。
+            summary[f"metric_{metric_id}_total_normalized_avg"] = 4.8
+
+        rows, _ = MODULE.build_teacher_score_table([summary])
+
+        self.assertEqual("", rows[0]["排名"])
+        self.assertEqual("无评分", rows[0]["学习提升效果"])
+        self.assertEqual("无评分", rows[0]["责任心与服务态度"])
+        self.assertEqual("无评分", rows[0]["个人魅力"])
+        self.assertEqual("无评分", rows[0]["总评分"])
+
     def test_build_teacher_score_table_sorts_by_total_score_descending(self):
         lower = self.make_summary_row("老师A")
         higher = self.make_summary_row("老师B")
@@ -207,6 +222,23 @@ class MonthlyTeacherFeedbackTests(unittest.TestCase):
         self.assertEqual("3.500", scores[0]["个人魅力"])
         self.assertEqual("3.500", scores[0]["总评分"])
         self.assertEqual(1, scores[0]["排名"])
+
+    def test_cumulative_scores_ignore_legacy_average_when_value_count_is_zero(self):
+        no_score_month = self.make_summary_row("无反馈老师", response_count=0)
+        for metric_id, _ in MODULE.TEACHER_SCORE_EXPORT_METRICS:
+            no_score_month[f"metric_{metric_id}_total_value_count"] = 0
+            no_score_month[f"metric_{metric_id}_total_normalized_avg"] = 4.8
+
+        summaries, scores = CUMULATIVE_MODULE.aggregate_monthly_summaries(
+            [("2026-07", [no_score_month])]
+        )
+
+        self.assertEqual(
+            "", summaries[0]["metric_learning_effect_total_weighted_avg"]
+        )
+        self.assertEqual("无评分", scores[0]["学习提升效果"])
+        self.assertEqual("无评分", scores[0]["总评分"])
+        self.assertEqual("", scores[0]["排名"])
 
     def test_cumulative_feedback_month_discovery_supports_range(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -715,6 +747,50 @@ class MonthlyTeacherFeedbackTests(unittest.TestCase):
             float(teacher_a["metric_responsibility_total_normalized_avg"]),
             places=5,
         )
+
+    def test_teacher_summary_does_not_assign_month_average_without_any_score(self):
+        score_template = {field["id"]: None for field in MODULE.NUMERIC_SCORE_FIELDS}
+        scored_record = MODULE.FeedbackRecord(
+            teacher="有反馈老师",
+            student="学生1",
+            student_raw_name="学生1",
+            identity="合并",
+            source_identities="学生",
+            submitted_at="2026-05-09 00:00:00",
+            scores={**score_template, "responsibility_student": 5.0},
+        )
+        MODULE.apply_weights(
+            records=[scored_record],
+            teacher_total_hours={"有反馈老师": 2.0, "无反馈老师": 2.0},
+            teacher_student_hours={
+                ("有反馈老师", "学生1"): 2.0,
+                ("无反馈老师", "学生2"): 2.0,
+            },
+            student_total_hours={"学生1": 2.0, "学生2": 2.0},
+        )
+
+        summary = MODULE.build_teacher_summary(
+            records=[scored_record],
+            teacher_total_hours={"有反馈老师": 2.0, "无反馈老师": 2.0},
+            teacher_student_hours={
+                ("有反馈老师", "学生1"): 2.0,
+                ("无反馈老师", "学生2"): 2.0,
+            },
+            raw_feedback_records=[
+                {
+                    "teacher": "有反馈老师",
+                    "student": "学生1",
+                    "identity": "学生",
+                    "submitted_at": None,
+                    "raw_row": {},
+                }
+            ],
+        )
+        no_score = {row["teacher"]: row for row in summary}["无反馈老师"]
+
+        self.assertEqual(0, no_score["metric_responsibility_total_value_count"])
+        self.assertEqual("", no_score["metric_responsibility_total_raw_avg"])
+        self.assertEqual("", no_score["metric_responsibility_total_normalized_avg"])
 
     def test_filter_excluded_teachers_removes_them_from_outputs(self):
         records = [

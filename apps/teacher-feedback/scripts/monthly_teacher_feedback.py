@@ -1269,6 +1269,11 @@ def build_teacher_summary(
 
                 raw_avg = (raw_num / raw_den) if raw_den > 0 else None
                 norm_avg = (norm_num / norm_den) if norm_den > 0 else None
+                # 月均分只用于补齐“该老师已有至少一个有效评分”时的未反馈学员。
+                # 如果老师在当前指标完全没有有效评分，不能把机构月均分当作老师分数。
+                if value_count <= 0:
+                    raw_avg = None
+                    norm_avg = None
 
                 row[f"{metric_prefix}_label"] = f"{metric['label']}-{variant['label']}"
                 row[f"{metric_prefix}_description"] = metric["description"]
@@ -1322,18 +1327,19 @@ def build_teacher_text_feedback_rows(summary_rows: List[Dict[str, object]]) -> L
 
 
 # 精简版“老师 -> 各指标加权分”导出。默认取每个指标的“总”维度加权分（normalized_avg），
-# 与看板“总”口径一致；包含均分补齐逻辑（见 build_teacher_summary）。
+# 与看板“总”口径一致；只有老师至少有一个有效评分时才允许均分补齐。
 TEACHER_SCORE_EXPORT_METRICS = [
     ("learning_effect", "学习提升效果"),
     ("responsibility", "责任心与服务态度"),
     ("charisma", "个人魅力"),
 ]
 TEACHER_SCORE_QUANTUM = Decimal("0.001")
+NO_SCORE_LABEL = "无评分"
 
 
 def format_teacher_score(value: object) -> str:
-    if value in ("", None):
-        return ""
+    if value in ("", None, NO_SCORE_LABEL):
+        return NO_SCORE_LABEL
     return format(
         Decimal(str(value)).quantize(TEACHER_SCORE_QUANTUM, rounding=ROUND_HALF_UP),
         ".3f",
@@ -1349,7 +1355,7 @@ def finalize_teacher_score_rows(
 
     for row in rows:
         metric_values = [row.get(label) for label in metric_labels]
-        if all(value not in ("", None) for value in metric_values):
+        if all(value not in ("", None, NO_SCORE_LABEL) for value in metric_values):
             precise_total = sum(
                 (Decimal(str(value)) for value in metric_values),
                 start=Decimal("0"),
@@ -1357,7 +1363,7 @@ def finalize_teacher_score_rows(
             row["总评分"] = format_teacher_score(precise_total)
             scored_rows.append((precise_total, row))
         else:
-            row["总评分"] = ""
+            row["总评分"] = NO_SCORE_LABEL
             row["排名"] = ""
             blank_rows.append(row)
 
@@ -1387,8 +1393,17 @@ def build_teacher_score_table(
     for row in summary_rows:
         out: Dict[str, object] = {"老师": row["teacher"]}
         for metric_id, label in TEACHER_SCORE_EXPORT_METRICS:
+            value_count = coerce_float(
+                row.get(f"metric_{metric_id}_total_value_count", 0)
+            )
             value = row.get(f"metric_{metric_id}_total_normalized_avg", "")
-            out[label] = float(value) if value not in ("", None) else ""
+            out[label] = (
+                float(value)
+                if value_count is not None
+                and value_count > 0
+                and value not in ("", None)
+                else NO_SCORE_LABEL
+            )
         rows.append(out)
     return finalize_teacher_score_rows(rows), fieldnames
 

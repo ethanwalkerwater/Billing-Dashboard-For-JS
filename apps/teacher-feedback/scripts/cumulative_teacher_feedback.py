@@ -297,8 +297,11 @@ def aggregate_monthly_summaries(
             )
 
             for metric_id, _ in TEACHER_SCORE_EXPORT_METRICS:
+                value_count = float(
+                    row.get(f"metric_{metric_id}_total_value_count") or 0
+                )
                 value = row.get(f"metric_{metric_id}_total_normalized_avg")
-                if value in ("", None):
+                if value_count <= 0 or value in ("", None):
                     continue
                 item["metric_numerators"][metric_id] += float(value) * teacher_hours
                 item["metric_hours"][metric_id] += teacher_hours
@@ -380,9 +383,14 @@ def build_monthly_contribution_rows(
                 "coverage_rate": summary.get("coverage_rate", 0),
             }
             for metric_id, label in TEACHER_SCORE_EXPORT_METRICS:
+                value_count = float(
+                    summary.get(f"metric_{metric_id}_total_value_count") or 0
+                )
                 value = summary.get(f"metric_{metric_id}_total_normalized_avg")
                 row[label] = (
-                    round(float(value), 6) if value not in ("", None) else ""
+                    round(float(value), 6)
+                    if value_count > 0 and value not in ("", None)
+                    else ""
                 )
             rows.append(row)
     return rows
