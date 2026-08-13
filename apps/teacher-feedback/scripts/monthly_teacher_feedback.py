@@ -2197,22 +2197,25 @@ def write_dashboard_html(
       return trimFixed(value, 3);
     }}
 
-    function computeChartHighlightFlags(metric, topRows) {{
-      const highlightCount = Math.ceil(topRows.length * 0.5);
-      const defaultFlags = topRows.map((_, idx) => idx < highlightCount);
-      if (metric.isPercent || metric.scaleMax !== 5 || topRows.length === 0) {{
-        return defaultFlags;
+    function computeChartHighlightFlags(metric, chartRows) {{
+      const scoredRows = chartRows.filter(row => row.hasScore);
+      const highlightCount = Math.ceil(scoredRows.length * 0.5);
+      const scoredFlags = scoredRows.map((_, idx) => idx < highlightCount);
+      if (!metric.isPercent && metric.scaleMax === 5 && scoredRows.length > 0) {{
+        const fullScoreCount = scoredRows.filter(
+          row => Math.abs(row.value - metric.scaleMax) < 1e-9
+        ).length;
+        if (fullScoreCount > scoredRows.length / 2) {{
+          scoredFlags.splice(
+            0,
+            scoredFlags.length,
+            ...scoredRows.map(row => Math.abs(row.value - metric.scaleMax) < 1e-9)
+          );
+        }}
       }}
 
-      const fullScoreCount = topRows.filter(
-        row => Math.abs(row.value - metric.scaleMax) < 1e-9
-      ).length;
-      if (fullScoreCount > topRows.length / 2) {{
-        return topRows.map(
-          row => Math.abs(row.value - metric.scaleMax) < 1e-9
-        );
-      }}
-      return defaultFlags;
+      let scoredIndex = 0;
+      return chartRows.map(row => row.hasScore ? scoredFlags[scoredIndex++] : false);
     }}
 
     const barValueLabelPlugin = {{
@@ -2238,6 +2241,34 @@ def write_dashboard_html(
       }}
     }};
 
+    const missingScoreLabelPlugin = {{
+      id: "missingScoreLabelPlugin",
+      afterDatasetsDraw(chartInstance) {{
+        const dataset = chartInstance.data.datasets[0];
+        const missingFlags = dataset?.missingScoreFlags || [];
+        if (!missingFlags.some(Boolean)) return;
+
+        const {{ ctx, scales }} = chartInstance;
+        const xScale = scales.x;
+        const yScale = scales.y;
+        if (!xScale || !yScale) return;
+
+        ctx.save();
+        ctx.font = '600 10px "Inter", "PingFang SC", "Microsoft YaHei", sans-serif';
+        ctx.fillStyle = "rgba(100, 116, 139, 0.9)";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "bottom";
+        missingFlags.forEach((isMissing, index) => {{
+          if (!isMissing) return;
+          const x = xScale.getPixelForValue(index);
+          const y = yScale.getPixelForValue(0);
+          ctx.fillText("暂无评分", x, y - 9);
+          ctx.fillRect(x - 15, y - 5, 30, 3);
+        }});
+        ctx.restore();
+      }}
+    }};
+
     function getChart() {{
       if (chart) return chart;
       if (typeof Chart === "undefined") {{
@@ -2247,7 +2278,7 @@ def write_dashboard_html(
       chartFallback.style.display = "none";
       chart = new Chart(chartCanvas, {{
         type: "bar",
-        plugins: [barValueLabelPlugin],
+        plugins: [barValueLabelPlugin, missingScoreLabelPlugin],
         data: {{ labels: [], datasets: [{{ label: "", data: [], backgroundColor: "rgba(29, 78, 216, 0.84)", borderColor: "rgba(30, 64, 175, 1)", borderWidth: 1.25, borderRadius: 8, borderSkipped: false }}] }},
         options: {{
           responsive: true,
@@ -2349,7 +2380,7 @@ def write_dashboard_html(
     }}
 
     function formatValue(metric, value) {{
-      if (value === null) return "";
+      if (value === null) return "暂无评分";
       if (metric.isPercent) return `${{value.toFixed(1)}}%`;
       return value.toFixed(3);
     }}
@@ -2487,8 +2518,11 @@ def write_dashboard_html(
     }}
 
     function compareMetricRows(metric, a, b) {{
-      const scoreDiff = getDisplaySortValue(metric, b.value) - getDisplaySortValue(metric, a.value);
-      if (scoreDiff !== 0) return scoreDiff;
+      if (a.hasScore !== b.hasScore) return a.hasScore ? -1 : 1;
+      if (a.hasScore && b.hasScore) {{
+        const scoreDiff = getDisplaySortValue(metric, b.value) - getDisplaySortValue(metric, a.value);
+        if (scoreDiff !== 0) return scoreDiff;
+      }}
       const hourDiff = b.totalHours - a.totalHours;
       if (hourDiff !== 0) return hourDiff;
       return String(a.teacher || "").localeCompare(String(b.teacher || ""), "zh-Hans-CN");
@@ -2497,18 +2531,18 @@ def write_dashboard_html(
     function buildMetricRows(metric, variant) {{
       const teacherStudentHourText = buildTeacherStudentHourText(metric, variant);
       return getVisibleRows().map(r => {{
-        const valueCount = toNumber(r[variant.count_key]);
-        if (valueCount === null || valueCount <= 0) return null;
+        const valueCount = toNumber(r[variant.count_key]) ?? 0;
         let value = toNumber(r[variant.value_key]);
-        if (value === null) return null;
-        if (metric.isPercent) value = value * 100;
-
         const responseCount = toNumber(r.response_record_count) ?? 0;
-        if (responseCount <= 0) return null;
+        const hasScore = metric.id === "coverage_rate"
+          ? value !== null
+          : value !== null && valueCount > 0 && responseCount > 0;
+        if (value !== null && metric.isPercent) value = value * 100;
 
         return {{
           teacher: r.teacher,
-          value,
+          value: hasScore ? value : null,
+          hasScore,
           valueCount,
           coverage: (toNumber(r.coverage_rate) ?? 0) * 100,
           totalHours: toNumber(r.teacher_total_hours) ?? 0,
@@ -2516,7 +2550,7 @@ def write_dashboard_html(
           responseCount,
           studentHourSummary: teacherStudentHourText[r.teacher] || "",
         }};
-      }}).filter(Boolean).sort((a, b) => compareMetricRows(metric, a, b));
+      }}).sort((a, b) => compareMetricRows(metric, a, b));
     }}
 
     function renderMetricChart(metric, variant, sortedRows) {{
@@ -2546,6 +2580,7 @@ def write_dashboard_html(
       c.data.datasets[0].label = `${{metric.label}} - ${{variant.label}}`;
       c.data.datasets[0].data = chartRows.map(r => r.value);
       c.data.datasets[0].valueLabels = chartRows.map(r => formatChartValue(metric, r.value));
+      c.data.datasets[0].missingScoreFlags = chartRows.map(r => !r.hasScore);
       c.data.datasets[0].feedbackCounts = chartRows.map(r => r.responseCount);
       c.data.datasets[0].totalHours = chartRows.map(r => r.totalHours);
       c.data.datasets[0].backgroundColor = backgroundColors;
@@ -2556,17 +2591,21 @@ def write_dashboard_html(
 
     function renderMetricTable(metric, variant, sortedRows) {{
       const headers = ["排名", "老师", "评价学员+课时", "分值", "样本条数", "覆盖率", "总课时", "匹配反馈条数", "反馈总条数"];
-      const body = sortedRows.map((r, idx) => [
-        idx + 1,
-        r.teacher,
-        r.studentHourSummary,
-        formatValue(metric, r.value),
-        r.valueCount,
-        `${{r.coverage.toFixed(1)}}%`,
-        r.totalHours.toFixed(2),
-        r.matchedResponseCount,
-        r.responseCount,
-      ]);
+      let scoredRank = 0;
+      const body = sortedRows.map(r => {{
+        const rank = r.hasScore ? ++scoredRank : "—";
+        return [
+          rank,
+          r.teacher,
+          r.studentHourSummary,
+          formatValue(metric, r.value),
+          r.valueCount,
+          `${{r.coverage.toFixed(1)}}%`,
+          r.totalHours.toFixed(2),
+          r.matchedResponseCount,
+          r.responseCount,
+        ];
+      }});
 
       metricTable.innerHTML = `
         <thead><tr>${{headers.map(h => `<th>${{h}}</th>`).join("")}}</tr></thead>
@@ -2575,9 +2614,10 @@ def write_dashboard_html(
     }}
 
     function weightedChartAverage(rows) {{
-      const totalHours = rows.reduce((sum, row) => sum + row.totalHours, 0);
-      if (totalHours <= 0) return 0;
-      return rows.reduce((sum, row) => sum + row.value * row.totalHours, 0) / totalHours;
+      const scoredRows = rows.filter(row => row.hasScore && row.totalHours > 0);
+      const totalHours = scoredRows.reduce((sum, row) => sum + row.totalHours, 0);
+      if (totalHours <= 0) return null;
+      return scoredRows.reduce((sum, row) => sum + row.value * row.totalHours, 0) / totalHours;
     }}
 
     function safeFilePart(value) {{
@@ -2621,7 +2661,7 @@ def write_dashboard_html(
       ctx.fillStyle = "#526078";
       ctx.font = `400 ${{12 * deviceScale}}px "PingFang SC", "Microsoft YaHei", sans-serif`;
       ctx.fillText(
-        `${{currentChartRows.length}} 位老师 · 总课时加权均值 ${{formatValue(currentChartMetric, weightedChartAverage(currentChartRows))}} · 已应用当前排除条件`,
+        `${{currentChartRows.length}} 位老师（有评分 ${{currentChartRows.filter(row => row.hasScore).length}} / 暂无评分 ${{currentChartRows.filter(row => !row.hasScore).length}}） · 总课时加权均值 ${{formatValue(currentChartMetric, weightedChartAverage(currentChartRows))}} · 已应用当前排除条件`,
         20 * deviceScale,
         54 * deviceScale
       );
@@ -2658,16 +2698,17 @@ def write_dashboard_html(
     }});
 
     function renderMeta(metric, variant, sortedRows) {{
-      const totalHours = sortedRows.reduce((sum, r) => sum + r.totalHours, 0);
-      const weightedAvg = totalHours > 0
-        ? sortedRows.reduce((sum, r) => sum + (r.value * r.totalHours), 0) / totalHours
-        : 0;
+      const scoredCount = sortedRows.filter(r => r.hasScore).length;
+      const missingCount = sortedRows.length - scoredCount;
+      const weightedAvg = weightedChartAverage(sortedRows);
       metricMeta.innerHTML = `
         <span class="badge">当前维度：${{variant.label}}</span>
         <span class="badge">老师数：${{sortedRows.length}}</span>
+        <span class="badge">有评分：${{scoredCount}}</span>
+        <span class="badge">暂无评分：${{missingCount}}</span>
         <span class="badge">均值(总课时加权)：${{formatValue(metric, weightedAvg)}}</span>
         <span class="badge">颜色：上半区高亮</span>
-        <span class="badge">排序：展示分值高 -> 低，展示分值相同按总课时高 -> 低</span>
+        <span class="badge">排序：展示分值高 -> 低，展示分值相同按总课时高 -> 低，无评分置后</span>
       `;
     }}
 
