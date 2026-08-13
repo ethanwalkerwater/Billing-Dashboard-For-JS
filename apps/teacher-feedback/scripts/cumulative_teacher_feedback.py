@@ -341,7 +341,7 @@ def aggregate_monthly_summaries(
             summary[f"metric_{metric_id}_total_weighted_avg"] = (
                 round(weighted_score, 6) if weighted_score is not None else ""
             )
-            score[label] = round(weighted_score, 2) if weighted_score is not None else ""
+            score[label] = weighted_score if weighted_score is not None else ""
 
         summary_rows.append(summary)
         score_rows.append(score)

@@ -248,12 +248,30 @@ COVERAGE_METRIC = {
 }
 
 DATE_FORMATS = [
+    "%Y/%m/%d %H:%M:%S",
     "%Y/%m/%d %H:%M",
     "%Y/%m/%d",
     "%Y-%m-%d %H:%M:%S",
     "%Y-%m-%d %H:%M",
     "%Y-%m-%d",
+    "%Y.%m.%d %H:%M:%S",
+    "%Y.%m.%d %H:%M",
+    "%Y.%m.%d",
+    "%d/%m/%Y %H:%M:%S",
+    "%d/%m/%Y %H:%M",
+    "%d/%m/%Y",
+    "%d-%m-%Y %H:%M:%S",
+    "%d-%m-%Y %H:%M",
+    "%d-%m-%Y",
+    "%d.%m.%Y %H:%M:%S",
+    "%d.%m.%Y %H:%M",
+    "%d.%m.%Y",
 ]
+
+SUPPORTED_DATE_FORMAT_HINT = (
+    "YYYY-MM-DD、YYYY/MM/DD、YYYY.MM.DD、DD/MM/YYYY、DD-MM-YYYY、DD.MM.YYYY，"
+    "日期后可附带 HH:MM 或 HH:MM:SS"
+)
 
 TRAILING_STUDENT_CODE_RE = re.compile(r"-[A-Za-z0-9]*$")
 WHITESPACE_RE = re.compile(r"\s+")
@@ -467,6 +485,57 @@ def parse_datetime(value: str) -> Optional[datetime]:
         return datetime.fromisoformat(raw)
     except ValueError:
         return None
+
+
+def require_any_csv_column(
+    fieldnames: Optional[List[str]],
+    candidates: Iterable[str],
+    source_label: str,
+) -> None:
+    available = set(fieldnames or [])
+    expected = list(candidates)
+    if any(column in available for column in expected):
+        return
+    raise SystemExit(
+        f"{source_label}缺少日期列：需要「{'」或「'.join(expected)}」。"
+        "请确认上传了正确的 CSV 文件。"
+    )
+
+
+def add_invalid_date_sample(
+    stats: Dict[str, object],
+    *,
+    row_number: int,
+    raw_value: str,
+) -> None:
+    samples = stats.setdefault("invalid_date_samples", [])
+    if len(samples) >= 3:
+        return
+    samples.append(
+        {
+            "row": row_number,
+            "value": (raw_value or "").strip() or "<空>",
+        }
+    )
+
+
+def raise_for_invalid_dates(
+    *,
+    source_label: str,
+    column_label: str,
+    invalid_count: int,
+    samples: Iterable[Dict[str, object]],
+) -> None:
+    if invalid_count <= 0:
+        return
+    sample_text = "；".join(
+        f"CSV 第 {sample['row']} 行「{sample['value']}」" for sample in samples
+    )
+    suffix = f"，例如：{sample_text}" if sample_text else ""
+    raise SystemExit(
+        f"{source_label}有 {invalid_count} 行「{column_label}」无法识别{suffix}。"
+        f"支持格式：{SUPPORTED_DATE_FORMAT_HINT}。请修正后重新上传。"
+    )
 
 
 def parse_date_boundary(value: Optional[str], *, end_of_day: bool = False) -> Optional[datetime]:
@@ -735,17 +804,29 @@ def read_schedule(
         "schedule_rows_missing_teacher_or_student": 0,
         "schedule_rows_filtered_course_type": 0,
         "schedule_rows_filtered_over_max_duration": 0,
+        "invalid_date_samples": [],
         "cancel_value_counter": Counter(),
     }
 
     with schedule_csv.open("r", encoding="utf-8-sig", newline="") as f:
         reader = csv.DictReader(f)
-        for row in reader:
+        require_any_csv_column(
+            reader.fieldnames,
+            ["上课时间", "当地上课时间"],
+            "课表",
+        )
+        for row_number, row in enumerate(reader, start=2):
             stats["schedule_rows_total"] += 1
 
-            dt = parse_datetime(row.get("上课时间", "") or row.get("当地上课时间", ""))
+            raw_schedule_date = row.get("上课时间", "") or row.get("当地上课时间", "")
+            dt = parse_datetime(raw_schedule_date)
             if dt is None:
                 stats["schedule_rows_invalid_date"] += 1
+                add_invalid_date_sample(
+                    stats,
+                    row_number=row_number,
+                    raw_value=raw_schedule_date,
+                )
                 continue
 
             if dt.strftime("%Y-%m") != month:
@@ -781,6 +862,21 @@ def read_schedule(
             teacher_total_hours[teacher] += duration
             teacher_student_hours[(teacher, student)] += duration
             student_total_hours[student] += duration
+
+    raise_for_invalid_dates(
+        source_label="课表",
+        column_label="上课时间/当地上课时间",
+        invalid_count=stats["schedule_rows_invalid_date"],
+        samples=stats["invalid_date_samples"],
+    )
+
+    if stats["schedule_rows_total"] == 0:
+        raise SystemExit("课表没有数据行，请确认上传的 CSV 文件不是空表。")
+    if stats["schedule_rows_in_month"] == 0:
+        raise SystemExit(
+            f"课表在报表月份 {month} 没有课程数据。"
+            "请检查报表月份是否正确，或上传包含该月份课程的课表。"
+        )
 
     stats["teacher_count_in_month"] = len(teacher_total_hours)
     stats["student_count_in_month"] = len(student_total_hours)
@@ -821,6 +917,7 @@ def read_feedback_latest(
         "feedback_rows_in_scope": 0,
         "feedback_rows_invalid_date": 0,
         "feedback_rows_filtered_identity": 0,
+        "invalid_date_samples": [],
         "feedback_identity_counter": Counter(),
         "feedback_filter_mode": "date_range" if use_explicit_window else "source_month",
         "feedback_source_month": feedback_source_month if not use_explicit_window else "",
@@ -840,12 +937,19 @@ def read_feedback_latest(
 
     with feedback_csv.open("r", encoding="utf-8-sig", newline="") as f:
         reader = csv.DictReader(f)
-        for row in reader:
+        require_any_csv_column(reader.fieldnames, ["提交时间"], "反馈表")
+        for row_number, row in enumerate(reader, start=2):
             stats["feedback_rows_total"] += 1
 
-            dt = parse_datetime(row.get("提交时间", ""))
+            raw_feedback_date = row.get("提交时间", "")
+            dt = parse_datetime(raw_feedback_date)
             if dt is None:
                 stats["feedback_rows_invalid_date"] += 1
+                add_invalid_date_sample(
+                    stats,
+                    row_number=row_number,
+                    raw_value=raw_feedback_date,
+                )
                 continue
 
             if use_explicit_window:
@@ -891,6 +995,28 @@ def read_feedback_latest(
             }
             if current is None or dt > current["submitted_at"]:
                 latest[key] = payload
+
+    raise_for_invalid_dates(
+        source_label="反馈表",
+        column_label="提交时间",
+        invalid_count=stats["feedback_rows_invalid_date"],
+        samples=stats["invalid_date_samples"],
+    )
+
+    if stats["feedback_rows_total"] == 0:
+        raise SystemExit("反馈表没有数据行，请确认上传的 CSV 文件不是空表。")
+    if stats["feedback_rows_in_scope"] == 0:
+        if use_explicit_window:
+            window_start = stats["feedback_window_start"] or "最早日期"
+            window_end = stats["feedback_window_end"] or "最新日期"
+            raise SystemExit(
+                f"反馈时间范围内没有数据：{window_start} 至 {window_end}。"
+                "请检查起止日期，或上传包含该时间范围的反馈表。"
+            )
+        raise SystemExit(
+            f"反馈表在提交月份 {feedback_source_month} 没有数据。"
+            "请检查报表月份，或填写明确的反馈起止日期。"
+        )
 
     records = list(latest.values())
     stats["feedback_latest_record_count"] = len(records)
@@ -1202,6 +1328,16 @@ TEACHER_SCORE_EXPORT_METRICS = [
     ("responsibility", "责任心与服务态度"),
     ("charisma", "个人魅力"),
 ]
+TEACHER_SCORE_QUANTUM = Decimal("0.001")
+
+
+def format_teacher_score(value: object) -> str:
+    if value in ("", None):
+        return ""
+    return format(
+        Decimal(str(value)).quantize(TEACHER_SCORE_QUANTUM, rounding=ROUND_HALF_UP),
+        ".3f",
+    )
 
 
 def finalize_teacher_score_rows(
@@ -1218,10 +1354,7 @@ def finalize_teacher_score_rows(
                 (Decimal(str(value)) for value in metric_values),
                 start=Decimal("0"),
             ) / Decimal(len(metric_values))
-            row["总评分"] = format(
-                precise_total.quantize(Decimal("0.001"), rounding=ROUND_HALF_UP),
-                ".3f",
-            )
+            row["总评分"] = format_teacher_score(precise_total)
             scored_rows.append((precise_total, row))
         else:
             row["总评分"] = ""
@@ -1237,6 +1370,10 @@ def finalize_teacher_score_rows(
             last_total = precise_total
         row["排名"] = current_rank
 
+    for row in rows:
+        for label in metric_labels:
+            row[label] = format_teacher_score(row.get(label))
+
     blank_rows.sort(key=lambda row: str(row["老师"]))
     return [row for _, row in scored_rows] + blank_rows
 
@@ -1251,7 +1388,7 @@ def build_teacher_score_table(
         out: Dict[str, object] = {"老师": row["teacher"]}
         for metric_id, label in TEACHER_SCORE_EXPORT_METRICS:
             value = row.get(f"metric_{metric_id}_total_normalized_avg", "")
-            out[label] = round(float(value), 2) if value not in ("", None) else ""
+            out[label] = float(value) if value not in ("", None) else ""
         rows.append(out)
     return finalize_teacher_score_rows(rows), fieldnames
 
@@ -1567,10 +1704,64 @@ def write_dashboard_html(
     .chart-card .chart-wrap {{
       height: 560px;
       margin-top: 6px;
-      padding: 16px 12px 6px;
       border: 1px solid rgba(59, 130, 246, 0.14);
       border-radius: calc(var(--radius) - 2px);
       background: linear-gradient(180deg, rgba(255,255,255,0.98), rgba(239,246,255,0.90));
+      overflow-x: auto;
+      overflow-y: hidden;
+      overscroll-behavior-inline: contain;
+      scrollbar-gutter: stable;
+    }}
+
+    .chart-stage {{
+      width: 100%;
+      min-width: 100%;
+      height: 100%;
+      padding: 16px 12px 6px;
+    }}
+
+    .chart-export-toolbar {{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      min-height: 34px;
+      margin: 2px 0 4px;
+    }}
+
+    .chart-scroll-hint {{
+      margin: 0;
+      color: hsl(var(--muted-foreground));
+      font-size: 12px;
+    }}
+
+    .chart-scroll-hint[hidden] {{
+      display: block;
+      visibility: hidden;
+    }}
+
+    .chart-download-button {{
+      flex: 0 0 auto;
+      min-height: 34px;
+      padding: 7px 12px;
+      border: 1px solid rgba(59, 130, 246, 0.28);
+      border-radius: 9px;
+      color: rgba(30, 64, 175, 0.96);
+      background: rgba(239, 246, 255, 0.92);
+      font: inherit;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+    }}
+
+    .chart-download-button:hover {{
+      border-color: rgba(59, 130, 246, 0.48);
+      background: rgba(219, 234, 254, 0.92);
+    }}
+
+    .chart-download-button:disabled {{
+      cursor: not-allowed;
+      opacity: 0.5;
     }}
 
     .badge-row {{
@@ -1802,6 +1993,7 @@ def write_dashboard_html(
         margin-top: 8px;
       }}
       .teacher-filter-list {{ grid-template-columns: 1fr; }}
+      .chart-export-toolbar {{ align-items: flex-start; }}
     }}
 
     table {{
@@ -1900,7 +2092,13 @@ def write_dashboard_html(
         <div class="excluded-teacher-chips" id="excludedTeacherChips"></div>
       </div>
       <div class="badge-row" id="metricMeta"></div>
-      <div class="chart-wrap"><canvas id="metricChart"></canvas></div>
+      <div class="chart-export-toolbar">
+        <p class="chart-scroll-hint" id="chartScrollHint" hidden>向右滑动查看其余老师，下载图片会包含全部老师。</p>
+        <button class="chart-download-button" id="downloadFullChart" type="button">下载完整图表 PNG</button>
+      </div>
+      <div class="chart-wrap" id="chartScroll">
+        <div class="chart-stage" id="chartStage"><canvas id="metricChart"></canvas></div>
+      </div>
       <p id="chartFallback" class="metric-desc" style="display:none;margin-top:8px;">
         图表库未加载，仅显示下方排序表格数据。
       </p>
@@ -1948,7 +2146,15 @@ def write_dashboard_html(
     const teacherFilterList = document.getElementById("teacherFilterList");
     const clearTeacherFilter = document.getElementById("clearTeacherFilter");
     const excludedTeacherChips = document.getElementById("excludedTeacherChips");
+    const chartScroll = document.getElementById("chartScroll");
+    const chartStage = document.getElementById("chartStage");
+    const chartScrollHint = document.getElementById("chartScrollHint");
+    const downloadFullChart = document.getElementById("downloadFullChart");
 
+    const dashboardMonth = "{month}";
+    const CHART_SCROLL_THRESHOLD = 20;
+    const CHART_SLOT_WIDTH = 68;
+    const CHART_AXIS_ALLOWANCE = 104;
     let currentMetricId = metrics[0]?.id;
     let currentVariantId = metrics[0]?.variants?.[0]?.id;
     const allTeachers = rows
@@ -1966,6 +2172,20 @@ def write_dashboard_html(
     const chartCanvas = document.getElementById("metricChart");
     const chartFallback = document.getElementById("chartFallback");
     let chart = null;
+    let currentChartRows = [];
+    let currentChartMetric = null;
+    let currentChartVariant = null;
+
+    function syncChartStageWidth(chartRows) {{
+      const viewportWidth = Math.max(chartScroll.clientWidth, 720);
+      const needsScroll = chartRows.length > CHART_SCROLL_THRESHOLD;
+      const contentWidth = needsScroll
+        ? Math.max(viewportWidth, CHART_AXIS_ALLOWANCE + chartRows.length * CHART_SLOT_WIDTH)
+        : viewportWidth;
+      chartStage.style.width = `${{Math.ceil(contentWidth)}}px`;
+      chartScrollHint.hidden = !needsScroll;
+      return contentWidth;
+    }}
 
     function trimFixed(value, digits) {{
       return Number(value).toFixed(digits).replace(/\\.?0+$/, "");
@@ -2300,28 +2520,34 @@ def write_dashboard_html(
     }}
 
     function renderMetricChart(metric, variant, sortedRows) {{
+      const chartRows = sortedRows;
+      currentChartRows = chartRows;
+      currentChartMetric = metric;
+      currentChartVariant = variant;
+      syncChartStageWidth(chartRows);
+      downloadFullChart.disabled = chartRows.length === 0;
       const c = getChart();
       if (!c) {{
         return;
       }}
-      const topRows = sortedRows.slice(0, 25);
-      const highlightFlags = computeChartHighlightFlags(metric, topRows);
-      const backgroundColors = topRows.map((_, idx) =>
+      const highlightFlags = computeChartHighlightFlags(metric, chartRows);
+      const backgroundColors = chartRows.map((_, idx) =>
         highlightFlags[idx]
           ? "rgba(13, 148, 136, 0.88)"
           : "rgba(29, 78, 216, 0.82)"
       );
-      const borderColors = topRows.map((_, idx) =>
+      const borderColors = chartRows.map((_, idx) =>
         highlightFlags[idx]
           ? "rgba(15, 118, 110, 1)"
           : "rgba(30, 64, 175, 1)"
       );
-      c.data.labels = topRows.map(r => r.teacher);
+      c.resize();
+      c.data.labels = chartRows.map(r => r.teacher);
       c.data.datasets[0].label = `${{metric.label}} - ${{variant.label}}`;
-      c.data.datasets[0].data = topRows.map(r => r.value);
-      c.data.datasets[0].valueLabels = topRows.map(r => formatChartValue(metric, r.value));
-      c.data.datasets[0].feedbackCounts = topRows.map(r => r.responseCount);
-      c.data.datasets[0].totalHours = topRows.map(r => r.totalHours);
+      c.data.datasets[0].data = chartRows.map(r => r.value);
+      c.data.datasets[0].valueLabels = chartRows.map(r => formatChartValue(metric, r.value));
+      c.data.datasets[0].feedbackCounts = chartRows.map(r => r.responseCount);
+      c.data.datasets[0].totalHours = chartRows.map(r => r.totalHours);
       c.data.datasets[0].backgroundColor = backgroundColors;
       c.data.datasets[0].borderColor = borderColors;
       c.options.scales.y.max = metric.scaleMax;
@@ -2330,7 +2556,7 @@ def write_dashboard_html(
 
     function renderMetricTable(metric, variant, sortedRows) {{
       const headers = ["排名", "老师", "评价学员+课时", "分值", "样本条数", "覆盖率", "总课时", "匹配反馈条数", "反馈总条数"];
-      const body = sortedRows.slice(0, 50).map((r, idx) => [
+      const body = sortedRows.map((r, idx) => [
         idx + 1,
         r.teacher,
         r.studentHourSummary,
@@ -2347,6 +2573,89 @@ def write_dashboard_html(
         <tbody>${{body.map(row => `<tr>${{row.map(c => `<td>${{c}}</td>`).join("")}}</tr>`).join("")}}</tbody>
       `;
     }}
+
+    function weightedChartAverage(rows) {{
+      const totalHours = rows.reduce((sum, row) => sum + row.totalHours, 0);
+      if (totalHours <= 0) return 0;
+      return rows.reduce((sum, row) => sum + row.value * row.totalHours, 0) / totalHours;
+    }}
+
+    function safeFilePart(value) {{
+      return String(value || "chart")
+        .trim()
+        .replaceAll("/", "-")
+        .replaceAll(" ", "-");
+    }}
+
+    function downloadFullChartPng() {{
+      if (!chart || !currentChartMetric || !currentChartVariant || currentChartRows.length === 0) {{
+        return;
+      }}
+
+      chart.stop();
+      chart.resize();
+      chart.update("none");
+
+      const sourceCanvas = chartCanvas;
+      const deviceScale = Math.max(
+        1,
+        sourceCanvas.width / Math.max(1, chartStage.clientWidth)
+      );
+      const headerHeight = Math.round(104 * deviceScale);
+      const exportCanvas = document.createElement("canvas");
+      exportCanvas.width = sourceCanvas.width;
+      exportCanvas.height = sourceCanvas.height + headerHeight;
+      const ctx = exportCanvas.getContext("2d");
+      if (!ctx) return;
+
+      ctx.fillStyle = "#f8fbff";
+      ctx.fillRect(0, 0, exportCanvas.width, exportCanvas.height);
+      ctx.fillStyle = "#0f172a";
+      ctx.font = `700 ${{22 * deviceScale}}px "PingFang SC", "Microsoft YaHei", sans-serif`;
+      ctx.textBaseline = "top";
+      ctx.fillText(
+        `${{dashboardMonth}} · ${{currentChartMetric.label}} · ${{currentChartVariant.label}}`,
+        20 * deviceScale,
+        16 * deviceScale
+      );
+      ctx.fillStyle = "#526078";
+      ctx.font = `400 ${{12 * deviceScale}}px "PingFang SC", "Microsoft YaHei", sans-serif`;
+      ctx.fillText(
+        `${{currentChartRows.length}} 位老师 · 总课时加权均值 ${{formatValue(currentChartMetric, weightedChartAverage(currentChartRows))}} · 已应用当前排除条件`,
+        20 * deviceScale,
+        54 * deviceScale
+      );
+      ctx.drawImage(sourceCanvas, 0, headerHeight);
+
+      exportCanvas.toBlob(blob => {{
+        if (!blob) return;
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = [
+          dashboardMonth,
+          safeFilePart(currentChartMetric.label),
+          safeFilePart(currentChartVariant.label),
+          `${{currentChartRows.length}}位老师`,
+        ].join("-") + ".png";
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      }}, "image/png");
+    }}
+
+    downloadFullChart.addEventListener("click", downloadFullChartPng);
+
+    let chartResizeFrame = 0;
+    window.addEventListener("resize", () => {{
+      cancelAnimationFrame(chartResizeFrame);
+      chartResizeFrame = requestAnimationFrame(() => {{
+        if (!currentChartRows.length) return;
+        syncChartStageWidth(currentChartRows);
+        if (chart) chart.resize();
+      }});
+    }});
 
     function renderMeta(metric, variant, sortedRows) {{
       const totalHours = sortedRows.reduce((sum, r) => sum + r.totalHours, 0);
@@ -2489,6 +2798,17 @@ def generate_monthly_feedback_report(
         feedback_end_date=feedback_end_date,
     )
 
+    if not teacher_total_hours:
+        raise SystemExit(
+            f"课表在 {month} 没有可用于加权的有效课程。"
+            "请检查老师、学生、课程时长、临时取消和课程类型字段。"
+        )
+    if not raw_feedback_records:
+        raise SystemExit(
+            "反馈时间范围内没有可处理的老师/学生记录。"
+            "请检查老师姓名、学生姓名和身份字段，或调整身份筛选条件。"
+        )
+
     org_analysis = analyze_org_fields(raw_feedback_records)
     for field_id, info in org_analysis.items():
         if info["distribution"]:
@@ -2507,6 +2827,19 @@ def generate_monthly_feedback_report(
         combine_mode=combine_mode,
         score_map=score_map,
     )
+    recognized_score_count = sum(
+        1
+        for record in feedback_records
+        for value in record.scores.values()
+        if value is not None
+    )
+    if recognized_score_count == 0:
+        expected_columns = "、".join(field["column"] for field in NUMERIC_SCORE_FIELDS)
+        raise SystemExit(
+            "反馈表没有识别到任何有效评分。"
+            f"请确认问卷评分列仍包含：{expected_columns}，"
+            "并检查文本评分选项是否需要更新映射。"
+        )
 
     filtered_inputs = filter_excluded_teachers(
         records=feedback_records,
@@ -2532,6 +2865,12 @@ def generate_monthly_feedback_report(
         teacher_student_hours=teacher_student_hours,
         student_total_hours=student_total_hours,
     )
+
+    if not any(record.matched for record in feedback_records):
+        raise SystemExit(
+            "反馈记录无法与课表中的老师和学生匹配。"
+            "请检查姓名写法、报表月份，或更新姓名映射后重新上传。"
+        )
 
     summary_rows = build_teacher_summary(
         records=feedback_records,

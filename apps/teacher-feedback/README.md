@@ -62,7 +62,7 @@ npm run generate:teacher-feedback-cumulative
 
 默认读取 `data/local/teacher-feedback/feedback.csv`，自动发现其中最早至最晚的反馈提交月份，并写入：
 
-- `outputs/teacher-feedback/cumulative/teacher_scores.csv`：与月度精简评分表相同的三个评分维度，并增加前三项算术平均得到的“总评分”和并列排名。指标显示两位、总评分显示三位，按未截断的三项平均值降序排列；真正同分时使用相同排名。
+- `outputs/teacher-feedback/cumulative/teacher_scores.csv`：与月度精简评分表相同的三个评分维度，并增加前三项算术平均得到的“总评分”和并列排名。各评分统一显示三位小数，按未截断的三项平均值降序排列；真正同分时使用相同排名。
 - `outputs/teacher-feedback/cumulative/teacher_summary.csv`：包含累计课时、覆盖率、参与评分的月份与课时，便于审计。
 - `outputs/teacher-feedback/cumulative/monthly_score_contributions.csv`：逐月评分与课时权重贡献，可直接复算累计结果。
 - `outputs/teacher-feedback/cumulative/run_meta.json`：输入、月份范围和累计口径。
@@ -111,6 +111,8 @@ python3 apps/teacher-feedback/scripts/monthly_teacher_feedback.py \
 ## 6. Dashboard 使用说明
 - 指标切换：每个指标独立显示并按分值从高到低排序，不混图。
 - 维度切换：支持有维度的指标在“总/学生/家长”间切换（如学习提升、顾问回复反馈）。
+- 完整老师展示：当前指标超过 20 位老师时，图表支持横向滚动，不截断未排除的老师；指标明细表同样展示全部结果。
+- 完整图表截图：点击“下载完整图表 PNG”可导出当前指标、维度和排除条件下的完整宽图，包含横向滚动区域内的所有老师。
 - 指标说明：右侧“指标说明”区域可查看覆盖率和各指标定义。
 - 文本反馈：页面底部展示“改进反馈、推荐理由、需提升、不满意”等计数与样例。
 
@@ -332,6 +334,8 @@ python3 -m uvicorn api.process:app --reload --port 8000
 
 ### 9.5 线上使用提醒
 - 反馈表和课表必须上传 CSV
+- 日期支持 `YYYY-MM-DD`、`YYYY/MM/DD`、`YYYY.MM.DD`、`DD/MM/YYYY`、`DD-MM-YYYY`、`DD.MM.YYYY`；日期后可带 `HH:MM` 或 `HH:MM:SS`
+- 日期无法识别、日期列缺失、所选月份/时间范围无数据、评分列无法识别或反馈无法关联课表时，处理会中止并在上传页显示具体错误，不会生成空看板
 - 反馈起始日期包含当天
 - 如果反馈结束日期留空，系统会统计到上传反馈表里的最新记录
 - 可在“排除老师”中输入 `窦,蒋妍` 这样的逗号分隔名单

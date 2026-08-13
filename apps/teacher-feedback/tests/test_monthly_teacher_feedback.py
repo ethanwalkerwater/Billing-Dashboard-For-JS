@@ -57,6 +57,22 @@ class MonthlyTeacherFeedbackTests(unittest.TestCase):
             fieldnames.extend(field["columns"])
         return fieldnames
 
+    def test_parse_datetime_supports_common_year_first_and_day_first_formats(self):
+        cases = {
+            "2026/08/13": "2026-08-13 00:00:00",
+            "2026-08-13 09:30": "2026-08-13 09:30:00",
+            "2026.08.13 09:30:15": "2026-08-13 09:30:15",
+            "13/08/2026": "2026-08-13 00:00:00",
+            "13-08-2026 09:30": "2026-08-13 09:30:00",
+            "13.08.2026 09:30:15": "2026-08-13 09:30:15",
+            "2026-08-13T09:30:15": "2026-08-13 09:30:15",
+        }
+        for raw, expected in cases.items():
+            with self.subTest(raw=raw):
+                parsed = MODULE.parse_datetime(raw)
+                self.assertIsNotNone(parsed)
+                self.assertEqual(expected, parsed.strftime("%Y-%m-%d %H:%M:%S"))
+
     def test_extract_scores_maps_text_choices_to_numbers(self):
         row = {
             "【家长】学习提升效果": "帮助非常大，孩子进步明显",
@@ -123,11 +139,23 @@ class MonthlyTeacherFeedbackTests(unittest.TestCase):
         )
         self.assertEqual(1, rows[0]["排名"])
         self.assertEqual("包天翊", rows[0]["老师"])
-        # make_summary_row sets each total normalized_avg to scale_max (5)
-        self.assertEqual(5.0, rows[0]["学习提升效果"])
-        self.assertEqual(5.0, rows[0]["责任心与服务态度"])
-        self.assertEqual(5.0, rows[0]["个人魅力"])
+        # CSV-facing score columns use the same three-decimal precision as the chart.
+        self.assertEqual("5.000", rows[0]["学习提升效果"])
+        self.assertEqual("5.000", rows[0]["责任心与服务态度"])
+        self.assertEqual("5.000", rows[0]["个人魅力"])
         self.assertEqual("5.000", rows[0]["总评分"])
+
+    def test_build_teacher_score_table_rounds_score_columns_to_three_decimals(self):
+        summary = self.make_summary_row("老师A")
+        summary["metric_learning_effect_total_normalized_avg"] = 4.9966
+        summary["metric_responsibility_total_normalized_avg"] = 4.8444
+        summary["metric_charisma_total_normalized_avg"] = 4.5
+
+        rows, _ = MODULE.build_teacher_score_table([summary])
+
+        self.assertEqual("4.997", rows[0]["学习提升效果"])
+        self.assertEqual("4.844", rows[0]["责任心与服务态度"])
+        self.assertEqual("4.500", rows[0]["个人魅力"])
 
     def test_build_teacher_score_table_sorts_by_total_score_descending(self):
         lower = self.make_summary_row("老师A")
@@ -174,9 +202,9 @@ class MonthlyTeacherFeedbackTests(unittest.TestCase):
 
         self.assertEqual(40, summaries[0]["teacher_total_hours"])
         self.assertEqual(2, summaries[0]["report_month_count"])
-        self.assertEqual(3.5, scores[0]["学习提升效果"])
-        self.assertEqual(3.5, scores[0]["责任心与服务态度"])
-        self.assertEqual(3.5, scores[0]["个人魅力"])
+        self.assertEqual("3.500", scores[0]["学习提升效果"])
+        self.assertEqual("3.500", scores[0]["责任心与服务态度"])
+        self.assertEqual("3.500", scores[0]["个人魅力"])
         self.assertEqual("3.500", scores[0]["总评分"])
         self.assertEqual(1, scores[0]["排名"])
 
@@ -289,7 +317,7 @@ class MonthlyTeacherFeedbackTests(unittest.TestCase):
             with scores_path.open(encoding="utf-8-sig") as scores_file:
                 rows = list(csv.DictReader(scores_file))
             self.assertEqual("黄钢", rows[0]["老师"])
-            self.assertEqual("5.0", rows[0]["个人魅力"])
+            self.assertEqual("5.000", rows[0]["个人魅力"])
 
     def test_read_feedback_latest_uses_offset_month(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -380,6 +408,178 @@ class MonthlyTeacherFeedbackTests(unittest.TestCase):
             self.assertEqual(2, len(records))
             self.assertEqual(2, stats["feedback_rows_in_month"])
             self.assertEqual({"Charlie", "Kelvin"}, {r["student"] for r in records})
+
+    def test_read_feedback_latest_supports_day_first_dates_with_optional_time(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            feedback_csv = Path(tmp) / "feedback.csv"
+            self.write_csv(
+                feedback_csv,
+                ["提交时间", "老师名", "学员名", "填写人身份"],
+                [
+                    {
+                        "提交时间": "8/08/2026",
+                        "老师名": "Kevin Liu",
+                        "学员名": "Alice",
+                        "填写人身份": "学生",
+                    },
+                    {
+                        "提交时间": "10/08/2026 09:30",
+                        "老师名": "Kevin Liu",
+                        "学员名": "Bob",
+                        "填写人身份": "学生",
+                    },
+                    {
+                        "提交时间": "13/08/2026 09:30:15",
+                        "老师名": "Kevin Liu",
+                        "学员名": "Charlie",
+                        "填写人身份": "家长/监护人",
+                    },
+                ],
+            )
+
+            records, stats = MODULE.read_feedback_latest(
+                feedback_csv=feedback_csv,
+                month="2026-07",
+                identity_filter=None,
+                teacher_map={},
+                student_map={},
+                feedback_start_date="2026-08-01",
+                feedback_end_date="2026-08-31",
+            )
+
+            self.assertEqual(3, len(records))
+            self.assertEqual(0, stats["feedback_rows_invalid_date"])
+            self.assertEqual({"Alice", "Bob", "Charlie"}, {r["student"] for r in records})
+
+    def test_generate_report_rejects_unrecognized_feedback_dates(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            feedback_csv = tmp_path / "feedback.csv"
+            schedule_csv = tmp_path / "schedule.csv"
+            self.write_csv(
+                feedback_csv,
+                ["提交时间", "老师姓名", "学生姓名", "身份"],
+                [
+                    {
+                        "提交时间": "2026_08_13",
+                        "老师姓名": "Kevin Liu",
+                        "学生姓名": "Alice",
+                        "身份": "学生本人",
+                    }
+                ],
+            )
+            self.write_csv(
+                schedule_csv,
+                ["上课时间", "老师", "学生", "课程时长", "课程类型", "临时取消"],
+                [
+                    {
+                        "上课时间": "2026/07/08 10:00",
+                        "老师": "Kevin Liu",
+                        "学生": "Alice-001",
+                        "课程时长": "2",
+                        "课程类型": "雅思",
+                        "临时取消": "",
+                    }
+                ],
+            )
+
+            with self.assertRaisesRegex(
+                SystemExit,
+                "反馈表.*提交时间.*无法识别.*2026_08_13",
+            ):
+                MODULE.generate_monthly_feedback_report(
+                    month="2026-07",
+                    feedback_csv=feedback_csv,
+                    schedule_csv=schedule_csv,
+                    output_dir=tmp_path / "result",
+                    feedback_start_date="2026-08-01",
+                    feedback_end_date="2026-08-31",
+                )
+
+    def test_generate_report_rejects_empty_feedback_window(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            feedback_csv = tmp_path / "feedback.csv"
+            schedule_csv = tmp_path / "schedule.csv"
+            self.write_csv(
+                feedback_csv,
+                ["提交时间", "老师姓名", "学生姓名", "身份"],
+                [
+                    {
+                        "提交时间": "2026/08/13",
+                        "老师姓名": "Kevin Liu",
+                        "学生姓名": "Alice",
+                        "身份": "学生本人",
+                    }
+                ],
+            )
+            self.write_csv(
+                schedule_csv,
+                ["上课时间", "老师", "学生", "课程时长", "课程类型", "临时取消"],
+                [
+                    {
+                        "上课时间": "2026/07/08 10:00",
+                        "老师": "Kevin Liu",
+                        "学生": "Alice-001",
+                        "课程时长": "2",
+                        "课程类型": "雅思",
+                        "临时取消": "",
+                    }
+                ],
+            )
+
+            with self.assertRaisesRegex(SystemExit, "反馈时间范围内没有数据"):
+                MODULE.generate_monthly_feedback_report(
+                    month="2026-07",
+                    feedback_csv=feedback_csv,
+                    schedule_csv=schedule_csv,
+                    output_dir=tmp_path / "result",
+                    feedback_start_date="2026-09-01",
+                    feedback_end_date="2026-09-30",
+                )
+
+    def test_generate_report_rejects_feedback_without_recognized_score_fields(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            feedback_csv = tmp_path / "feedback.csv"
+            schedule_csv = tmp_path / "schedule.csv"
+            self.write_csv(
+                feedback_csv,
+                ["提交时间", "老师姓名", "学生姓名", "身份", "未知评分列"],
+                [
+                    {
+                        "提交时间": "13/08/2026",
+                        "老师姓名": "Kevin Liu",
+                        "学生姓名": "Alice",
+                        "身份": "学生本人",
+                        "未知评分列": "5",
+                    }
+                ],
+            )
+            self.write_csv(
+                schedule_csv,
+                ["上课时间", "老师", "学生", "课程时长", "课程类型", "临时取消"],
+                [
+                    {
+                        "上课时间": "2026/07/08 10:00",
+                        "老师": "Kevin Liu",
+                        "学生": "Alice-001",
+                        "课程时长": "2",
+                        "课程类型": "雅思",
+                        "临时取消": "",
+                    }
+                ],
+            )
+
+            with self.assertRaisesRegex(SystemExit, "没有识别到任何有效评分"):
+                MODULE.generate_monthly_feedback_report(
+                    month="2026-07",
+                    feedback_csv=feedback_csv,
+                    schedule_csv=schedule_csv,
+                    output_dir=tmp_path / "result",
+                    feedback_start_date="2026-08-01",
+                    feedback_end_date="2026-08-31",
+                )
 
     def test_teacher_summary_counts_raw_feedback_records(self):
         raw_feedback_records = [
@@ -737,6 +937,26 @@ class MonthlyTeacherFeedbackTests(unittest.TestCase):
             self.assertIn(".chart-card .chart-wrap", html)
             self.assertIn('id="textTable"', html)
             self.assertNotIn('id="overviewStats"', html)
+
+    def test_dashboard_html_shows_and_exports_every_visible_teacher(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "dashboard.html"
+            summary_rows = [self.make_summary_row(f"老师{index:02d}") for index in range(30)]
+
+            MODULE.write_dashboard_html(out, "2026-07", summary_rows, [])
+            html = out.read_text(encoding="utf-8")
+
+            self.assertNotIn("sortedRows.slice(0, 25)", html)
+            self.assertNotIn("sortedRows.slice(0, 50)", html)
+            self.assertIn("const chartRows = sortedRows;", html)
+            self.assertIn("const body = sortedRows.map", html)
+            self.assertIn('id="chartScroll"', html)
+            self.assertIn('id="chartStage"', html)
+            self.assertIn('id="downloadFullChart"', html)
+            self.assertIn("function syncChartStageWidth", html)
+            self.assertIn("function downloadFullChartPng", html)
+            self.assertIn("chartRows.length > CHART_SCROLL_THRESHOLD", html)
+            self.assertIn("exportCanvas.toBlob", html)
 
     def test_web_frontend_uses_separate_dashboard_page(self):
         index_html = (APP_ROOT / "public/index.html").read_text(encoding="utf-8")
