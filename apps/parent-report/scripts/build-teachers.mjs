@@ -50,7 +50,9 @@ for (const block of blocks) {
 }
 
 const scoreCsvPath = process.env.TEACHER_SCORES_CSV
-  || (fs.existsSync(DEFAULT_SCORE_AVERAGES) ? DEFAULT_SCORE_AVERAGES : "");
+  || (!process.env.VERCEL && fs.existsSync(DEFAULT_SCORE_AVERAGES)
+    ? DEFAULT_SCORE_AVERAGES
+    : "");
 
 if (scoreCsvPath) {
   const result = mergeTeacherScoresFromFile(teachers, scoreCsvPath);

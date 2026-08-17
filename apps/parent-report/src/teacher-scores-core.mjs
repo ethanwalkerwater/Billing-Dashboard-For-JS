@@ -18,6 +18,11 @@ export function normalizeTeacherName(value) {
     .toLowerCase();
 }
 
+export function canonicalTeacherName(value) {
+  const normalizedName = normalizeTeacherName(value);
+  return NAME_ALIASES.get(normalizedName) || normalizedName;
+}
+
 function scoreValue(value) {
   const text = cleanText(value);
   if (!text) return null;
@@ -42,8 +47,7 @@ export function parseTeacherScoresCsv(csvText) {
     const rawName = cleanText(row["老师"]);
     if (!rawName) continue;
 
-    const normalizedName = normalizeTeacherName(rawName);
-    const key = NAME_ALIASES.get(normalizedName) || normalizedName;
+    const key = canonicalTeacherName(rawName);
     scores.set(key, {
       "学习提升": pickScore(row, SCORE_COLUMNS["学习提升"]),
       "责任心": pickScore(row, SCORE_COLUMNS["责任心"]),
