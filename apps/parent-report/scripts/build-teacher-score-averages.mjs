@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { parseCsv } from "@jingshi/billing-core";
+import { canonicalTeacherName } from "../src/teacher-scores.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const APP_ROOT = path.resolve(__dirname, "..");
@@ -37,6 +38,7 @@ function parseArgs(argv) {
     inputRoot: process.env.FEEDBACK_OUTPUT_ROOT || DEFAULT_INPUT_ROOT,
     outputJson: DEFAULT_OUTPUT_JSON,
     outputCsv: DEFAULT_OUTPUT_CSV,
+    baselineCsv: "",
     monthDirs: [],
     summaryCsvs: [],
   };
@@ -49,6 +51,8 @@ function parseArgs(argv) {
       options.outputJson = argv[++index];
     } else if (arg === "--output-csv") {
       options.outputCsv = argv[++index];
+    } else if (arg === "--baseline-csv") {
+      options.baselineCsv = argv[++index];
     } else if (arg === "--summary-csv") {
       options.summaryCsvs.push(argv[++index]);
     } else {
@@ -141,10 +145,57 @@ function writeCsv(filePath, rows) {
   fs.writeFileSync(filePath, `\uFEFF${text}\n`, "utf8");
 }
 
-export function buildTeacherScoreAverages(sources) {
+function createTeacherEntry(teacher) {
+  return {
+    teacher,
+    baselineMonthsObserved: 0,
+    baselineMonthsWithAnyScore: 0,
+    monthRows: new Set(),
+    scoredMonths: new Set(),
+    metrics: Object.fromEntries(METRICS.map((metric) => [metric.label, {
+      weightedSum: 0,
+      valueCount: 0,
+      baselineMonthsWithScore: 0,
+      months: [],
+    }])),
+  };
+}
+
+function seedHistoricalBaseline(teachers, baselineCsvText) {
+  if (!baselineCsvText) return;
+
+  for (const row of parseCsv(baselineCsvText)) {
+    const teacher = String(row["老师"] || "").trim();
+    if (!teacher) continue;
+
+    const key = canonicalTeacherName(teacher);
+    const teacherEntry = createTeacherEntry(teacher);
+    const baselineMonths = toNumber(row["统计月份数"]) || 0;
+    teacherEntry.baselineMonthsObserved = baselineMonths;
+    teacherEntry.baselineMonthsWithAnyScore = baselineMonths;
+
+    for (const metric of METRICS) {
+      const metricEntry = teacherEntry.metrics[metric.label];
+      const valueCount = toNumber(row[`${metric.label}有效评分数`]) || 0;
+      const weightedAverage = toNumber(row[`${metric.label}原始加权平均`]);
+      metricEntry.valueCount = valueCount;
+      metricEntry.weightedSum = valueCount > 0 && weightedAverage != null
+        ? weightedAverage * valueCount
+        : 0;
+      metricEntry.baselineMonthsWithScore = toNumber(
+        row[`${metric.label}统计月份数`],
+      ) || 0;
+    }
+
+    teachers.set(key, teacherEntry);
+  }
+}
+
+export function buildTeacherScoreAverages(sources, { baselineCsvText = "" } = {}) {
   const teachers = new Map();
   const sourceMonths = [];
   const normalizedSources = normalizeSources(sources);
+  seedHistoricalBaseline(teachers, baselineCsvText);
 
   for (const { month, summaryPath } of normalizedSources) {
     const rows = parseCsv(fs.readFileSync(summaryPath, "utf8"));
@@ -153,25 +204,20 @@ export function buildTeacherScoreAverages(sources) {
     for (const row of rows) {
       const teacher = String(row.teacher || "").trim();
       if (!teacher) continue;
-      if (!teachers.has(teacher)) {
-        teachers.set(teacher, {
-          teacher,
-          monthRows: new Set(),
-          metrics: Object.fromEntries(METRICS.map((metric) => [metric.label, {
-            weightedSum: 0,
-            valueCount: 0,
-            months: [],
-          }])),
-        });
+      const key = canonicalTeacherName(teacher);
+      if (!teachers.has(key)) {
+        teachers.set(key, createTeacherEntry(teacher));
       }
 
-      const teacherEntry = teachers.get(teacher);
+      const teacherEntry = teachers.get(key);
       teacherEntry.monthRows.add(month);
+      let monthHasScore = false;
 
       for (const metric of METRICS) {
         const valueCount = toNumber(row[metric.countColumn]) || 0;
         const average = toNumber(row[metric.averageColumn]);
         if (valueCount <= 0 || average == null) continue;
+        monthHasScore = true;
 
         const metricEntry = teacherEntry.metrics[metric.label];
         metricEntry.weightedSum += average * valueCount;
@@ -182,6 +228,8 @@ export function buildTeacherScoreAverages(sources) {
           average: round(average),
         });
       }
+
+      if (monthHasScore) teacherEntry.scoredMonths.add(month);
     }
   }
 
@@ -196,16 +244,17 @@ export function buildTeacherScoreAverages(sources) {
           weightedAverage: round(weightedAverage),
           displayScore: displayScore(weightedAverage),
           valueCount: metricEntry.valueCount,
-          monthsWithScore: metricEntry.months.length,
+          monthsWithScore:
+            metricEntry.baselineMonthsWithScore + metricEntry.months.length,
           months: metricEntry.months,
         }];
       }));
-      const monthsWithAnyScore = new Set(Object.values(metrics)
-        .flatMap((metric) => metric.months.map((monthEntry) => monthEntry.month)));
       return {
         teacher: teacherEntry.teacher,
-        monthsObserved: teacherEntry.monthRows.size,
-        monthsWithAnyScore: monthsWithAnyScore.size,
+        monthsObserved:
+          teacherEntry.baselineMonthsObserved + teacherEntry.monthRows.size,
+        monthsWithAnyScore:
+          teacherEntry.baselineMonthsWithAnyScore + teacherEntry.scoredMonths.size,
         metrics,
       };
     })
@@ -247,7 +296,9 @@ function main() {
   const options = parseArgs(process.argv.slice(2));
   const monthDirs = options.monthDirs.length
     ? options.monthDirs.map((dir) => path.resolve(dir))
-    : listMonthDirs(options.inputRoot);
+    : options.baselineCsv
+      ? []
+      : listMonthDirs(options.inputRoot);
   const sources = [
     ...monthDirs.map(sourceFromMonthDir),
     ...options.summaryCsvs.map(sourceFromSummarySpec),
@@ -259,12 +310,16 @@ function main() {
     return;
   }
 
-  const teacherScores = buildTeacherScoreAverages(sources);
+  const baselineCsvText = options.baselineCsv
+    ? fs.readFileSync(path.resolve(options.baselineCsv), "utf8")
+    : "";
+  const teacherScores = buildTeacherScoreAverages(sources, { baselineCsvText });
   const sourceMonths = normalizeSources(sources).map((source) => source.month);
   const output = {
     generatedAt: new Date().toISOString(),
     sourceMonths,
-    weighting: "每个维度按 teacher_summary.csv 中对应 total_value_count 加权；value_count=0 的月份不参与该维度平均。",
+    weighting: "历史累计与新增月份均按 teacher_summary.csv 中对应 total_value_count 加权；value_count=0 的月份不参与该维度平均。",
+    baselineCsv: options.baselineCsv ? path.resolve(options.baselineCsv) : null,
     metrics: METRICS.map(({ label, countColumn, averageColumn }) => ({
       label,
       countColumn,

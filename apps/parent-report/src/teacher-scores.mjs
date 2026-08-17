@@ -1,6 +1,7 @@
 import fs from "node:fs";
 
 export {
+  canonicalTeacherName,
   mergeTeacherScores,
   normalizeTeacherName,
   parseTeacherScoresCsv,
