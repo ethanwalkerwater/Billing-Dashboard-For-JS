@@ -9,6 +9,7 @@ const SCORE_COLUMNS = {
 const NAME_ALIASES = new Map([
   ["valentina林", "valentinalin"],
   ["马", "马怡婷"],
+  ["kevinliu", "刘峥"],
 ]);
 
 export function normalizeTeacherName(value) {

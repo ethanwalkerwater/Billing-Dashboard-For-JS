@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 
-import { renderFacultyCard } from "../src/render-faculty.mjs";
+import { renderFacultyByRole, renderFacultyCard } from "../src/render-faculty.mjs";
 
 const hasImageMagick = spawnSync("magick", ["-version"]).status === 0;
 
@@ -45,4 +45,18 @@ test("renderFacultyCard can optimize embedded photos as jpeg data uris", {
 
   assert.match(optimizedHtml, /data:image\/jpeg;base64,/);
   assert.ok(optimizedHtml.length < rawHtml.length);
+});
+
+test("renderFacultyByRole keeps historical Kevin Liu lessons mapped to 刘峥", () => {
+  const html = renderFacultyByRole([
+    { name: "刘峥", tag: "英语", desc: "简介", scores: {} },
+    { name: "其他老师", tag: "数学", desc: "简介", scores: {} },
+  ], ["KevinLiu"]);
+
+  const teachingStart = html.indexOf("授课老师");
+  const moreStart = html.indexOf("更多老师");
+  assert.ok(teachingStart >= 0);
+  assert.ok(moreStart > teachingStart);
+  assert.match(html.slice(teachingStart, moreStart), /刘峥/);
+  assert.doesNotMatch(html.slice(moreStart), /刘峥/);
 });
