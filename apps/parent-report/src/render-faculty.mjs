@@ -8,6 +8,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { canonicalTeacherName } from "./teacher-scores-core.mjs";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => (
   { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -88,9 +89,9 @@ ${list.map((t) => renderFacultyCard(t, opts)).join("\n")}
 // 模板/报告用：按「授课老师 / 更多老师」分类渲染。
 // teachingNames = 该学生的授课老师姓名数组；其余归入「更多老师」。
 export function renderFacultyByRole(teachers, teachingNames = [], opts = {}) {
-  const set = new Set(teachingNames);
-  const teaching = teachers.filter((t) => set.has(t.name));
-  const more = teachers.filter((t) => !set.has(t.name));
+  const set = new Set(teachingNames.map(canonicalTeacherName));
+  const teaching = teachers.filter((t) => set.has(canonicalTeacherName(t.name)));
+  const more = teachers.filter((t) => !set.has(canonicalTeacherName(t.name)));
   return [
     renderFacultySection("授课老师", teaching, opts),
     renderFacultySection("更多老师", more, opts),
