@@ -99,7 +99,7 @@ const UPLOAD_FIELDS = [
   {
     kind: "scores",
     icon: "ph-chart-line-up",
-    title: "老师上月评分 CSV",
+    title: "老师历史累计评分 CSV",
     hint: "老师反馈模块的月度评分汇总，用于更新师资卡三项评分",
     input: '<input id="scoreFile" type="file" accept=".csv,text/csv" />',
   },
@@ -146,7 +146,7 @@ function missingUploads() {
   const missing = [];
   if (!state.files.billing.length) missing.push("学生课时情况 CSV");
   if (!state.files.schedule) missing.push("完整课程 schedule.csv");
-  if (!state.files.scores) missing.push("老师上月评分 CSV");
+  if (!state.files.scores) missing.push("老师历史累计评分 CSV");
   return missing;
 }
 
@@ -161,7 +161,7 @@ function uploadScreen() {
         </div>
         <p class="eyebrow">Parent Billing Studio</p>
         <h1>从三份资料，<br />生成可信的家长账单。</h1>
-        <p>上传学生课时汇总、完整课程表与上月老师评分。所有原始 CSV 都在浏览器中解析与压缩，只有确认后的单个学生报告进入 PDF 生成。</p>
+        <p>上传学生课时汇总、完整课程表与老师历史累计评分。所有原始 CSV 都在浏览器中解析与压缩，只有确认后的单个学生报告进入 PDF 生成。</p>
         <div class="upload-privacy">
           <i class="ph ph-shield-check" aria-hidden="true"></i>
           原始文件不保存到服务器，刷新页面后本次数据将清空。
@@ -181,7 +181,7 @@ function uploadScreen() {
           <ol>
             <li><strong>学生课时情况 CSV</strong>：当月学生课时汇总导出，可多选；也可直接使用包含多名学生的完整课时费汇总文件。</li>
             <li><strong>完整课程 schedule.csv</strong>：排课系统导出的本月全量课表，用于交叉核对课时、单价与授课老师。</li>
-            <li><strong>老师上月评分 CSV</strong>：老师反馈模块导出的上月评分汇总，用于更新师资卡上的三项评分。</li>
+            <li><strong>老师历史累计评分 CSV</strong>：使用老师反馈模块 <code>cumulative/teacher_scores.csv</code>，用于更新师资卡上的三项累计评分。</li>
           </ol>
           <p>三份文件都需要是 UTF-8 编码的 CSV（用 Excel 另存时请选择「CSV UTF-8（逗号分隔）」）。</p>
         </div>

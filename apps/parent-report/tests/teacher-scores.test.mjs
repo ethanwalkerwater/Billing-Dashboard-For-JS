@@ -41,3 +41,16 @@ Kevin Liu,4.7,4.8,4.9,4.8
     "个人魅力": "4.9",
   });
 });
+
+test("cumulative no-score rows do not erase an existing historical card score", () => {
+  const teachers = [{
+    name: "马怡婷",
+    scores: { "学习提升": "4.9", "责任心": "5.0", "个人魅力": "4.9" },
+  }];
+  const result = mergeTeacherScores(teachers, [
+    "排名,老师,学习提升效果,责任心与服务态度,个人魅力,总评分",
+    ",马怡婷,无评分,无评分,无评分,无评分",
+  ].join("\n"));
+
+  assert.deepEqual(result.teachers[0].scores, teachers[0].scores);
+});

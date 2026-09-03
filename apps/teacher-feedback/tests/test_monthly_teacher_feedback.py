@@ -73,6 +73,23 @@ class MonthlyTeacherFeedbackTests(unittest.TestCase):
                 self.assertIsNotNone(parsed)
                 self.assertEqual(expected, parsed.strftime("%Y-%m-%d %H:%M:%S"))
 
+    def test_resolve_feedback_csv_uses_the_only_csv_when_standard_name_is_missing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            exported = folder / "问卷导出.csv"
+            exported.write_text("提交时间\n", encoding="utf-8")
+
+            self.assertEqual(exported.resolve(), MODULE.resolve_feedback_csv(folder / "feedback.csv"))
+
+    def test_resolve_feedback_csv_does_not_guess_when_multiple_csv_files_exist(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            (folder / "a.csv").write_text("a\n", encoding="utf-8")
+            (folder / "b.csv").write_text("b\n", encoding="utf-8")
+            standard = folder / "feedback.csv"
+
+            self.assertEqual(standard.resolve(), MODULE.resolve_feedback_csv(standard))
+
     def test_extract_scores_maps_text_choices_to_numbers(self):
         row = {
             "【家长】学习提升效果": "帮助非常大，孩子进步明显",

@@ -16,6 +16,7 @@ const NAME_ALIASES = {
   "LOH JIAN WEN": "罗健文",
   "Loh Jian Wen": "罗健文",
   "王冰清": "王冰青",
+  "马": "马怡婷",
   "华老师": "华心晨",
   "唐老师": "丁琪佳",
 };
@@ -399,6 +400,9 @@ export function buildPayrollReport(reportData, input = {}) {
       const lessonFee = round(reportData.views?.teacher?.[month]?.[teacher]?.totals?.amount || 0);
       const commissions = commissionsByTeacher.get(key) || { ownerCommission: 0, serviceCommission: 0, rows: [] };
       const baseSalary = round(base?.baseSalary || 0);
+      const managementFee = round(base?.managementFee || 0);
+      const rentDeduction = round(base?.rentDeduction || 0);
+      const fixedIncome = round(baseSalary + managementFee - rentDeduction);
       const lessonBonus = round(lessonFee * feedback.rate);
       const baseSalaryDeduction = round(baseSalary * params.baseSalaryDeductionMultiplier);
       const bonusSalary = round(lessonBonus + commissions.ownerCommission + commissions.serviceCommission - baseSalaryDeduction);
@@ -406,8 +410,8 @@ export function buildPayrollReport(reportData, input = {}) {
       const tax = round(taxSocial?.tax || 0);
       const personalSocialInsurance = round(taxSocial?.personalSocialInsurance || 0);
       const companySocialInsurance = round(taxSocial?.companySocialInsurance || 0);
-      const personalTotalIncome = round(baseSalary + bonusSalary + reimbursementAmount - personalSocialInsurance - tax);
-      const companyTotalCost = round(baseSalary + bonusSalary + reimbursementAmount + companySocialInsurance);
+      const personalTotalIncome = round(fixedIncome + bonusSalary + reimbursementAmount - personalSocialInsurance - tax);
+      const companyTotalCost = round(fixedIncome + bonusSalary + reimbursementAmount + companySocialInsurance);
       const issues = [];
       if (!base) issues.push({ code: MISSING.baseSalary, label: "缺少基础薪水" });
       if (!taxSocial) issues.push({ code: MISSING.taxSocial, label: "缺少五险+个税" });
@@ -419,6 +423,9 @@ export function buildPayrollReport(reportData, input = {}) {
         teacher,
         employmentType: base?.employmentType || "未知",
         baseSalary,
+        managementFee,
+        rentDeduction,
+        fixedIncome,
         lessonFee,
         feedbackRate: feedback.rate,
         feedbackType: feedback.type,

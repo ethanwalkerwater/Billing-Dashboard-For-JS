@@ -35,7 +35,7 @@ git check-ignore data/local/teacher-income/defaults.json
 | App | 输入 | 读取方式 | 输出 |
 |---|---|---|---|
 | `billing-report` | `local/shared/schedule.csv` | 网页手动上传；Python CLI 默认读取 | `outputs/course_billing_report/` |
-| `teacher-income-report` | 课表/完整课时费、五险个税、报销 | 网页手动上传 | 浏览器下载 CSV |
+| `teacher-income-report` | 课表/完整课时费、五险个税、报销 | 网页手动上传 | 浏览器下载 XLSX |
 | `teacher-feedback` | `local/shared/schedule.csv` + `local/teacher-feedback/feedback.csv` | 网页手动上传；Python CLI 默认读取 | `outputs/teacher-feedback/<YYYY-MM>/` |
 | `parent-report` | 公共课表 + `local/parent-report/complete-billing/*.csv` | Node CLI 默认读取 | `outputs/parent_reports/` |
 
@@ -70,7 +70,9 @@ git check-ignore data/local/teacher-income/defaults.json
 }
 ```
 
-该文件可包含真实薪资和学员归属，因此永远不进 Git。Vercel 云端构建不应配置 `JINGSHI_PAYROLL_DEFAULTS_PATH`；生产页面由用户在浏览器内上传数据。
+该文件是本地维护源，不直接进 Git。经业务方确认可公开的默认值可同步到
+`apps/teacher-income-report/web/assets/payroll/defaults.json` 并随网页部署；浏览器编辑后的版本
+保存在 `localStorage`。Vercel 云端构建不读取 `data/local/`。
 
 ## 本地操作
 

@@ -1,6 +1,6 @@
 # 老师收入报表（teacher-income-report）
 
-本 app 是课时账单的下游：读取课时费、五险个税、报销和本地主数据，按月生成老师个人收入与公司总成本。页面为纯静态应用，上传的 CSV 只在当前浏览器中处理。
+本 app 是课时账单的下游：读取课时费、五险个税、报销和主数据，按月生成老师个人收入与公司总成本。页面为纯静态应用，上传的 CSV 只在当前浏览器中处理。
 
 ## 结构
 
@@ -34,18 +34,25 @@ npm run build:teacher-income-report
 | 五险 + 个税 CSV | `姓名,个税,个人五险,公司五险` | 缺失时页面给出数据提醒 |
 | 补贴报销 CSV | `老师名字,报销金额` | 可选，未上传按 0 处理 |
 
-页面的“下载模板”按钮可以直接生成正确表头。全部数据路径约定见 [`data/README.md`](../../data/README.md)。
+页面的“下载模板”按钮可以直接生成正确表头。课时明细支持折扣百分比和数值乘数，
+老师实际课时费为 `总金额 × 折扣% × 乘数`；乘数不会改变学生归属和服务提成的计提基数。
+全部数据路径约定见 [`data/README.md`](../../data/README.md)。
 
 ## 主数据
 
-页面内可编辑：
+页面内可编辑并可通过 CSV 整表导入：
 
 - 老师基础薪水和雇佣属性
 - 学生归属老师与服务老师
 - 老师反馈评分
 - 课时系数、提成和底薪扣减参数
 
-本地可选默认值放在 `data/local/teacher-income/defaults.json`。该文件不提交、不部署。不存在时页面使用空主数据和内置薪资参数启动。
+项目公开默认值随网页部署在 `web/assets/payroll/defaults.json`。需要用本地
+`data/local/teacher-income/defaults.json` 更新公开默认值时，显式设置
+`JINGSHI_PAYROLL_DEFAULTS_PATH` 后运行 `npm run sync-core -w @jingshi/teacher-income-report`；
+更新后应确认内容可公开并提交该文件。用户在网页导入或编辑某个主数据板块后，该板块会保存到
+当前浏览器的 `localStorage`，刷新页面不会丢失，并优先于项目默认值加载。未手动改过的板块仍
+跟随以后部署的新项目默认值更新，避免只改基础薪水时把历史累计评分冻结在旧版本。
 
 ## 操作流程
 
@@ -53,10 +60,11 @@ npm run build:teacher-income-report
 2. 上传当月五险个税和报销 CSV。
 3. 检查基础薪水、学员归属、反馈评分和薪资参数。
 4. 选择月份和老师，复核课时、Bonus、扣减和数据提醒。
-5. 导出单位老师明细或当月全部汇总。
+5. 导出当前老师或当月全部汇总 `.xlsx`。本月汇总的第一个 Sheet 是汇总表，后续每位老师一个工资明细 Sheet。
 
 计算公式和异常数据处理见 [薪资业务规则](docs/business-rules.md)。
 
 ## Vercel
 
-Vercel Project 的 Root Directory 为 `apps/teacher-income-report`，构建产物为 `dist/`。云端构建不得读取真实 `data/local/` 或配置指向薪资文件的 `JINGSHI_PAYROLL_DEFAULTS_PATH`。
+Vercel Project 的 Root Directory 为 `apps/teacher-income-report`，构建产物为 `dist/`。
+云端使用已提交的公开默认值，不读取仓库外的 `data/local/`。

@@ -14,15 +14,28 @@ for (const file of ["report-core.js", "payroll-core.js"]) {
   console.log(`synced billing-core -> ${path.relative(REPO_ROOT, dest)}`);
 }
 
-const payrollDefaults = process.env.JINGSHI_PAYROLL_DEFAULTS_PATH
-  ? path.resolve(process.env.JINGSHI_PAYROLL_DEFAULTS_PATH)
-  : path.resolve(REPO_ROOT, "data/local/teacher-income/defaults.json");
+const xlsxWriterSource = path.resolve(
+  REPO_ROOT,
+  "node_modules/write-excel-file/bundle/write-excel-file.min.js",
+);
+const xlsxWriterDest = path.resolve(APP_ROOT, "web/assets/vendor/write-excel-file.min.js");
+fs.mkdirSync(path.dirname(xlsxWriterDest), { recursive: true });
+fs.copyFileSync(xlsxWriterSource, xlsxWriterDest);
+console.log(`synced XLSX writer -> ${path.relative(REPO_ROOT, xlsxWriterDest)}`);
+
 const payrollDefaultsDest = path.resolve(APP_ROOT, "web/assets/payroll/defaults.json");
-if (fs.existsSync(payrollDefaults)) {
+const configuredPayrollDefaults = process.env.JINGSHI_PAYROLL_DEFAULTS_PATH
+  ? (path.isAbsolute(process.env.JINGSHI_PAYROLL_DEFAULTS_PATH)
+    ? process.env.JINGSHI_PAYROLL_DEFAULTS_PATH
+    : path.resolve(REPO_ROOT, process.env.JINGSHI_PAYROLL_DEFAULTS_PATH))
+  : "";
+const localPayrollDefaults = path.resolve(REPO_ROOT, "data/local/teacher-income/defaults.json");
+const payrollDefaults = configuredPayrollDefaults
+  || (!fs.existsSync(payrollDefaultsDest) ? localPayrollDefaults : "");
+if (payrollDefaults && fs.existsSync(payrollDefaults)) {
   fs.mkdirSync(path.dirname(payrollDefaultsDest), { recursive: true });
   fs.copyFileSync(payrollDefaults, payrollDefaultsDest);
   console.log(`synced payroll defaults -> ${path.relative(REPO_ROOT, payrollDefaultsDest)}`);
 } else {
-  fs.rmSync(payrollDefaultsDest, { force: true });
-  console.log(`no local payroll defaults at ${path.relative(REPO_ROOT, payrollDefaults)}`);
+  console.log(`using bundled payroll defaults at ${path.relative(REPO_ROOT, payrollDefaultsDest)}`);
 }
