@@ -26,7 +26,7 @@
     "build:teacher-feedback": "npm run build -w @jingshi/teacher-feedback",
     "test:feedback": "npm test -w @jingshi/teacher-feedback",
     "generate:teacher-feedback-cumulative": "npm run generate:cumulative -w @jingshi/teacher-feedback",
-    "update:parent-teacher-scores": "npm run generate:teacher-feedback-cumulative && npm run sync:cumulative-teacher-scores -w @jingshi/parent-report && npm run sync:cumulative-teacher-scores -w @jingshi/teacher-income-report && npm run build:faculty -w @jingshi/parent-report",
+    "update:parent-teacher-scores": "npm run generate:teacher-feedback-cumulative && npm run sync:cumulative-teacher-scores -w @jingshi/parent-report && npm run build:faculty -w @jingshi/parent-report",
     "generate:billing-report": "python3 apps/billing-report/python/course_billing_report.py",
     "generate:parent-reports": "npm run generate:student-billing -w @jingshi/parent-report"
   },

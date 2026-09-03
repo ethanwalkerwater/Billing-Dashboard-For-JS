@@ -174,7 +174,7 @@ p {
 /* ============ ① 输入区 ============ */
 .upload-row {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
   padding: 16px 20px 18px;
 }
@@ -670,6 +670,19 @@ p {
   color: hsl(var(--positive));
 }
 
+.ledger-row.warning {
+  margin: 6px 0;
+  border: 1px solid hsl(var(--warn) / .4);
+  border-radius: var(--radius-sm);
+  background: hsl(var(--warn) / .1);
+  padding: 8px 10px;
+}
+
+.ledger-row.warning b,
+.ledger-row.warning strong {
+  color: hsl(25 95% 28%);
+}
+
 .ledger-row.minus b {
   color: hsl(var(--negative));
 }
@@ -798,6 +811,22 @@ p {
   color: hsl(var(--foreground));
 }
 
+.button.danger {
+  border-color: hsl(var(--negative) / .25);
+  background: hsl(var(--negative) / .06);
+  color: hsl(var(--negative));
+}
+
+.button.danger:hover:not(:disabled) {
+  background: hsl(var(--negative) / .12);
+}
+
+.button.compact {
+  height: 30px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
 .empty-state {
   margin: 18px;
   padding: 56px 18px;
@@ -883,6 +912,34 @@ p {
   padding: 18px 20px;
 }
 
+.score-ranking-legend {
+  display: flex;
+  align-items: center;
+  gap: 10px 16px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius-sm);
+  background: hsl(var(--muted) / .35);
+  padding: 10px 12px;
+  color: hsl(var(--muted-foreground));
+  font-size: 12px;
+}
+
+.score-ranking-legend strong {
+  color: hsl(var(--foreground));
+}
+
+.score-ranking-legend i {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 5px;
+  border-radius: 3px;
+  background: hsl(var(--positive) / .22);
+  vertical-align: -1px;
+}
+
 .editor-table-wrap {
   overflow: auto;
   border: 1px solid hsl(var(--border));
@@ -925,6 +982,22 @@ p {
 
 .editor-table input:hover {
   border-color: hsl(var(--primary) / .4);
+}
+
+.editor-table td.score-top50 {
+  background: hsl(var(--positive) / .12);
+}
+
+.editor-table td.score-top50 input {
+  border-color: hsl(var(--positive) / .38);
+  background: hsl(var(--card) / .72);
+  color: hsl(var(--positive));
+  font-weight: 650;
+}
+
+.editor-action {
+  width: 72px;
+  text-align: center !important;
 }
 
 /* ============ 响应式 ============ */
