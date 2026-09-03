@@ -123,6 +123,7 @@ test("buildPayrollReport calculates full-time feedback rate and stacked commissi
   assert.equal(row.ownerCommission, 400);
   assert.equal(row.serviceCommission, 140);
   assert.equal(row.bonusSalary, 580);
+  assert.equal(row.appliedBonusSalary, 580);
   assert.equal(row.personalTotalIncome, 1380);
   assert.equal(row.companyTotalCost, 1980);
 });
@@ -167,7 +168,7 @@ test("part-time teachers keep the part-time rate without requiring monthly score
   assert.equal(row.issues.some((issue) => issue.code === "missing_feedback_score"), false);
 });
 
-test("management fee and rent deduction affect income while other maintained fields stay informational", () => {
+test("negative bonus is retained for review but contributes zero to income and company cost", () => {
   const report = buildReportFromCsv(scheduleCsv, "schedule.csv");
   const [baseSalary] = parseBaseSalaryCsv([
     "老师名,雇佣属性,基础薪水,管理费,市场推广,教学顾问,排课,行政前台,房租扣除",
@@ -187,8 +188,10 @@ test("management fee and rent deduction affect income while other maintained fie
   assert.equal(row.lessonBonus, 1000);
   assert.equal(row.baseSalaryDeduction, 1200);
   assert.equal(row.bonusSalary, -200);
-  assert.equal(row.personalTotalIncome, 900);
-  assert.equal(row.companyTotalCost, 900);
+  assert.equal(row.appliedBonusSalary, 0);
+  assert.equal(row.personalTotalIncome, 1100);
+  assert.equal(row.companyTotalCost, 1100);
+  assert.match(row.issues.find((issue) => issue.code === "bonus_negative").label, /按 0 处理/);
 });
 
 test("commissions never become negative when student monthly fee is negative", () => {

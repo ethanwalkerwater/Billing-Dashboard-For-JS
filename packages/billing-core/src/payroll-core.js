@@ -482,12 +482,13 @@ export function buildPayrollReport(reportData, input = {}) {
       const lessonBonus = round(lessonFee * feedback.rate);
       const baseSalaryDeduction = round(baseSalary * params.baseSalaryDeductionMultiplier);
       const bonusSalary = round(lessonBonus + commissions.ownerCommission + commissions.serviceCommission - baseSalaryDeduction);
+      const appliedBonusSalary = Math.max(0, bonusSalary);
       const reimbursementAmount = round(reimbursement?.reimbursement || 0);
       const tax = round(taxSocial?.tax || 0);
       const personalSocialInsurance = round(taxSocial?.personalSocialInsurance || 0);
       const companySocialInsurance = round(taxSocial?.companySocialInsurance || 0);
-      const personalTotalIncome = round(fixedIncome + bonusSalary + reimbursementAmount - personalSocialInsurance - tax);
-      const companyTotalCost = round(fixedIncome + bonusSalary + reimbursementAmount + companySocialInsurance);
+      const personalTotalIncome = round(fixedIncome + appliedBonusSalary + reimbursementAmount - personalSocialInsurance - tax);
+      const companyTotalCost = round(fixedIncome + appliedBonusSalary + reimbursementAmount + companySocialInsurance);
       const issues = [];
       if (!base) issues.push({ code: MISSING.baseSalary, label: "缺少基础薪水" });
       if (!taxSocial) issues.push({ code: MISSING.taxSocial, label: "缺少五险+个税" });
@@ -496,7 +497,10 @@ export function buildPayrollReport(reportData, input = {}) {
         code: MISSING.feedbackScore,
         label: `缺少当月评分，按全职 0 项前 50%（${round(feedback.rate * 100)}%）计算`,
       });
-      if (bonusSalary < 0) issues.push({ code: "bonus_negative", label: "Bonus 为负数" });
+      if (bonusSalary < 0) issues.push({
+        code: "bonus_negative",
+        label: "Bonus 为负数，实际计入收入与公司成本时按 0 处理",
+      });
 
       byMonth[month][teacher] = {
         teacher,
@@ -517,6 +521,7 @@ export function buildPayrollReport(reportData, input = {}) {
         commissionRows: commissions.rows,
         baseSalaryDeduction,
         bonusSalary,
+        appliedBonusSalary,
         reimbursement: reimbursementAmount,
         personalSocialInsurance,
         companySocialInsurance,

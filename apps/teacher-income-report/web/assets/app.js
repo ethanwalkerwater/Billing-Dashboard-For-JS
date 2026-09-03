@@ -1090,7 +1090,7 @@ function renderLedger() {
       ${ledgerItem("plus", "服务/管理奖金", row.serviceCommission, "来源：学生归属服务表 + 学生当月学费", `学生学费 × ${percent(state.master.parameters.serviceCommissionRate)}`)}
       ${ledgerItem("subtotal", "Bonus 扣减前小计", bonusBeforeDeduction, "课时反馈奖金 + 介绍提成 + 服务奖金")}
       ${ledgerItem("minus", "基础薪水扣减", row.baseSalaryDeduction, "来源：老师基础薪水表 + 参数", `${money(row.baseSalary)} × ${number(state.master.parameters.baseSalaryDeductionMultiplier)}`)}
-      ${ledgerItem("total", "Bonus 薪水", row.bonusSalary, "Bonus 扣减前小计 - 基础薪水扣减")}
+      ${ledgerItem("total", "Bonus 公式结果", row.bonusSalary, "Bonus 扣减前小计 - 基础薪水扣减")}
     </section>
 
     <section class="ledger">
@@ -1098,11 +1098,11 @@ function renderLedger() {
       ${ledgerItem("plus", "基础薪水", row.baseSalary, "来源：老师基础薪水表")}
       ${ledgerItem("plus", "管理费", row.managementFee, "来源：老师基础薪水表")}
       ${ledgerItem("minus", "房租扣除", row.rentDeduction, "来源：老师基础薪水表")}
-      ${ledgerItem("plus", "Bonus 薪水", row.bonusSalary, "来源：上方 Bonus 计算")}
+      ${ledgerItem(row.bonusSalary < 0 ? "warning" : "plus", "实际计入 Bonus", row.appliedBonusSalary, "来源：上方 Bonus 公式结果", row.bonusSalary < 0 ? `${money(row.bonusSalary)} 按 ¥0.00 计入个人收入` : "")}
       ${ledgerItem("plus", "补贴报销", row.reimbursement, "来源：补贴报销 CSV")}
       ${ledgerItem("minus", "个人五险", row.personalSocialInsurance, "来源：五险 + 个税 CSV")}
       ${ledgerItem("minus", "个税", row.tax, "来源：五险 + 个税 CSV")}
-      ${ledgerItem("total", "个人总收入", row.personalTotalIncome, "基础薪水 + 管理费 - 房租扣除 + Bonus + 报销 - 个人五险 - 个税")}
+      ${ledgerItem("total", "个人总收入", row.personalTotalIncome, "基础薪水 + 管理费 - 房租扣除 + 实际计入 Bonus + 报销 - 个人五险 - 个税")}
     </section>
 
     <section class="ledger">
@@ -1110,10 +1110,10 @@ function renderLedger() {
       ${ledgerItem("plus", "基础薪水", row.baseSalary, "来源：老师基础薪水表")}
       ${ledgerItem("plus", "管理费", row.managementFee, "来源：老师基础薪水表")}
       ${ledgerItem("minus", "房租扣除", row.rentDeduction, "来源：老师基础薪水表")}
-      ${ledgerItem("plus", "Bonus 薪水", row.bonusSalary, "来源：上方 Bonus 计算")}
+      ${ledgerItem(row.bonusSalary < 0 ? "warning" : "plus", "实际计入 Bonus", row.appliedBonusSalary, "来源：上方 Bonus 公式结果", row.bonusSalary < 0 ? `${money(row.bonusSalary)} 按 ¥0.00 计入公司成本` : "")}
       ${ledgerItem("plus", "补贴报销", row.reimbursement, "来源：补贴报销 CSV")}
       ${ledgerItem("plus", "公司五险", row.companySocialInsurance, "来源：五险 + 个税 CSV")}
-      ${ledgerItem("total", "公司总成本", row.companyTotalCost, "基础薪水 + 管理费 - 房租扣除 + Bonus + 报销 + 公司五险")}
+      ${ledgerItem("total", "公司总成本", row.companyTotalCost, "基础薪水 + 管理费 - 房租扣除 + 实际计入 Bonus + 报销 + 公司五险")}
     </section>
 
     <section class="source-panel">
@@ -1145,6 +1145,7 @@ function payrollSummaryRow(row) {
     row.serviceCommission,
     row.baseSalaryDeduction,
     row.bonusSalary,
+    row.appliedBonusSalary,
     row.reimbursement,
     row.personalSocialInsurance,
     row.tax,
@@ -1169,7 +1170,8 @@ const SUMMARY_HEADERS = [
   "学员介绍提成",
   "服务/管理奖金",
   "基础薪水扣减",
-  "Bonus 薪水",
+  "Bonus 公式结果",
+  "实际计入 Bonus",
   "补贴报销",
   "个人五险",
   "个税",
@@ -1234,15 +1236,16 @@ function teacherExportModel(row) {
       ["加项", "服务/管理奖金", "学生归属服务表", `学生学费 × ${state.master.parameters.serviceCommissionRate}`, row.serviceCommission],
       ["小计", "Bonus 扣减前小计", "", "", bonusBeforeDeduction],
       ["减项", "基础薪水扣减", "老师基础薪水表 + 参数", `${row.baseSalary} × ${state.master.parameters.baseSalaryDeductionMultiplier}`, row.baseSalaryDeduction],
-      ["合计", "Bonus 薪水", "", "", row.bonusSalary],
+      ["合计", "Bonus 公式结果", "", "", row.bonusSalary],
+      [row.bonusSalary < 0 ? "调整" : "加项", "实际计入 Bonus", "Bonus 公式结果", row.bonusSalary < 0 ? `${row.bonusSalary} 按 0 计入` : "", row.appliedBonusSalary],
       ["加项", "基础薪水", "老师基础薪水表", "", row.baseSalary],
       ["加项", "管理费", "老师基础薪水表", "", row.managementFee],
       ["减项", "房租扣除", "老师基础薪水表", "", row.rentDeduction],
       ["加项", "补贴报销", "补贴报销 CSV", "", row.reimbursement],
       ["减项", "个人五险", "五险 + 个税 CSV", "", row.personalSocialInsurance],
       ["减项", "个税", "五险 + 个税 CSV", "", row.tax],
-      ["合计", "个人总收入", "", "", row.personalTotalIncome],
-      ["合计", "公司总成本", "固定收入 + Bonus + 报销 + 公司五险", "", row.companyTotalCost],
+      ["合计", "个人总收入", "固定收入 + 实际计入 Bonus + 报销 - 个人五险 - 个税", "", row.personalTotalIncome],
+      ["合计", "公司总成本", "固定收入 + 实际计入 Bonus + 报销 + 公司五险", "", row.companyTotalCost],
     ],
     lessonHeaders: [
       "学生",
@@ -1278,7 +1281,7 @@ async function downloadIncomeWorkbook(rows, filename) {
     month: state.month,
     summaryHeaders: SUMMARY_HEADERS,
     summaryRows: rows.map(payrollSummaryRow),
-    summaryCurrencyColumns: [3, 4, 5, 6, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20],
+    summaryCurrencyColumns: [3, 4, 5, 6, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21],
     summaryRateColumns: [7],
     teachers: rows.map(teacherExportModel),
   };
