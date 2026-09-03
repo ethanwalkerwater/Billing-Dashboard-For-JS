@@ -33,6 +33,9 @@ test("monthly score upload drives the selected month's ranking and feedback rate
   assert.deepEqual(ranking.teachers[0].qualifiedMetricKeys, ["learning", "charisma"]);
   assert.equal(payroll.byMonth["2026-09"]["黄钢"].feedbackRate, 0.57);
   assert.equal(payroll.byMonth["2026-09"]["朱毅博"].feedbackRate, 0.52);
+  assert.ok(payroll.byMonth["2026-09"]["黄钢"].bonusSalary < 0);
+  assert.equal(payroll.byMonth["2026-09"]["黄钢"].appliedBonusSalary, 0);
+  assert.equal(payroll.byMonth["2026-09"]["黄钢"].personalTotalIncome, 30000);
 });
 
 test("a full-time teacher without a monthly score uses the base feedback rate", () => {

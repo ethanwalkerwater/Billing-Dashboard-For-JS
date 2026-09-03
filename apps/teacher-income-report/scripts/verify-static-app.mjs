@@ -52,6 +52,7 @@ assert.match(app, /data-lesson-multiplier/, "lesson fee details must support num
 assert.match(app, /MASTER_STORAGE_KEY/, "master data edits must persist in browser storage");
 assert.match(app, /teacherScoresByMonth/, "teacher scores must be isolated by payroll month");
 assert.match(app, /buildFeedbackRanking/, "monthly score editor must display feedback rankings");
+assert.match(app, /appliedBonusSalary/, "negative bonus must contribute zero to paid income");
 assert.match(app, /data-delete-row/, "editable master rows must support deletion");
 assert.doesNotMatch(app, /历史累计/, "teacher income must not describe scores as historical cumulative data");
 assert.match(app, /parseTaxSocialCsv/, "must parse tax/social table");
