@@ -59,6 +59,15 @@
           </label>
           <button type="button" class="button ghost" data-template="reimbursements">下载报销模板</button>
         </div>
+        <div class="upload-slot">
+          <label class="upload-card" for="teacherScoresInput">
+            <strong>当月老师评分 CSV</strong>
+            <span id="teacherScoresStatus">请先上传课时费并选择工资月份</span>
+            <em class="upload-hint">每个月单独上传并参与当月排名</em>
+            <input id="teacherScoresInput" type="file" accept=".csv,text/csv" />
+          </label>
+          <button type="button" class="button ghost" data-template="teacherScores">下载当月评分模板</button>
+        </div>
       </div>
     </section>
 
@@ -68,12 +77,11 @@
         <div>
           <p class="zone-step">Step 2 · 配置</p>
           <h2>主数据维护</h2>
-          <p class="zone-desc">基础薪水、归属服务、评分和参数都在这里维护，点卡片直接编辑</p>
+          <p class="zone-desc">基础薪水、归属服务、当月评分和参数都在这里维护，点卡片直接编辑</p>
         </div>
         <div class="template-grid">
           <button type="button" class="button ghost" data-template="baseSalaries">基础薪水模板</button>
           <button type="button" class="button ghost" data-template="studentOwnership">归属服务模板</button>
-          <button type="button" class="button ghost" data-template="teacherScores">评分模板</button>
           <button type="button" class="button ghost" data-template="parameters">薪资参数模板</button>
         </div>
       </div>

@@ -256,11 +256,19 @@ function indexReimbursementsByTeacher(rows, aliases = {}) {
   return map;
 }
 
-function hasAllScores(score) {
-  return Boolean(score) && Object.values(score.metrics || {}).every((value) => value != null && Number.isFinite(value));
+const FEEDBACK_METRICS = ["learning", "responsibility", "charisma"];
+
+function isValidFeedbackScore(value) {
+  return value != null && Number.isFinite(value) && value >= 1 && value <= 5;
 }
 
-function buildFeedbackRates(baseRows, scoreRows, params, aliases = {}) {
+function hasAllScores(score) {
+  return Boolean(score) && FEEDBACK_METRICS.every((metric) => (
+    isValidFeedbackScore(score.metrics?.[metric])
+  ));
+}
+
+export function buildFeedbackRanking(baseRows, scoreRows, aliases = {}) {
   const baseByTeacher = indexByTeacher(baseRows, aliases);
   const scoreByTeacher = indexByTeacher(scoreRows, aliases);
   const fullTimeScores = [];
@@ -272,12 +280,9 @@ function buildFeedbackRates(baseRows, scoreRows, params, aliases = {}) {
     }
   }
 
-  const winnersByMetric = new Map([
-    ["learning", new Set()],
-    ["responsibility", new Set()],
-    ["charisma", new Set()],
-  ]);
+  const winnersByMetric = new Map(FEEDBACK_METRICS.map((metric) => [metric, new Set()]));
   const winnerCount = Math.floor(fullTimeScores.length * 0.5);
+  const metrics = {};
 
   for (const metric of winnersByMetric.keys()) {
     const sorted = fullTimeScores
@@ -287,28 +292,98 @@ function buildFeedbackRates(baseRows, scoreRows, params, aliases = {}) {
     sorted
       .filter((entry) => cutoff != null && entry.metrics[metric] >= cutoff)
       .forEach((entry) => winnersByMetric.get(metric).add(entry.key));
+    metrics[metric] = {
+      cutoff,
+      winners: sorted
+        .filter((entry) => cutoff != null && entry.metrics[metric] >= cutoff)
+        .map((entry) => entry.teacher),
+    };
   }
+
+  const eligibleKeys = new Set(fullTimeScores.map((entry) => entry.key));
+  const teachers = (scoreRows || [])
+    .map((score) => {
+      const key = normalizeKey(score.teacher, aliases);
+      const base = baseByTeacher.get(key);
+      const complete = hasAllScores(score);
+      const eligible = eligibleKeys.has(key);
+      const values = FEEDBACK_METRICS.map((metric) => score.metrics?.[metric]);
+      const rankingNote = !complete
+        ? "评分不完整或超出 1–5"
+        : !base
+          ? "未在基础薪水表"
+          : cleanText(base.employmentType) !== "全职"
+            ? "兼职，不参与排名"
+            : "";
+      return {
+        teacher: score.teacher,
+        metrics: score.metrics || {},
+        average: complete
+          ? round(values.reduce((sum, value) => sum + value, 0) / values.length)
+          : null,
+        complete,
+        eligible,
+        rankingNote,
+        qualifiedMetricKeys: FEEDBACK_METRICS.filter((metric) => winnersByMetric.get(metric).has(key)),
+      };
+    })
+    .sort((a, b) => (b.average ?? -Infinity) - (a.average ?? -Infinity)
+      || a.teacher.localeCompare(b.teacher, "zh-CN"));
+
+  return {
+    eligibleCount: fullTimeScores.length,
+    winnerCount,
+    metrics,
+    teachers,
+  };
+}
+
+function buildFeedbackRates(baseRows, scoreRows, params, aliases = {}) {
+  const scoreByTeacher = indexByTeacher(scoreRows, aliases);
+  const ranking = buildFeedbackRanking(baseRows, scoreRows, aliases);
+  const rankedByTeacher = new Map(
+    ranking.teachers.map((entry) => [normalizeKey(entry.teacher, aliases), entry]),
+  );
 
   const rates = new Map();
   for (const row of baseRows || []) {
     const key = normalizeKey(row.teacher, aliases);
     const score = scoreByTeacher.get(key);
-    if (cleanText(row.employmentType) !== "全职" || !hasAllScores(score)) {
+    if (cleanText(row.employmentType) !== "全职") {
       rates.set(key, {
         rate: params.partTimeLessonRate,
         type: "part_time",
         qualifiedMetrics: 0,
-        missingScore: !hasAllScores(score),
+        qualifiedMetricKeys: [],
+        missingScore: false,
       });
       continue;
     }
 
-    const qualifiedMetrics = [...winnersByMetric.values()].filter((set) => set.has(key)).length;
+    if (!hasAllScores(score)) {
+      rates.set(key, {
+        rate: params.fullTimeFeedbackBaseRate,
+        type: "full_time",
+        qualifiedMetrics: 0,
+        qualifiedMetricKeys: [],
+        missingScore: true,
+      });
+      continue;
+    }
+
+    const qualifiedMetricKeys = rankedByTeacher.get(key)?.qualifiedMetricKeys || [];
+    const qualifiedMetrics = qualifiedMetricKeys.length;
     const rate = Math.min(
       params.fullTimeFeedbackMaxRate,
       params.fullTimeFeedbackBaseRate + qualifiedMetrics * params.fullTimeFeedbackStepRate,
     );
-    rates.set(key, { rate, type: "full_time", qualifiedMetrics, missingScore: false });
+    rates.set(key, {
+      rate,
+      type: "full_time",
+      qualifiedMetrics,
+      qualifiedMetricKeys,
+      missingScore: false,
+    });
   }
   return rates;
 }
@@ -375,15 +450,15 @@ export function buildPayrollReport(reportData, input = {}) {
   const ownershipRows = input.studentOwnership || [];
   const reimbursementRows = input.reimbursements || [];
   const taxSocialRows = input.taxSocial || [];
-  const scoreRows = input.teacherScores || [];
   const baseByTeacher = indexByTeacher(baseRows, aliases);
   const reimbursementsByTeacher = indexReimbursementsByTeacher(reimbursementRows, aliases);
   const taxSocialByTeacher = indexByTeacher(taxSocialRows, aliases);
-  const feedbackRates = buildFeedbackRates(baseRows, scoreRows, params, aliases);
   const months = reportData.months || [];
   const byMonth = {};
 
   for (const month of months) {
+    const scoreRows = input.teacherScoresByMonth?.[month] || [];
+    const feedbackRates = buildFeedbackRates(baseRows, scoreRows, params, aliases);
     const commissionsByTeacher = buildCommissions(reportData, month, ownershipRows, params, aliases);
     byMonth[month] = {};
     for (const teacher of teacherNamesForMonth(reportData, month, baseRows, [reimbursementRows, taxSocialRows])) {
@@ -395,7 +470,8 @@ export function buildPayrollReport(reportData, input = {}) {
         rate: params.partTimeLessonRate,
         type: "part_time",
         qualifiedMetrics: 0,
-        missingScore: true,
+        qualifiedMetricKeys: [],
+        missingScore: false,
       };
       const lessonFee = round(reportData.views?.teacher?.[month]?.[teacher]?.totals?.amount || 0);
       const commissions = commissionsByTeacher.get(key) || { ownerCommission: 0, serviceCommission: 0, rows: [] };
@@ -416,7 +492,10 @@ export function buildPayrollReport(reportData, input = {}) {
       if (!base) issues.push({ code: MISSING.baseSalary, label: "缺少基础薪水" });
       if (!taxSocial) issues.push({ code: MISSING.taxSocial, label: "缺少五险+个税" });
       if (!reimbursement) issues.push({ code: MISSING.reimbursement, label: "缺少报销，按 0 处理" });
-      if (feedback.missingScore) issues.push({ code: MISSING.feedbackScore, label: "缺少反馈分数，按兼职 60% 处理" });
+      if (feedback.missingScore) issues.push({
+        code: MISSING.feedbackScore,
+        label: `缺少当月评分，按全职 0 项前 50%（${round(feedback.rate * 100)}%）计算`,
+      });
       if (bonusSalary < 0) issues.push({ code: "bonus_negative", label: "Bonus 为负数" });
 
       byMonth[month][teacher] = {
@@ -430,6 +509,8 @@ export function buildPayrollReport(reportData, input = {}) {
         feedbackRate: feedback.rate,
         feedbackType: feedback.type,
         qualifiedMetrics: feedback.qualifiedMetrics,
+        qualifiedMetricKeys: feedback.qualifiedMetricKeys,
+        feedbackMissingScore: feedback.missingScore,
         lessonBonus,
         ownerCommission: round(commissions.ownerCommission),
         serviceCommission: round(commissions.serviceCommission),

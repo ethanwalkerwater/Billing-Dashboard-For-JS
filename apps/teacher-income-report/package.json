@@ -10,7 +10,6 @@
   },
   "scripts": {
     "sync-core": "node scripts/sync-core.mjs",
-    "sync:cumulative-teacher-scores": "node scripts/sync-cumulative-teacher-scores.mjs",
     "dev": "npm run sync-core && python3 -m http.server 4174 --directory web",
     "build": "node scripts/build-static.mjs && node scripts/verify-static-app.mjs",
     "test": "npm run sync-core && node --test tests/*.test.mjs && node scripts/verify-static-app.mjs"

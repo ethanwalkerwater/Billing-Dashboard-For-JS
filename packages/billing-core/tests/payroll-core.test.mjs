@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import { buildReportFromCsv } from "../src/report-core.js";
 import {
+  buildFeedbackRanking,
   buildPayrollReport,
   parseBaseSalaryCsv,
   parseReimbursementsCsv,
@@ -104,12 +105,14 @@ test("buildPayrollReport calculates full-time feedback rate and stacked commissi
       "姓名,个税,公司总支出,个人支出",
       "张老师,100,300,200",
     ].join("\n")),
-    teacherScores: parseTeacherScoresCsv([
-      "老师,学习提升效果,责任心与服务态度,个人魅力",
-      "张老师,5,5,5",
-      "李老师,4,4,4",
-      "王老师,3,3,3",
-    ].join("\n")),
+    teacherScoresByMonth: {
+      "2026-05": parseTeacherScoresCsv([
+        "老师,学习提升效果,责任心与服务态度,个人魅力",
+        "张老师,5,5,5",
+        "李老师,4,4,4",
+        "王老师,3,3,3",
+      ].join("\n")),
+    },
   });
 
   const row = payroll.byMonth["2026-05"]["张老师"];
@@ -124,30 +127,51 @@ test("buildPayrollReport calculates full-time feedback rate and stacked commissi
   assert.equal(row.companyTotalCost, 1980);
 });
 
-test("missing feedback score is treated as part-time with configurable rate", () => {
+test("missing monthly feedback score uses the full-time base rate and explains why", () => {
   const report = buildReportFromCsv(scheduleCsv, "schedule.csv");
   const payroll = buildPayrollReport(report, {
-    parameters: { partTimeLessonRate: 0.5 },
+    parameters: { partTimeLessonRate: 0.5, fullTimeFeedbackBaseRate: 0.47 },
     baseSalaries: parseBaseSalaryCsv([
       "老师名,雇佣属性,基础薪水",
       "张老师,全职,1000",
     ].join("\n")),
-    teacherScores: [],
+    teacherScoresByMonth: {},
   });
 
   const row = payroll.byMonth["2026-05"]["张老师"];
 
-  assert.equal(row.feedbackType, "part_time");
-  assert.equal(row.feedbackRate, 0.5);
-  assert.equal(row.lessonBonus, 1000);
+  assert.equal(row.feedbackType, "full_time");
+  assert.equal(row.feedbackRate, 0.47);
+  assert.equal(row.lessonBonus, 940);
+  assert.equal(row.qualifiedMetrics, 0);
+  assert.equal(row.feedbackMissingScore, true);
   assert.equal(row.issues.some((issue) => issue.code === "missing_feedback_score"), true);
+  assert.match(row.issues.find((issue) => issue.code === "missing_feedback_score").label, /当月评分.*47%/);
+});
+
+test("part-time teachers keep the part-time rate without requiring monthly scores", () => {
+  const report = buildReportFromCsv(scheduleCsv, "schedule.csv");
+  const payroll = buildPayrollReport(report, {
+    parameters: { partTimeLessonRate: 0.6 },
+    baseSalaries: parseBaseSalaryCsv([
+      "老师名,雇佣属性,基础薪水",
+      "张老师,兼职,0",
+    ].join("\n")),
+    teacherScoresByMonth: {},
+  });
+  const row = payroll.byMonth["2026-05"]["张老师"];
+
+  assert.equal(row.feedbackType, "part_time");
+  assert.equal(row.feedbackRate, 0.6);
+  assert.equal(row.feedbackMissingScore, false);
+  assert.equal(row.issues.some((issue) => issue.code === "missing_feedback_score"), false);
 });
 
 test("management fee and rent deduction affect income while other maintained fields stay informational", () => {
   const report = buildReportFromCsv(scheduleCsv, "schedule.csv");
   const [baseSalary] = parseBaseSalaryCsv([
     "老师名,雇佣属性,基础薪水,管理费,市场推广,教学顾问,排课,行政前台,房租扣除",
-    "张老师,全职,1000,300,400,500,600,700,200",
+    "张老师,兼职,1000,300,400,500,600,700,200",
   ].join("\n"));
   const payroll = buildPayrollReport(report, {
     parameters: { partTimeLessonRate: 0.5 },
@@ -208,10 +232,83 @@ test("feedback ranking includes top half boundary and same-score ties", () => {
   ].join("\n");
   const payroll = buildPayrollReport(buildReportFromCsv(schedule), {
     baseSalaries: parseBaseSalaryCsv(baseRows),
-    teacherScores: parseTeacherScoresCsv(scoreRows),
+    teacherScoresByMonth: { "2026-05": parseTeacherScoresCsv(scoreRows) },
   });
 
   assert.equal(payroll.byMonth["2026-05"]["老师1"].feedbackRate, 0.62);
   assert.equal(payroll.byMonth["2026-05"]["老师6"].feedbackRate, 0.62);
   assert.equal(payroll.byMonth["2026-05"]["老师7"].feedbackRate, 0.47);
+});
+
+test("monthly feedback rankings are isolated by payroll month", () => {
+  const report = buildReportFromCsv([
+    "学生,老师,课程类型,上课时间,下课时间,课程单价,课程时长,课程总价格,临时取消,授课类型",
+    "学生A,张老师,课程,2026/05/01 10:00,2026/05/01 11:00,1000,1,1000,,1v1",
+    "学生A,张老师,课程,2026/06/01 10:00,2026/06/01 11:00,1000,1,1000,,1v1",
+  ].join("\n"));
+  const scores = (winner) => parseTeacherScoresCsv([
+    "老师,学习提升效果,责任心与服务态度,个人魅力",
+    `${winner},5,5,5`,
+    `${winner === "张老师" ? "李老师" : "张老师"},4,4,4`,
+  ].join("\n"));
+  const payroll = buildPayrollReport(report, {
+    baseSalaries: parseBaseSalaryCsv([
+      "老师名,雇佣属性,基础薪水",
+      "张老师,全职,0",
+      "李老师,全职,0",
+    ].join("\n")),
+    teacherScoresByMonth: {
+      "2026-05": scores("张老师"),
+      "2026-06": scores("李老师"),
+    },
+  });
+
+  assert.equal(payroll.byMonth["2026-05"]["张老师"].feedbackRate, 0.62);
+  assert.equal(payroll.byMonth["2026-06"]["张老师"].feedbackRate, 0.47);
+});
+
+test("feedback ranking exposes sorted scores, cutoffs, and per-metric winners", () => {
+  const baseRows = parseBaseSalaryCsv([
+    "老师名,雇佣属性,基础薪水",
+    "张老师,全职,0",
+    "李老师,全职,0",
+    "兼职老师,兼职,0",
+  ].join("\n"));
+  const scoreRows = parseTeacherScoresCsv([
+    "老师,学习提升效果,责任心与服务态度,个人魅力",
+    "李老师,4,5,4",
+    "张老师,5,4,5",
+    "兼职老师,5,5,5",
+  ].join("\n"));
+  const ranking = buildFeedbackRanking(baseRows, scoreRows);
+
+  assert.equal(ranking.eligibleCount, 2);
+  assert.equal(ranking.winnerCount, 1);
+  assert.deepEqual(ranking.metrics.learning.winners, ["张老师"]);
+  assert.deepEqual(ranking.metrics.responsibility.winners, ["李老师"]);
+  assert.deepEqual(ranking.teachers.find((row) => row.teacher === "张老师").qualifiedMetricKeys, ["learning", "charisma"]);
+  assert.equal(ranking.teachers.find((row) => row.teacher === "兼职老师").eligible, false);
+  assert.equal(ranking.teachers.find((row) => row.teacher === "兼职老师").rankingNote, "兼职，不参与排名");
+});
+
+test("blank or out-of-range monthly scores do not participate in ranking", () => {
+  const baseRows = parseBaseSalaryCsv([
+    "老师名,雇佣属性,基础薪水",
+    "完整老师,全职,0",
+    "空白老师,全职,0",
+    "越界老师,全职,0",
+  ].join("\n"));
+  const scoreRows = parseTeacherScoresCsv([
+    "老师,学习提升效果,责任心与服务态度,个人魅力",
+    "完整老师,5,4,3",
+    "空白老师,5,,3",
+    "越界老师,6,4,3",
+  ].join("\n"));
+  const ranking = buildFeedbackRanking(baseRows, scoreRows);
+
+  assert.equal(ranking.eligibleCount, 1);
+  assert.equal(ranking.teachers.find((row) => row.teacher === "完整老师").complete, true);
+  assert.equal(ranking.teachers.find((row) => row.teacher === "空白老师").average, null);
+  assert.equal(ranking.teachers.find((row) => row.teacher === "空白老师").rankingNote, "评分不完整或超出 1–5");
+  assert.equal(ranking.teachers.find((row) => row.teacher === "越界老师").eligible, false);
 });

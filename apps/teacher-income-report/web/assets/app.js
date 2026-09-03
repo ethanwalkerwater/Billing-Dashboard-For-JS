@@ -1,6 +1,7 @@
 import { buildReportFromCsv, cleanText, parseCsv, parseNumber } from "./report-core.js";
 import {
   DEFAULT_PAYROLL_PARAMETERS,
+  buildFeedbackRanking,
   buildPayrollReport,
   parseBaseSalaryCsv,
   parseReimbursementsCsv,
@@ -26,13 +27,14 @@ const state = {
   master: {
     baseSalaries: [],
     studentOwnership: [],
-    teacherScores: [],
     parameters: { ...DEFAULT_PAYROLL_PARAMETERS },
     nameAliases: {},
   },
   monthly: {
     taxSocial: [],
     reimbursements: [],
+    teacherScoresByMonth: {},
+    teacherScoreSourcesByMonth: {},
   },
   sources: {
     lessonFee: "未上传",
@@ -40,7 +42,6 @@ const state = {
     reimbursements: "未上传",
     baseSalaries: "项目默认",
     studentOwnership: "项目默认",
-    teacherScores: "项目默认",
     parameters: "项目默认",
   },
   editingMaster: null,
@@ -51,9 +52,11 @@ const els = {
   lessonFeeInput: document.getElementById("lessonFeeInput"),
   taxSocialInput: document.getElementById("taxSocialInput"),
   reimbursementInput: document.getElementById("reimbursementInput"),
+  teacherScoresInput: document.getElementById("teacherScoresInput"),
   lessonFeeStatus: document.getElementById("lessonFeeStatus"),
   taxSocialStatus: document.getElementById("taxSocialStatus"),
   reimbursementStatus: document.getElementById("reimbursementStatus"),
+  teacherScoresStatus: document.getElementById("teacherScoresStatus"),
   monthSelect: document.getElementById("monthSelect"),
   teacherSelect: document.getElementById("teacherSelect"),
   masterCards: document.getElementById("masterCards"),
@@ -139,8 +142,8 @@ const MASTER_CONFIG = {
     ],
   },
   teacherScores: {
-    title: "老师历史累计评分表",
-    subtitle: "使用 teacher-feedback/cumulative 的累计分，用于全职老师前 50% 排名",
+    title: "当月老师评分表",
+    subtitle: "每个月独立上传；仅完整评分的全职老师参与当月前 50% 排名",
     fields: [
       ["teacher", "老师"],
       ["learning", "学习提升", "number"],
@@ -163,12 +166,24 @@ const MASTER_CONFIG = {
   },
 };
 
+const FEEDBACK_METRIC_LABELS = {
+  learning: "学习提升",
+  responsibility: "责任心",
+  charisma: "个人魅力",
+};
+
 function money(value) {
   return new Intl.NumberFormat("zh-CN", { style: "currency", currency: "CNY", minimumFractionDigits: 2 }).format(value || 0);
 }
 
 function number(value) {
   return new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 2 }).format(value || 0);
+}
+
+function scoreNumber(value) {
+  return value == null
+    ? "—"
+    : new Intl.NumberFormat("zh-CN", { minimumFractionDigits: 3, maximumFractionDigits: 3 }).format(value);
 }
 
 function percent(value) {
@@ -205,7 +220,7 @@ function downloadTemplate(key) {
     reimbursements: "补贴报销",
     baseSalaries: "老师基础薪水",
     studentOwnership: "学生归属服务",
-    teacherScores: "老师历史累计评分",
+    teacherScores: "当月老师评分",
     parameters: "薪资参数",
   };
   downloadCsv(rows, `${labels[key] || key}-模板.csv`);
@@ -214,6 +229,41 @@ function downloadTemplate(key) {
 function round(value) {
   if (!Number.isFinite(value)) return 0;
   return Math.round((value + Number.EPSILON) * 1_000_000) / 1_000_000;
+}
+
+function currentTeacherScores() {
+  return state.month ? (state.monthly.teacherScoresByMonth[state.month] || []) : [];
+}
+
+function currentTeacherScoreSource() {
+  if (!state.month) return "未选择工资月份";
+  return state.monthly.teacherScoreSourcesByMonth[state.month] || "未上传";
+}
+
+function currentFeedbackRanking() {
+  return buildFeedbackRanking(
+    state.master.baseSalaries,
+    currentTeacherScores(),
+    state.master.nameAliases,
+  );
+}
+
+function renderTeacherScoreStatus() {
+  if (!state.month) {
+    els.teacherScoresStatus.textContent = "请先上传课时费并选择工资月份";
+    return;
+  }
+  const rows = currentTeacherScores();
+  els.teacherScoresStatus.textContent = rows.length
+    ? `${state.month} · ${number(rows.length)} 位 · ${currentTeacherScoreSource()}`
+    : `${state.month} · 未上传，当月全职老师按最低系数计算`;
+}
+
+function hasCompleteTeacherScore(row) {
+  return ["learning", "responsibility", "charisma"].every((metric) => {
+    const value = row.metrics?.[metric];
+    return value != null && Number.isFinite(value) && value >= 1 && value <= 5;
+  });
 }
 
 function csvAmount(row) {
@@ -482,7 +532,7 @@ function payrollInput() {
   return {
     baseSalaries: state.master.baseSalaries,
     studentOwnership: state.master.studentOwnership,
-    teacherScores: state.master.teacherScores,
+    teacherScoresByMonth: state.monthly.teacherScoresByMonth,
     parameters: state.master.parameters,
     nameAliases: state.master.nameAliases,
     taxSocial: state.monthly.taxSocial,
@@ -521,9 +571,31 @@ function persistMasterData(key) {
       ? existing.sections
       : {};
     sections[key] = state.master[key];
-    localStorage.setItem(MASTER_STORAGE_KEY, JSON.stringify({ version: 1, sections }));
+    localStorage.setItem(MASTER_STORAGE_KEY, JSON.stringify({
+      version: 2,
+      sections,
+      teacherScoresByMonth: state.monthly.teacherScoresByMonth,
+      teacherScoreSourcesByMonth: state.monthly.teacherScoreSourcesByMonth,
+    }));
   } catch (error) {
     console.warn("无法保存主数据到浏览器", error);
+  }
+}
+
+function persistMonthlyTeacherScores() {
+  try {
+    const existing = JSON.parse(localStorage.getItem(MASTER_STORAGE_KEY) || "null");
+    const sections = existing?.sections && typeof existing.sections === "object"
+      ? existing.sections
+      : {};
+    localStorage.setItem(MASTER_STORAGE_KEY, JSON.stringify({
+      version: 2,
+      sections,
+      teacherScoresByMonth: state.monthly.teacherScoresByMonth,
+      teacherScoreSourcesByMonth: state.monthly.teacherScoreSourcesByMonth,
+    }));
+  } catch (error) {
+    console.warn("无法保存当月老师评分到浏览器", error);
   }
 }
 
@@ -543,10 +615,6 @@ function restorePersistedMasterData() {
       state.master.studentOwnership = sections.studentOwnership;
       restoredKeys.push("studentOwnership");
     }
-    if (Array.isArray(sections.teacherScores)) {
-      state.master.teacherScores = sections.teacherScores;
-      restoredKeys.push("teacherScores");
-    }
     if (sections.parameters && typeof sections.parameters === "object") {
       state.master.parameters = { ...DEFAULT_PAYROLL_PARAMETERS, ...sections.parameters };
       restoredKeys.push("parameters");
@@ -554,7 +622,13 @@ function restorePersistedMasterData() {
     for (const key of restoredKeys) {
       state.sources[key] = "浏览器上次保存";
     }
-    return restoredKeys.length > 0;
+    if (saved.teacherScoresByMonth && typeof saved.teacherScoresByMonth === "object") {
+      state.monthly.teacherScoresByMonth = saved.teacherScoresByMonth;
+    }
+    if (saved.teacherScoreSourcesByMonth && typeof saved.teacherScoreSourcesByMonth === "object") {
+      state.monthly.teacherScoreSourcesByMonth = saved.teacherScoreSourcesByMonth;
+    }
+    return restoredKeys.length > 0 || Object.keys(state.monthly.teacherScoresByMonth).length > 0;
   } catch (error) {
     console.warn("忽略损坏的浏览器主数据", error);
     return false;
@@ -592,7 +666,6 @@ async function loadDefaults() {
     const defaults = await response.json();
     state.master.baseSalaries = defaults.baseSalaries || [];
     state.master.studentOwnership = defaults.studentOwnership || [];
-    state.master.teacherScores = defaults.teacherScores || [];
     state.master.parameters = { ...DEFAULT_PAYROLL_PARAMETERS, ...(defaults.parameters || {}) };
     state.master.nameAliases = defaults.nameAliases || {};
   } catch (error) {
@@ -606,14 +679,16 @@ function renderMasterCards() {
   const cards = [
     ["baseSalaries", state.master.baseSalaries.length],
     ["studentOwnership", state.master.studentOwnership.length],
-    ["teacherScores", state.master.teacherScores.length],
+    ["teacherScores", currentTeacherScores().length],
     ["parameters", Object.keys(state.master.parameters).length],
   ];
   els.masterCards.innerHTML = cards.map(([key, count]) => `
     <button class="master-card" type="button" data-master="${escapeHtml(key)}">
       <span>${escapeHtml(MASTER_CONFIG[key].title)}</span>
       <strong>${number(count)} 条</strong>
-      <em>${escapeHtml(state.sources[key] || "项目默认")}</em>
+      <em>${escapeHtml(key === "teacherScores" && state.month
+        ? `${state.month} · ${currentTeacherScoreSource()}`
+        : (key === "teacherScores" ? currentTeacherScoreSource() : (state.sources[key] || "项目默认")))}</em>
     </button>
   `).join("");
   els.masterCards.querySelectorAll("[data-master]").forEach((button) => {
@@ -793,6 +868,13 @@ function ledgerItem(kind, label, amount, source, formula = "") {
       <b>${kind === "minus" ? "-" : kind === "total" ? "=" : "+"} ${money(amount)}</b>
     </div>
   `;
+}
+
+function feedbackDescription(row) {
+  if (row.feedbackType === "part_time") return "兼职课时系数";
+  if (row.feedbackMissingScore) return "缺少当月评分，按全职 0 项前 50% 计算";
+  const labels = (row.qualifiedMetricKeys || []).map((metric) => FEEDBACK_METRIC_LABELS[metric]);
+  return labels.length ? `全职前 50%：${labels.join("、")}` : "全职 0 项前 50%";
 }
 
 function renderCommissionRows(row) {
@@ -991,7 +1073,7 @@ function renderLedger() {
       <div>
         <p class="eyebrow">Income Detail</p>
         <h2>${escapeHtml(row.teacher)}</h2>
-        <p>${escapeHtml(row.employmentType)} · 课时系数 ${percent(row.feedbackRate)} · ${row.feedbackType === "part_time" ? "兼职/缺少评分规则" : `全职 ${row.qualifiedMetrics} 项前 50%`}</p>
+        <p>${escapeHtml(row.employmentType)} · 课时系数 ${percent(row.feedbackRate)} · ${escapeHtml(feedbackDescription(row))}</p>
       </div>
       <div class="headline-total">
         <span>个人总收入</span>
@@ -1003,7 +1085,7 @@ function renderLedger() {
 
     <section class="ledger">
       <h3>Bonus 计算</h3>
-      ${ledgerItem("plus", "课时反馈奖金", row.lessonBonus, "来源：课时费 CSV + 老师历史累计评分", `${money(row.lessonFee)} × ${percent(row.feedbackRate)}`)}
+      ${ledgerItem(row.feedbackMissingScore ? "warning" : "plus", "课时反馈奖金", row.lessonBonus, `来源：课时费 CSV + ${state.month} 当月老师评分`, `${money(row.lessonFee)} × ${percent(row.feedbackRate)} · ${feedbackDescription(row)}`)}
       ${ledgerItem("plus", "学员介绍提成", row.ownerCommission, "来源：学生归属服务表 + 学生当月学费", `学生学费 × ${percent(state.master.parameters.ownerCommissionRate)}`)}
       ${ledgerItem("plus", "服务/管理奖金", row.serviceCommission, "来源：学生归属服务表 + 学生当月学费", `学生学费 × ${percent(state.master.parameters.serviceCommissionRate)}`)}
       ${ledgerItem("subtotal", "Bonus 扣减前小计", bonusBeforeDeduction, "课时反馈奖金 + 介绍提成 + 服务奖金")}
@@ -1056,6 +1138,8 @@ function payrollSummaryRow(row) {
     row.rentDeduction,
     row.lessonFee,
     row.feedbackRate,
+    (row.qualifiedMetricKeys || []).map((metric) => FEEDBACK_METRIC_LABELS[metric]).join("、") || "0 项",
+    feedbackDescription(row),
     row.lessonBonus,
     row.ownerCommission,
     row.serviceCommission,
@@ -1079,6 +1163,8 @@ const SUMMARY_HEADERS = [
   "房租扣除",
   "月度课时费",
   "课时系数",
+  "前 50% 项目",
+  "评分说明",
   "课时反馈奖金",
   "学员介绍提成",
   "服务/管理奖金",
@@ -1143,7 +1229,7 @@ function teacherExportModel(row) {
     companyTotalCost: row.companyTotalCost,
     financialHeaders: ["类型", "项目", "来源", "公式/说明", "金额"],
     financialRows: [
-      ["加项", "课时反馈奖金", "课时费 CSV + 历史累计反馈评分", `${row.lessonFee} × ${row.feedbackRate}`, row.lessonBonus],
+      [row.feedbackMissingScore ? "提醒" : "加项", "课时反馈奖金", `课时费 CSV + ${state.month} 当月老师评分`, `${row.lessonFee} × ${row.feedbackRate} · ${feedbackDescription(row)}`, row.lessonBonus],
       ["加项", "学员介绍提成", "学生归属服务表", `学生学费 × ${state.master.parameters.ownerCommissionRate}`, row.ownerCommission],
       ["加项", "服务/管理奖金", "学生归属服务表", `学生学费 × ${state.master.parameters.serviceCommissionRate}`, row.serviceCommission],
       ["小计", "Bonus 扣减前小计", "", "", bonusBeforeDeduction],
@@ -1192,7 +1278,7 @@ async function downloadIncomeWorkbook(rows, filename) {
     month: state.month,
     summaryHeaders: SUMMARY_HEADERS,
     summaryRows: rows.map(payrollSummaryRow),
-    summaryCurrencyColumns: [3, 4, 5, 6, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18],
+    summaryCurrencyColumns: [3, 4, 5, 6, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20],
     summaryRateColumns: [7],
     teachers: rows.map(teacherExportModel),
   };
@@ -1216,6 +1302,19 @@ function emptyMasterRow(key) {
   return Object.fromEntries(config.fields.map(([field]) => [field, ""]));
 }
 
+function deleteEditorRow(button) {
+  button.closest("tr")?.remove();
+  els.drawerBody.querySelectorAll("tbody tr").forEach((row, rowIndex) => {
+    row.querySelectorAll("[data-row]").forEach((input) => {
+      input.dataset.row = String(rowIndex);
+    });
+  });
+}
+
+function deleteCell() {
+  return '<td class="editor-action"><button class="button danger compact" type="button" data-delete-row>删除</button></td>';
+}
+
 function addMasterRow() {
   const key = state.editingMaster;
   if (!key || key === "parameters") return;
@@ -1227,47 +1326,77 @@ function addMasterRow() {
   const tr = document.createElement("tr");
   tr.innerHTML = config.fields.map(([field,, type]) => `
     <td>
-      <input data-row="${rowIndex}" data-field="${escapeHtml(field)}" type="${type === "number" ? "number" : "text"}" step="0.000001" value="${escapeHtml(row[field] ?? "")}" />
+      <input data-row="${rowIndex}" data-field="${escapeHtml(field)}" type="${type === "number" ? "number" : "text"}" step="0.001" ${key === "teacherScores" && type === "number" ? 'min="1" max="5"' : ""} value="${escapeHtml(row[field] ?? "")}" />
     </td>
-  `).join("");
+  `).join("")
+    + (key === "teacherScores" ? "<td>—</td><td>保存后重排</td>" : "")
+    + deleteCell();
   tbody.appendChild(tr);
+  tr.querySelector("[data-delete-row]")?.addEventListener("click", (event) => deleteEditorRow(event.currentTarget));
   tr.querySelector("input")?.focus();
 }
 
 function openMasterEditor(key) {
   state.editingMaster = key;
   const config = MASTER_CONFIG[key];
-  els.drawerTitle.textContent = config.title;
+  els.drawerTitle.textContent = key === "teacherScores" && state.month
+    ? `${state.month} · ${config.title}`
+    : config.title;
   els.drawerSubtitle.textContent = config.subtitle;
   els.addMasterRowButton.disabled = key === "parameters";
   els.uploadMasterButton.disabled = false;
 
+  const ranking = key === "teacherScores" ? currentFeedbackRanking() : null;
   const rows = key === "parameters"
     ? [state.master.parameters]
     : key === "teacherScores"
-      ? state.master.teacherScores.map((row) => ({ teacher: row.teacher, ...(row.metrics || {}) }))
+      ? ranking.teachers.map((row) => ({
+        teacher: row.teacher,
+        ...(row.metrics || {}),
+        average: row.average,
+        eligible: row.eligible,
+        rankingNote: row.rankingNote,
+        qualifiedMetricKeys: row.qualifiedMetricKeys,
+      }))
       : state.master[key];
 
+  const scoreLegend = key === "teacherScores"
+    ? `<div class="score-ranking-legend">
+        <strong>${escapeHtml(state.month || "未选择月份")} 当月排名</strong>
+        <span><i></i>绿色单元格 = 该项进入前 50%</span>
+        <span>参与排名 ${number(ranking.eligibleCount)} 人 · 名义前 50% ${number(ranking.winnerCount)} 人</span>
+        <span>分界线：学习提升 ${scoreNumber(ranking.metrics.learning.cutoff)} · 责任心 ${scoreNumber(ranking.metrics.responsibility.cutoff)} · 个人魅力 ${scoreNumber(ranking.metrics.charisma.cutoff)}</span>
+      </div>`
+    : "";
+  const extraHeaders = key === "teacherScores" ? "<th>三项均分</th><th>前 50% 项</th>" : "";
+  const actionHeader = key === "parameters" ? "" : "<th>操作</th>";
+
   els.drawerBody.innerHTML = `
+    ${scoreLegend}
     <div class="editor-table-wrap">
       <table class="editor-table">
         <thead>
-          <tr>${config.fields.map(([, label]) => `<th>${escapeHtml(label)}</th>`).join("")}</tr>
+          <tr>${config.fields.map(([, label]) => `<th>${escapeHtml(label)}</th>`).join("")}${extraHeaders}${actionHeader}</tr>
         </thead>
         <tbody>
           ${rows.map((row, rowIndex) => `
             <tr>
               ${config.fields.map(([field,, type]) => `
-                <td>
-                  <input data-row="${rowIndex}" data-field="${escapeHtml(field)}" type="${type === "number" ? "number" : "text"}" step="0.000001" value="${escapeHtml(row[field] ?? "")}" />
+                <td class="${key === "teacherScores" && row.qualifiedMetricKeys?.includes(field) ? "score-top50" : ""}">
+                  <input data-row="${rowIndex}" data-field="${escapeHtml(field)}" type="${type === "number" ? "number" : "text"}" step="0.001" ${key === "teacherScores" && type === "number" ? 'min="1" max="5"' : ""} value="${escapeHtml(row[field] ?? "")}" />
                 </td>
               `).join("")}
+              ${key === "teacherScores" ? `<td class="numeric"><strong>${scoreNumber(row.average)}</strong></td><td>${row.eligible ? (row.qualifiedMetricKeys.length ? row.qualifiedMetricKeys.map((metric) => FEEDBACK_METRIC_LABELS[metric]).join("、") : "0 项") : escapeHtml(row.rankingNote || "不参与排名")}</td>` : ""}
+              ${key === "parameters" ? "" : deleteCell()}
             </tr>
           `).join("")}
         </tbody>
       </table>
     </div>
   `;
+  els.drawerBody.querySelectorAll("[data-delete-row]").forEach((button) => {
+    button.addEventListener("click", (event) => deleteEditorRow(event.currentTarget));
+  });
   els.drawerBackdrop.classList.add("open");
   els.masterDrawer.classList.add("open");
   els.masterDrawer.setAttribute("aria-hidden", "false");
@@ -1284,12 +1413,19 @@ function saveMasterEditor() {
     const field = input.dataset.field;
     const type = config.fields.find(([name]) => name === field)?.[2];
     if (!rows[rowIndex]) rows[rowIndex] = {};
-    rows[rowIndex][field] = type === "number" ? Number(input.value || 0) : input.value.trim();
+    const rawValue = input.value.trim();
+    rows[rowIndex][field] = type === "number"
+      ? (key === "teacherScores" && rawValue === "" ? null : Number(rawValue || 0))
+      : rawValue;
   }
   if (key === "parameters") {
     state.master.parameters = { ...state.master.parameters, ...rows[0] };
   } else if (key === "teacherScores") {
-    state.master.teacherScores = rows
+    if (!state.month) {
+      window.alert("请先选择工资月份，再编辑当月评分。");
+      return;
+    }
+    state.monthly.teacherScoresByMonth[state.month] = rows
       .filter((row) => row.teacher)
       .map((row) => ({
         teacher: row.teacher,
@@ -1299,11 +1435,15 @@ function saveMasterEditor() {
           charisma: row.charisma,
         },
       }));
+    state.monthly.teacherScoreSourcesByMonth[state.month] = "网页端修改";
+    persistMonthlyTeacherScores();
   } else {
     state.master[key] = rows.filter((row) => Object.values(row).some((value) => cleanText(value)));
   }
-  state.sources[key] = "网页端修改";
-  persistMasterData(key);
+  if (key !== "teacherScores") {
+    state.sources[key] = "网页端修改";
+    persistMasterData(key);
+  }
   closeDrawer();
   render();
 }
@@ -1320,6 +1460,7 @@ function render() {
   renderTeacherSelect();
   renderOutputControls();
   renderMasterCards();
+  renderTeacherScoreStatus();
   renderSummary();
   renderLedger();
 }
@@ -1362,6 +1503,29 @@ els.reimbursementInput.addEventListener("change", (event) => readCsvFile(event.t
   els.reimbursementStatus.textContent = `${source} · ${number(rows.length)} 条`;
 }));
 
+els.teacherScoresInput.addEventListener("change", async (event) => {
+  const file = event.target.files[0];
+  if (!file) return;
+  if (!state.month) {
+    window.alert("请先上传课时费 CSV 并选择工资月份，再上传该月老师评分。");
+    event.target.value = "";
+    return;
+  }
+  try {
+    const rows = parseTeacherScoresCsv(await file.text(), { nameAliases: state.master.nameAliases });
+    if (!rows.length) throw new Error("没有识别到有效评分行");
+    if (!rows.some(hasCompleteTeacherScore)) throw new Error("没有识别到三项均为 1–5 的完整评分");
+    state.monthly.teacherScoresByMonth[state.month] = rows;
+    state.monthly.teacherScoreSourcesByMonth[state.month] = `${file.name} · 浏览器保存`;
+    persistMonthlyTeacherScores();
+    render();
+  } catch (error) {
+    window.alert(`当月评分导入失败：${error.message}`);
+  } finally {
+    event.target.value = "";
+  }
+});
+
 els.saveMasterButton.addEventListener("click", saveMasterEditor);
 els.addMasterRowButton.addEventListener("click", addMasterRow);
 els.uploadMasterButton.addEventListener("click", () => {
@@ -1377,12 +1541,21 @@ els.masterCsvInput.addEventListener("change", async (event) => {
     if (key === "parameters") {
       if (!Object.keys(imported).length) throw new Error("没有识别到参数和值");
       state.master.parameters = { ...DEFAULT_PAYROLL_PARAMETERS, ...imported };
+    } else if (key === "teacherScores") {
+      if (!state.month) throw new Error("请先上传课时费并选择工资月份");
+      if (!imported.length) throw new Error("没有识别到有效评分行");
+      if (!imported.some(hasCompleteTeacherScore)) throw new Error("没有识别到三项均为 1–5 的完整评分");
+      state.monthly.teacherScoresByMonth[state.month] = imported;
+      state.monthly.teacherScoreSourcesByMonth[state.month] = `${file.name} · 浏览器保存`;
+      persistMonthlyTeacherScores();
     } else {
       if (!imported.length) throw new Error("没有识别到有效数据行");
       state.master[key] = imported;
     }
-    state.sources[key] = `${file.name} · 浏览器保存`;
-    persistMasterData(key);
+    if (key !== "teacherScores") {
+      state.sources[key] = `${file.name} · 浏览器保存`;
+      persistMasterData(key);
+    }
     openMasterEditor(key);
     render();
   } catch (error) {

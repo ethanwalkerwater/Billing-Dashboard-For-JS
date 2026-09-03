@@ -34,7 +34,9 @@ const payrollDefaults = configuredPayrollDefaults
   || (!fs.existsSync(payrollDefaultsDest) ? localPayrollDefaults : "");
 if (payrollDefaults && fs.existsSync(payrollDefaults)) {
   fs.mkdirSync(path.dirname(payrollDefaultsDest), { recursive: true });
-  fs.copyFileSync(payrollDefaults, payrollDefaultsDest);
+  const defaults = JSON.parse(fs.readFileSync(payrollDefaults, "utf8"));
+  delete defaults.teacherScores;
+  fs.writeFileSync(payrollDefaultsDest, `${JSON.stringify(defaults, null, 2)}\n`, "utf8");
   console.log(`synced payroll defaults -> ${path.relative(REPO_ROOT, payrollDefaultsDest)}`);
 } else {
   console.log(`using bundled payroll defaults at ${path.relative(REPO_ROOT, payrollDefaultsDest)}`);
