@@ -11,8 +11,12 @@ for (const file of [
   "web/index.html",
   "web/assets/app.js",
   "web/assets/styles.css",
+  "web/assets/income-calculations.js",
+  "web/assets/income-workbook.js",
   "web/assets/report-core.js",
   "web/assets/payroll-core.js",
+  "web/assets/payroll/defaults.json",
+  "web/assets/vendor/write-excel-file.min.js",
 ]) {
   assert.ok(fs.existsSync(f(file)), `${file} is missing`);
 }
@@ -28,6 +32,8 @@ assert.match(html, /exportSelectedButton/, "must expose selected teacher export"
 assert.match(html, /exportAllButton/, "must expose monthly summary export");
 assert.match(html, /data-template/, "must expose CSV template downloads");
 assert.match(html, /addMasterRowButton/, "must support adding master data rows");
+assert.match(html, /uploadMasterButton/, "must support master data CSV uploads");
+assert.match(html, /write-excel-file\.min\.js/, "must load browser XLSX writer");
 assert.match(html, /ledgerPanel/, "must render income ledger panel");
 
 const app = fs.readFileSync(f("web/assets/app.js"), "utf8");
@@ -41,10 +47,13 @@ assert.match(app, /renderTeacherSelect/, "must render teacher selector");
 assert.match(app, /setupCombobox/, "month/teacher selectors must be searchable comboboxes");
 assert.match(app, /renderLessonDetails/, "must render lesson fee details");
 assert.match(app, /data-lesson-discount/, "lesson fee details must keep editable discounts");
+assert.match(app, /data-lesson-multiplier/, "lesson fee details must support numeric multipliers");
+assert.match(app, /MASTER_STORAGE_KEY/, "master data edits must persist in browser storage");
 assert.match(app, /parseTaxSocialCsv/, "must parse tax/social table");
 assert.match(app, /downloadTemplate/, "must download CSV templates");
 assert.match(app, /exportSelectedTeacher/, "must export selected teacher detail");
 assert.match(app, /exportAllTeachers/, "must export monthly teacher summary");
+assert.match(app, /buildIncomeWorkbook/, "must export multi-sheet XLSX workbooks");
 
 const css = fs.readFileSync(f("web/assets/styles.css"), "utf8");
 assert.match(css, /\.ledger/, "ledger must be styled");

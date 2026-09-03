@@ -44,6 +44,15 @@ test("parses payroll support tables", () => {
   assert.equal(scores[0].metrics.learning, 5);
 });
 
+test("canonical teacher aliases include historical short names", () => {
+  const scores = parseTeacherScoresCsv([
+    "老师,学习提升效果,责任心与服务态度,个人魅力",
+    "马,4.9,5,4.9",
+  ].join("\n"));
+
+  assert.equal(scores[0].teacher, "马怡婷");
+});
+
 test("parses reimbursement export with non-standard header rows", () => {
   const csv = [
     ",,2026年,,,",
@@ -132,6 +141,30 @@ test("missing feedback score is treated as part-time with configurable rate", ()
   assert.equal(row.feedbackRate, 0.5);
   assert.equal(row.lessonBonus, 1000);
   assert.equal(row.issues.some((issue) => issue.code === "missing_feedback_score"), true);
+});
+
+test("management fee and rent deduction affect income while other maintained fields stay informational", () => {
+  const report = buildReportFromCsv(scheduleCsv, "schedule.csv");
+  const [baseSalary] = parseBaseSalaryCsv([
+    "老师名,雇佣属性,基础薪水,管理费,市场推广,教学顾问,排课,行政前台,房租扣除",
+    "张老师,全职,1000,300,400,500,600,700,200",
+  ].join("\n"));
+  const payroll = buildPayrollReport(report, {
+    parameters: { partTimeLessonRate: 0.5 },
+    baseSalaries: [baseSalary],
+  });
+
+  const row = payroll.byMonth["2026-05"]["张老师"];
+
+  assert.equal(row.baseSalary, 1000);
+  assert.equal(row.managementFee, 300);
+  assert.equal(row.rentDeduction, 200);
+  assert.equal(row.fixedIncome, 1100);
+  assert.equal(row.lessonBonus, 1000);
+  assert.equal(row.baseSalaryDeduction, 1200);
+  assert.equal(row.bonusSalary, -200);
+  assert.equal(row.personalTotalIncome, 900);
+  assert.equal(row.companyTotalCost, 900);
 });
 
 test("commissions never become negative when student monthly fee is negative", () => {

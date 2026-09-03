@@ -1,0 +1,1638 @@
+{
+  "generatedAt": "2026-07-06",
+  "baseSalaries": [
+    {
+      "teacher": "黄钢",
+      "employmentType": "全职",
+      "baseSalary": 30000,
+      "managementFee": 10000,
+      "marketingFee": 0,
+      "advisorFee": 0,
+      "schedulingFee": 0,
+      "adminFee": 0,
+      "rentDeduction": 0,
+      "sourceName": "黄钢"
+    },
+    {
+      "teacher": "朱毅博",
+      "employmentType": "全职",
+      "baseSalary": 20000,
+      "managementFee": 0,
+      "marketingFee": 0,
+      "advisorFee": 0,
+      "schedulingFee": 0,
+      "adminFee": 0,
+      "rentDeduction": 0,
+      "sourceName": "朱毅博"
+    },
+    {
+      "teacher": "李品轩",
+      "employmentType": "全职",
+      "baseSalary": 30000,
+      "managementFee": 0,
+      "marketingFee": 0,
+      "advisorFee": 0,
+      "schedulingFee": 0,
+      "adminFee": 0,
+      "rentDeduction": 0,
+      "sourceName": "李品轩"
+    },
+    {
+      "teacher": "应雁心",
+      "employmentType": "全职",
+      "baseSalary": 30000,
+      "managementFee": 0,
+      "marketingFee": 0,
+      "advisorFee": 0,
+      "schedulingFee": 0,
+      "adminFee": 0,
+      "rentDeduction": 0,
+      "sourceName": "应雁心"
+    },
+    {
+      "teacher": "蓝浪",
+      "employmentType": "全职",
+      "baseSalary": 30000,
+      "managementFee": 0,
+      "marketingFee": 0,
+      "advisorFee": 0,
+      "schedulingFee": 0,
+      "adminFee": 0,
+      "rentDeduction": 0,
+      "sourceName": "蓝浪"
+    },
+    {
+      "teacher": "陈璐怡",
+      "employmentType": "全职",
+      "baseSalary": 40000,
+      "managementFee": 10000,
+      "marketingFee": 0,
+      "advisorFee": 0,
+      "schedulingFee": 0,
+      "adminFee": 0,
+      "rentDeduction": 0,
+      "sourceName": "陈璐怡"
+    },
+    {
+      "teacher": "汤朔",
+      "employmentType": "全职",
+      "baseSalary": 20000,
+      "managementFee": 0,
+      "marketingFee": 0,
+      "advisorFee": 0,
+      "schedulingFee": 0,
+      "adminFee": 0,
+      "rentDeduction": 0,
+      "sourceName": "汤朔"
+    },
+    {
+      "teacher": "郑唯梓",
+      "employmentType": "全职",
+      "baseSalary": 30000,
+      "managementFee": 0,
+      "marketingFee": 0,
+      "advisorFee": 0,
+      "schedulingFee": 0,
+      "adminFee": 0,
+      "rentDeduction": 0,
+      "sourceName": "郑唯梓"
+    },
+    {
+      "teacher": "王储君",
+      "employmentType": "全职",
+      "baseSalary": 20000,
+      "managementFee": 0,
+      "marketingFee": 0,
+      "advisorFee": 0,
+      "schedulingFee": 0,
+      "adminFee": 0,
+      "rentDeduction": 4500,
+      "sourceName": "王储君"
+    },
+    {
+      "teacher": "张文豪",
+      "employmentType": "全职",
+      "baseSalary": 20000,
+      "managementFee": 0,
+      "marketingFee": 0,
+      "advisorFee": 0,
+      "schedulingFee": 0,
+      "adminFee": 0,
+      "rentDeduction": 0,
+      "sourceName": "张文豪"
+    },
+    {
+      "teacher": "傅威程",
+      "employmentType": "全职",
+      "baseSalary": 25000,
+      "managementFee": 0,
+      "marketingFee": 0,
+      "advisorFee": 0,
+      "schedulingFee": 20000,
+      "adminFee": 5000,
+      "rentDeduction": 0,
+      "sourceName": "傅威程"
+    },
+    {
+      "teacher": "刘艳阳",
+      "employmentType": "全职",
+      "baseSalary": 20000,
+      "managementFee": 0,
+      "marketingFee": 0,
+      "advisorFee": 0,
+      "schedulingFee": 0,
+      "adminFee": 0,
+      "rentDeduction": 0,
+      "sourceName": "刘艳阳"
+    },
+    {
+      "teacher": "Valentina Lin",
+      "employmentType": "全职",
+      "baseSalary": 20000,
+      "managementFee": 0,
+      "marketingFee": 0,
+      "advisorFee": 0,
+      "schedulingFee": 0,
+      "adminFee": 0,
+      "rentDeduction": 0,
+      "sourceName": "Valentina 林"
+    },
+    {
+      "teacher": "陈依依",
+      "employmentType": "全职",
+      "baseSalary": 20000,
+      "managementFee": 0,
+      "marketingFee": 0,
+      "advisorFee": 0,
+      "schedulingFee": 0,
+      "adminFee": 0,
+      "rentDeduction": 0,
+      "sourceName": "陈依依"
+    },
+    {
+      "teacher": "张劭景",
+      "employmentType": "全职",
+      "baseSalary": 20000,
+      "managementFee": 0,
+      "marketingFee": 0,
+      "advisorFee": 0,
+      "schedulingFee": 0,
+      "adminFee": 0,
+      "rentDeduction": 0,
+      "sourceName": "张劭景"
+    },
+    {
+      "teacher": "Tinko",
+      "employmentType": "全职",
+      "baseSalary": 25000,
+      "managementFee": 0,
+      "marketingFee": 5000,
+      "advisorFee": 10000,
+      "schedulingFee": 0,
+      "adminFee": 0,
+      "rentDeduction": 0,
+      "sourceName": "Tinko"
+    },
+    {
+      "teacher": "罗健文",
+      "employmentType": "全职",
+      "baseSalary": 30000,
+      "managementFee": 0,
+      "marketingFee": 0,
+      "advisorFee": 0,
+      "schedulingFee": 0,
+      "adminFee": 0,
+      "rentDeduction": 0,
+      "sourceName": "罗健文"
+    },
+    {
+      "teacher": "华心晨",
+      "employmentType": "全职",
+      "baseSalary": 15000,
+      "managementFee": 0,
+      "marketingFee": 0,
+      "advisorFee": 0,
+      "schedulingFee": 0,
+      "adminFee": 0,
+      "rentDeduction": 0,
+      "sourceName": "华心晨"
+    },
+    {
+      "teacher": "王冰青",
+      "employmentType": "全职",
+      "baseSalary": 30000,
+      "managementFee": 0,
+      "marketingFee": 0,
+      "advisorFee": 0,
+      "schedulingFee": 0,
+      "adminFee": 0,
+      "rentDeduction": 0,
+      "sourceName": "王冰清"
+    },
+    {
+      "teacher": "李寅鑫",
+      "employmentType": "全职",
+      "baseSalary": 20000,
+      "managementFee": 0,
+      "marketingFee": 0,
+      "advisorFee": 0,
+      "schedulingFee": 0,
+      "adminFee": 0,
+      "rentDeduction": 0,
+      "sourceName": "李寅鑫"
+    }
+  ],
+  "studentOwnership": [
+    {
+      "student": "蔡优",
+      "ownerTeacher": "",
+      "serviceTeacher": "Tinko",
+      "sourceStudent": "蔡优"
+    },
+    {
+      "student": "Ethen",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "Ethen"
+    },
+    {
+      "student": "Catherine",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "Catherine"
+    },
+    {
+      "student": "Dolly",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "Dolly"
+    },
+    {
+      "student": "谢涵菲",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "谢涵菲"
+    },
+    {
+      "student": "Luna",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "Luna"
+    },
+    {
+      "student": "Hanson",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "Hanson"
+    },
+    {
+      "student": "陈一林",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "陈一林"
+    },
+    {
+      "student": "Emma",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "Emma"
+    },
+    {
+      "student": "Mobby",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "Mobby"
+    },
+    {
+      "student": "Ivy",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "Ivy"
+    },
+    {
+      "student": "Gavin",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "Gavin"
+    },
+    {
+      "student": "Jack",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "Jack"
+    },
+    {
+      "student": "陈俊翰",
+      "ownerTeacher": "",
+      "serviceTeacher": "Tinko",
+      "sourceStudent": "陈俊翰"
+    },
+    {
+      "student": "王麦淇",
+      "ownerTeacher": "",
+      "serviceTeacher": "Tinko",
+      "sourceStudent": "王麦淇"
+    },
+    {
+      "student": "游皓翔",
+      "ownerTeacher": "陈依依",
+      "serviceTeacher": "Tinko",
+      "sourceStudent": "游皓翔"
+    },
+    {
+      "student": "汪焕杰",
+      "ownerTeacher": "",
+      "serviceTeacher": "Tinko",
+      "sourceStudent": "汪焕杰"
+    },
+    {
+      "student": "Kiki",
+      "ownerTeacher": "陈璐怡",
+      "serviceTeacher": "陈璐怡",
+      "sourceStudent": "Kiki"
+    },
+    {
+      "student": "Ellen",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "Ellen"
+    },
+    {
+      "student": "钱佳宜",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "钱佳宜"
+    },
+    {
+      "student": "王昊诚",
+      "ownerTeacher": "陈依依",
+      "serviceTeacher": "",
+      "sourceStudent": "王昊诚"
+    },
+    {
+      "student": "游雅勋",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "游雅勋"
+    },
+    {
+      "student": "Aubrey Guo",
+      "ownerTeacher": "",
+      "serviceTeacher": "Tinko",
+      "sourceStudent": "Aubrey Guo"
+    },
+    {
+      "student": "林靖美",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "林靖美"
+    },
+    {
+      "student": "刘乐言",
+      "ownerTeacher": "王储君",
+      "serviceTeacher": "",
+      "sourceStudent": "刘乐言"
+    },
+    {
+      "student": "苏奕华",
+      "ownerTeacher": "王储君",
+      "serviceTeacher": "",
+      "sourceStudent": "苏奕华"
+    },
+    {
+      "student": "沈佑一",
+      "ownerTeacher": "陈璐怡",
+      "serviceTeacher": "陈璐怡",
+      "sourceStudent": "沈佑一"
+    },
+    {
+      "student": "张以宁",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "张以宁"
+    },
+    {
+      "student": "Lucas Cai",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "Lucas Cai"
+    },
+    {
+      "student": "Daniel 周恩东",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "Daniel 周恩东"
+    },
+    {
+      "student": "王语淳",
+      "ownerTeacher": "陈依依",
+      "serviceTeacher": "",
+      "sourceStudent": "王语淳"
+    },
+    {
+      "student": "徐子雅Mimi",
+      "ownerTeacher": "陈璐怡",
+      "serviceTeacher": "陈璐怡",
+      "sourceStudent": "徐子雅Mimi"
+    },
+    {
+      "student": "Yaya",
+      "ownerTeacher": "",
+      "serviceTeacher": "Tinko",
+      "sourceStudent": "Yaya"
+    },
+    {
+      "student": "Melynda",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "Melynda"
+    },
+    {
+      "student": "陈之博",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "陈之博"
+    },
+    {
+      "student": "Lucas Qiu",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "Lucas Qiu"
+    },
+    {
+      "student": "Leo",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "Leo"
+    },
+    {
+      "student": "Alvin Shen",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "Alvin Shen"
+    },
+    {
+      "student": "Audrey",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "Audrey"
+    },
+    {
+      "student": "Justin",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "Justin"
+    },
+    {
+      "student": "Alan高琪",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "Alan高琪"
+    },
+    {
+      "student": "张涵",
+      "ownerTeacher": "",
+      "serviceTeacher": "Tinko",
+      "sourceStudent": "张涵"
+    },
+    {
+      "student": "金可亿",
+      "ownerTeacher": "陈璐怡",
+      "serviceTeacher": "陈璐怡",
+      "sourceStudent": "金可亿"
+    },
+    {
+      "student": "Harley",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "Harley"
+    },
+    {
+      "student": "Nina",
+      "ownerTeacher": "陈依依",
+      "serviceTeacher": "",
+      "sourceStudent": "Nina"
+    },
+    {
+      "student": "Leo Zhao",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "Leo Zhao"
+    },
+    {
+      "student": "Archer",
+      "ownerTeacher": "",
+      "serviceTeacher": "Tinko",
+      "sourceStudent": "Archer"
+    },
+    {
+      "student": "牛牛",
+      "ownerTeacher": "",
+      "serviceTeacher": "Tinko",
+      "sourceStudent": "牛牛"
+    },
+    {
+      "student": "张惟枝 Liz",
+      "ownerTeacher": "",
+      "serviceTeacher": "Tinko",
+      "sourceStudent": "张惟枝 Liz"
+    },
+    {
+      "student": "Roy",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "Roy"
+    },
+    {
+      "student": "朱雁汀",
+      "ownerTeacher": "",
+      "serviceTeacher": "Tinko",
+      "sourceStudent": "朱雁汀"
+    },
+    {
+      "student": "沈姜成奕",
+      "ownerTeacher": "应雁心",
+      "serviceTeacher": "应雁心",
+      "sourceStudent": "沈姜成奕"
+    },
+    {
+      "student": "Edward",
+      "ownerTeacher": "",
+      "serviceTeacher": "Tinko",
+      "sourceStudent": "Edward"
+    },
+    {
+      "student": "路其霖",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "路其霖"
+    },
+    {
+      "student": "陈文琪celeste",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "陈文琪celeste"
+    },
+    {
+      "student": "应露枫",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "应露枫"
+    },
+    {
+      "student": "庄子新",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "庄子新"
+    },
+    {
+      "student": "顾子言Tina",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "顾子言Tina"
+    },
+    {
+      "student": "Kelvin Huang",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "Kelvin Huang"
+    },
+    {
+      "student": "瞿晨",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "瞿晨"
+    },
+    {
+      "student": "柴皓曦",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "柴皓曦"
+    },
+    {
+      "student": "朴智渊",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "朴智渊"
+    },
+    {
+      "student": "Peter",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "Peter"
+    },
+    {
+      "student": "刘纾僮",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "刘纾僮"
+    },
+    {
+      "student": "李雨桐",
+      "ownerTeacher": "应雁心",
+      "serviceTeacher": "",
+      "sourceStudent": "李雨桐"
+    },
+    {
+      "student": "Jason",
+      "ownerTeacher": "王储君",
+      "serviceTeacher": "Tinko",
+      "sourceStudent": "Jason"
+    },
+    {
+      "student": "Stephen 杨",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "Stephen 杨"
+    },
+    {
+      "student": "Evelyn",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "Evelyn"
+    },
+    {
+      "student": "冯腾宇",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "冯腾宇"
+    },
+    {
+      "student": "Chelsea",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "Chelsea"
+    },
+    {
+      "student": "Claire",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "Claire"
+    },
+    {
+      "student": "Caelyn",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "Caelyn"
+    },
+    {
+      "student": "Lucas Zhang",
+      "ownerTeacher": "",
+      "serviceTeacher": "Tinko",
+      "sourceStudent": "Lucas Zhang"
+    },
+    {
+      "student": "Michael Zhang",
+      "ownerTeacher": "",
+      "serviceTeacher": "Tinko",
+      "sourceStudent": "Michael Zhang"
+    },
+    {
+      "student": "陈继淞",
+      "ownerTeacher": "汤朔",
+      "serviceTeacher": "Tinko",
+      "sourceStudent": "陈继淞"
+    },
+    {
+      "student": "Eric Chan",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "Eric Chan"
+    },
+    {
+      "student": "张楚涵",
+      "ownerTeacher": "",
+      "serviceTeacher": "Tinko",
+      "sourceStudent": "张楚涵"
+    },
+    {
+      "student": "Louis",
+      "ownerTeacher": "",
+      "serviceTeacher": "Tinko",
+      "sourceStudent": "Louis"
+    },
+    {
+      "student": "Barry",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "Barry"
+    },
+    {
+      "student": "狄之航",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "狄之航"
+    },
+    {
+      "student": "郭一诺",
+      "ownerTeacher": "",
+      "serviceTeacher": "Tinko",
+      "sourceStudent": "郭一诺"
+    },
+    {
+      "student": "郑博文",
+      "ownerTeacher": "",
+      "serviceTeacher": "Tinko",
+      "sourceStudent": "郑博文"
+    },
+    {
+      "student": "王雅妮",
+      "ownerTeacher": "陈璐怡",
+      "serviceTeacher": "陈璐怡",
+      "sourceStudent": "王雅妮"
+    },
+    {
+      "student": "Justin duan",
+      "ownerTeacher": "",
+      "serviceTeacher": "Tinko",
+      "sourceStudent": "Justin duan"
+    },
+    {
+      "student": "黄诗然",
+      "ownerTeacher": "",
+      "serviceTeacher": "Tinko",
+      "sourceStudent": "黄诗然"
+    },
+    {
+      "student": "杨呈悦Joy",
+      "ownerTeacher": "",
+      "serviceTeacher": "Tinko",
+      "sourceStudent": "杨呈悦Joy"
+    },
+    {
+      "student": "Molly",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "Molly"
+    },
+    {
+      "student": "姚凯榕",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "姚凯榕"
+    },
+    {
+      "student": "张怿忱",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "张怿忱"
+    },
+    {
+      "student": "Chris",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "Chris"
+    },
+    {
+      "student": "展慧腾",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "展慧腾"
+    },
+    {
+      "student": "王昱童",
+      "ownerTeacher": "",
+      "serviceTeacher": "Tinko",
+      "sourceStudent": "王昱童"
+    },
+    {
+      "student": "潘奕恺",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "潘奕恺"
+    },
+    {
+      "student": "Rafael",
+      "ownerTeacher": "",
+      "serviceTeacher": "Tinko",
+      "sourceStudent": "Rafael"
+    },
+    {
+      "student": "Gary Yu",
+      "ownerTeacher": "",
+      "serviceTeacher": "Tinko",
+      "sourceStudent": "Gary Yu"
+    },
+    {
+      "student": "宋家豪",
+      "ownerTeacher": "",
+      "serviceTeacher": "Tinko",
+      "sourceStudent": "宋家豪"
+    },
+    {
+      "student": "Naite",
+      "ownerTeacher": "",
+      "serviceTeacher": "Tinko",
+      "sourceStudent": "Naite"
+    },
+    {
+      "student": "Jannie",
+      "ownerTeacher": "王储君",
+      "serviceTeacher": "",
+      "sourceStudent": "Jannie"
+    },
+    {
+      "student": "Sarah",
+      "ownerTeacher": "",
+      "serviceTeacher": "Tinko",
+      "sourceStudent": "Sarah"
+    },
+    {
+      "student": "Tiffany谢凯淇",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "Tiffany谢凯淇"
+    },
+    {
+      "student": "Charlie",
+      "ownerTeacher": "",
+      "serviceTeacher": "Tinko",
+      "sourceStudent": "Charlie"
+    },
+    {
+      "student": "Jake",
+      "ownerTeacher": "",
+      "serviceTeacher": "Tinko",
+      "sourceStudent": "Jake"
+    },
+    {
+      "student": "Lucia",
+      "ownerTeacher": "",
+      "serviceTeacher": "Tinko",
+      "sourceStudent": "Lucia"
+    },
+    {
+      "student": "Jako",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "Jako"
+    },
+    {
+      "student": "Bryce",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "Bryce"
+    },
+    {
+      "student": "袁楚然",
+      "ownerTeacher": "",
+      "serviceTeacher": "Tinko",
+      "sourceStudent": "袁楚然"
+    },
+    {
+      "student": "张海錤 Linda",
+      "ownerTeacher": "",
+      "serviceTeacher": "Tinko",
+      "sourceStudent": "张海錤 Linda"
+    },
+    {
+      "student": "Kevin Zhou",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "Kevin Zhou"
+    },
+    {
+      "student": "Vincent",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "Vincent"
+    },
+    {
+      "student": "Jonathan",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "Jonathan"
+    },
+    {
+      "student": "Kelvin",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "Kelvin"
+    },
+    {
+      "student": "Crystal",
+      "ownerTeacher": "",
+      "serviceTeacher": "Tinko",
+      "sourceStudent": "Crystal"
+    },
+    {
+      "student": "Casper",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "Casper"
+    },
+    {
+      "student": "Skylar",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "Skylar"
+    },
+    {
+      "student": "糖糖",
+      "ownerTeacher": "",
+      "serviceTeacher": "Tinko",
+      "sourceStudent": "糖糖"
+    },
+    {
+      "student": "Audrey Guo",
+      "ownerTeacher": "",
+      "serviceTeacher": "Tinko",
+      "sourceStudent": "Audrey Guo"
+    },
+    {
+      "student": "Nick",
+      "ownerTeacher": "",
+      "serviceTeacher": "Tinko",
+      "sourceStudent": "Nick"
+    },
+    {
+      "student": "Tia",
+      "ownerTeacher": "",
+      "serviceTeacher": "Tinko",
+      "sourceStudent": "Tia"
+    },
+    {
+      "student": "Jessica",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "Jessica"
+    },
+    {
+      "student": "张诗茹",
+      "ownerTeacher": "",
+      "serviceTeacher": "Tinko",
+      "sourceStudent": "张诗茹"
+    },
+    {
+      "student": "Alfred",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "Alfred"
+    },
+    {
+      "student": "Cindy Yu",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "Cindy Yu"
+    },
+    {
+      "student": "Frank",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "Frank"
+    },
+    {
+      "student": "王存哲（Jason）",
+      "ownerTeacher": "",
+      "serviceTeacher": "Tinko",
+      "sourceStudent": "王存哲（Jason）"
+    },
+    {
+      "student": "Marc",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "Marc"
+    },
+    {
+      "student": "殷斯璇Iris",
+      "ownerTeacher": "",
+      "serviceTeacher": "Tinko",
+      "sourceStudent": "殷斯璇Iris"
+    },
+    {
+      "student": "卢纳静",
+      "ownerTeacher": "",
+      "serviceTeacher": "Tinko",
+      "sourceStudent": "卢纳静"
+    },
+    {
+      "student": "丁丁",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "丁丁"
+    },
+    {
+      "student": "Annie",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "Annie"
+    },
+    {
+      "student": "Coco朱妍",
+      "ownerTeacher": "",
+      "serviceTeacher": "Tinko",
+      "sourceStudent": "Coco朱妍"
+    },
+    {
+      "student": "庞政杞",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "庞政杞"
+    },
+    {
+      "student": "刘晔瑄",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "刘晔瑄"
+    },
+    {
+      "student": "陈文祥",
+      "ownerTeacher": "",
+      "serviceTeacher": "Tinko",
+      "sourceStudent": "陈文祥"
+    },
+    {
+      "student": "Ivana",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "Ivana"
+    },
+    {
+      "student": "李卓祺",
+      "ownerTeacher": "",
+      "serviceTeacher": "Tinko",
+      "sourceStudent": "李卓祺"
+    },
+    {
+      "student": "宋慧慈",
+      "ownerTeacher": "",
+      "serviceTeacher": "Tinko",
+      "sourceStudent": "宋慧慈"
+    },
+    {
+      "student": "汪云开",
+      "ownerTeacher": "",
+      "serviceTeacher": "Tinko",
+      "sourceStudent": "汪云开"
+    },
+    {
+      "student": "沈怿晗",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "沈怿晗"
+    },
+    {
+      "student": "赵姝凝",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "赵姝凝"
+    },
+    {
+      "student": "Gary Liang",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "Gary Liang"
+    },
+    {
+      "student": "陈妞妞",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "陈妞妞"
+    },
+    {
+      "student": "胡瀚文",
+      "ownerTeacher": "应雁心",
+      "serviceTeacher": "",
+      "sourceStudent": "胡瀚文"
+    },
+    {
+      "student": "Michael 宇皓",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "Michael 宇皓"
+    },
+    {
+      "student": "蔡一诺",
+      "ownerTeacher": "",
+      "serviceTeacher": "Tinko",
+      "sourceStudent": "蔡一诺"
+    },
+    {
+      "student": "Cindy Xiang（徐滨）",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "Cindy Xiang（徐滨）"
+    },
+    {
+      "student": "Fiona",
+      "ownerTeacher": "",
+      "serviceTeacher": "Tinko",
+      "sourceStudent": "Fiona"
+    },
+    {
+      "student": "Mia",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "Mia"
+    },
+    {
+      "student": "Kam",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "Kam"
+    },
+    {
+      "student": "Shine",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "Shine"
+    },
+    {
+      "student": "Nana",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "Nana"
+    },
+    {
+      "student": "Jennifer",
+      "ownerTeacher": "",
+      "serviceTeacher": "Tinko",
+      "sourceStudent": "Jennifer"
+    },
+    {
+      "student": "Marcus",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "Marcus"
+    },
+    {
+      "student": "William",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "William"
+    },
+    {
+      "student": "Phoebe",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "Phoebe"
+    },
+    {
+      "student": "东霞",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "东霞"
+    },
+    {
+      "student": "蔡维翰",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "蔡维翰"
+    },
+    {
+      "student": "岳靖羽",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "岳靖羽"
+    },
+    {
+      "student": "刁宸熙",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "刁宸熙"
+    },
+    {
+      "student": "常乐儿",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "常乐儿"
+    },
+    {
+      "student": "金宇轩",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "金宇轩"
+    },
+    {
+      "student": "李馨沅",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "李馨沅"
+    },
+    {
+      "student": "Michael Qian",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "Michael Qian"
+    },
+    {
+      "student": "王遇薇",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "王遇薇"
+    },
+    {
+      "student": "Ashley",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "Ashley"
+    },
+    {
+      "student": "杨沅峥Paul",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "杨沅峥Paul"
+    },
+    {
+      "student": "邱雪莹",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "邱雪莹"
+    },
+    {
+      "student": "周琳婷Rily",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "周琳婷Rily"
+    },
+    {
+      "student": "Ocean",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "Ocean"
+    },
+    {
+      "student": "Benny",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "Benny"
+    },
+    {
+      "student": "黄伊",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "黄伊"
+    },
+    {
+      "student": "江明灏",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "江明灏"
+    },
+    {
+      "student": "Patty",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "Patty"
+    },
+    {
+      "student": "秦凯辰",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "秦凯辰"
+    },
+    {
+      "student": "朱翊闻",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "朱翊闻"
+    },
+    {
+      "student": "Helen",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "Helen"
+    },
+    {
+      "student": "姚一多",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "姚一多"
+    },
+    {
+      "student": "Elsa",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "Elsa"
+    },
+    {
+      "student": "王梓",
+      "ownerTeacher": "",
+      "serviceTeacher": "Tinko",
+      "sourceStudent": "王梓"
+    },
+    {
+      "student": "杨骐帆",
+      "ownerTeacher": "",
+      "serviceTeacher": "Tinko",
+      "sourceStudent": "杨骐帆"
+    },
+    {
+      "student": "叶恒屹",
+      "ownerTeacher": "",
+      "serviceTeacher": "Tinko",
+      "sourceStudent": "叶恒屹"
+    },
+    {
+      "student": "周朴诚",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "周朴诚"
+    },
+    {
+      "student": "罗晨芸",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "罗晨芸"
+    },
+    {
+      "student": "Cherry",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "Cherry"
+    },
+    {
+      "student": "储成业",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "储成业"
+    },
+    {
+      "student": "何一嘉",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "何一嘉"
+    },
+    {
+      "student": "Richard Zhang",
+      "ownerTeacher": "",
+      "serviceTeacher": "Tinko",
+      "sourceStudent": "Richard Zhang"
+    },
+    {
+      "student": "Chloe任潇雯",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "Chloe任潇雯"
+    },
+    {
+      "student": "姜煜佳",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "姜煜佳"
+    },
+    {
+      "student": "姚若澜Arwen",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "姚若澜Arwen"
+    },
+    {
+      "student": "刘舒涵",
+      "ownerTeacher": "",
+      "serviceTeacher": "",
+      "sourceStudent": "刘舒涵"
+    }
+  ],
+  "teacherScores": [
+    {
+      "teacher": "包天翊",
+      "metrics": {
+        "learning": 4.964,
+        "responsibility": 4.997,
+        "charisma": 4.989
+      },
+      "sourceName": "包天翊"
+    },
+    {
+      "teacher": "陈璐怡",
+      "metrics": {
+        "learning": 4.904,
+        "responsibility": 4.997,
+        "charisma": 4.988
+      },
+      "sourceName": "陈璐怡"
+    },
+    {
+      "teacher": "陈依依",
+      "metrics": {
+        "learning": 4.821,
+        "responsibility": 4.997,
+        "charisma": 4.859
+      },
+      "sourceName": "陈依依"
+    },
+    {
+      "teacher": "窦",
+      "metrics": {
+        "learning": 5,
+        "responsibility": 5,
+        "charisma": 5
+      },
+      "sourceName": "窦"
+    },
+    {
+      "teacher": "傅威程",
+      "metrics": {
+        "learning": 4.982,
+        "responsibility": 4.997,
+        "charisma": 4.989
+      },
+      "sourceName": "傅威程"
+    },
+    {
+      "teacher": "高",
+      "metrics": {
+        "learning": 4.988,
+        "responsibility": 4.999,
+        "charisma": 4.996
+      },
+      "sourceName": "高"
+    },
+    {
+      "teacher": "华心晨",
+      "metrics": {
+        "learning": 4.946,
+        "responsibility": 4.992,
+        "charisma": 4.959
+      },
+      "sourceName": "华心晨"
+    },
+    {
+      "teacher": "黄钢",
+      "metrics": {
+        "learning": 4.991,
+        "responsibility": 4.998,
+        "charisma": 4.978
+      },
+      "sourceName": "黄钢"
+    },
+    {
+      "teacher": "蒋妍",
+      "metrics": {
+        "learning": 4.944,
+        "responsibility": 4.997,
+        "charisma": 4.994
+      },
+      "sourceName": "蒋妍"
+    },
+    {
+      "teacher": "蓝浪",
+      "metrics": {
+        "learning": 4.8,
+        "responsibility": 4.942,
+        "charisma": 4.88
+      },
+      "sourceName": "蓝浪"
+    },
+    {
+      "teacher": "李品轩",
+      "metrics": {
+        "learning": 4.991,
+        "responsibility": 5,
+        "charisma": 4.994
+      },
+      "sourceName": "李品轩"
+    },
+    {
+      "teacher": "李寅鑫",
+      "metrics": {
+        "learning": 4.543,
+        "responsibility": 4.876,
+        "charisma": 4.708
+      },
+      "sourceName": "李寅鑫"
+    },
+    {
+      "teacher": "刘艳阳",
+      "metrics": {
+        "learning": 4.856,
+        "responsibility": 4.94,
+        "charisma": 4.912
+      },
+      "sourceName": "刘艳阳"
+    },
+    {
+      "teacher": "罗健文",
+      "metrics": {
+        "learning": 4.967,
+        "responsibility": 4.988,
+        "charisma": 4.973
+      },
+      "sourceName": "罗健文"
+    },
+    {
+      "teacher": "马怡婷",
+      "metrics": {
+        "learning": 4.9,
+        "responsibility": 4.9,
+        "charisma": 4.9
+      },
+      "sourceName": "马怡婷"
+    },
+    {
+      "teacher": "汤朔",
+      "metrics": {
+        "learning": 4.938,
+        "responsibility": 4.962,
+        "charisma": 4.953
+      },
+      "sourceName": "汤朔"
+    },
+    {
+      "teacher": "王冰青",
+      "metrics": {
+        "learning": 4.713,
+        "responsibility": 4.978,
+        "charisma": 4.581
+      },
+      "sourceName": "王冰青"
+    },
+    {
+      "teacher": "王储君",
+      "metrics": {
+        "learning": 4.934,
+        "responsibility": 4.99,
+        "charisma": 4.954
+      },
+      "sourceName": "王储君"
+    },
+    {
+      "teacher": "杨浩宇",
+      "metrics": {
+        "learning": 4.771,
+        "responsibility": 4.999,
+        "charisma": 4.908
+      },
+      "sourceName": "杨浩宇"
+    },
+    {
+      "teacher": "应雁心",
+      "metrics": {
+        "learning": 4.986,
+        "responsibility": 4.999,
+        "charisma": 4.995
+      },
+      "sourceName": "应雁心"
+    },
+    {
+      "teacher": "张劭景",
+      "metrics": {
+        "learning": 4.906,
+        "responsibility": 4.957,
+        "charisma": 4.951
+      },
+      "sourceName": "张劭景"
+    },
+    {
+      "teacher": "张文豪",
+      "metrics": {
+        "learning": 4.878,
+        "responsibility": 4.953,
+        "charisma": 4.893
+      },
+      "sourceName": "张文豪"
+    },
+    {
+      "teacher": "郑唯梓",
+      "metrics": {
+        "learning": 4.852,
+        "responsibility": 4.982,
+        "charisma": 4.922
+      },
+      "sourceName": "郑唯梓"
+    },
+    {
+      "teacher": "朱毅博",
+      "metrics": {
+        "learning": 4.873,
+        "responsibility": 4.974,
+        "charisma": 4.899
+      },
+      "sourceName": "朱毅博"
+    },
+    {
+      "teacher": "Tinko",
+      "metrics": {
+        "learning": 4.934,
+        "responsibility": 4.996,
+        "charisma": 4.979
+      },
+      "sourceName": "Tinko"
+    },
+    {
+      "teacher": "Valentina Lin",
+      "metrics": {
+        "learning": 4.874,
+        "responsibility": 4.961,
+        "charisma": 4.94
+      },
+      "sourceName": "Valentina林"
+    },
+    {
+      "teacher": "唐择运",
+      "metrics": {
+        "learning": 4.98,
+        "responsibility": 4.995,
+        "charisma": 4.99
+      },
+      "sourceName": "唐择运"
+    }
+  ],
+  "parameters": {
+    "partTimeLessonRate": 0.6,
+    "ownerCommissionRate": 0.2,
+    "serviceCommissionRate": 0.07,
+    "baseSalaryDeductionMultiplier": 1.2
+  }
+}

@@ -20,7 +20,7 @@
     "build": "npm run build:teachers && vite build --config vite.config.mjs",
     "verify:web": "vite build --config vite.config.mjs",
     "build:teachers": "node scripts/build-teachers.mjs",
-    "build:teacher-score-averages": "node scripts/build-teacher-score-averages.mjs",
+    "sync:cumulative-teacher-scores": "node scripts/sync-cumulative-teacher-scores.mjs",
     "update:template-faculty": "node scripts/update-template-faculty.mjs",
     "build:faculty": "node scripts/build-teachers.mjs && node scripts/update-template-faculty.mjs",
     "generate": "cd ../.. && node apps/parent-report/src/generate-parent-report.mjs",

@@ -29,5 +29,5 @@ apps/parent-report/data/teacher-score-averages.json
 apps/billing-report/web/assets/report-core.js
 apps/teacher-income-report/web/assets/report-core.js
 apps/teacher-income-report/web/assets/payroll-core.js
-apps/teacher-income-report/web/assets/payroll/
+apps/teacher-income-report/web/assets/vendor/
 .vercel

@@ -12,7 +12,10 @@ const APP_ROOT = path.resolve(__dirname, "..");
 const TEACHER_DIR = path.resolve(APP_ROOT, "assets/teacher");
 const SRC = path.resolve(TEACHER_DIR, "老师卡片.txt");
 const OUT = path.resolve(APP_ROOT, "data/teachers.json");
-const DEFAULT_SCORE_AVERAGES = path.resolve(APP_ROOT, "data/teacher-score-averages.csv");
+const DEFAULT_CUMULATIVE_SCORES = path.resolve(
+  APP_ROOT,
+  "../../outputs/teacher-feedback/cumulative/teacher_scores.csv",
+);
 
 const SUBJECT_ORDER = ["数学", "物理", "化学", "经济", "英语"];
 const FIELD = { 姓名: "name", 学科: "subject", 头像: "photo", 标签: "tag", 简介: "desc", 学习提升: "improve", 责任心: "responsibility", 个人魅力: "charisma" };
@@ -50,8 +53,8 @@ for (const block of blocks) {
 }
 
 const scoreCsvPath = process.env.TEACHER_SCORES_CSV
-  || (!process.env.VERCEL && fs.existsSync(DEFAULT_SCORE_AVERAGES)
-    ? DEFAULT_SCORE_AVERAGES
+  || (!process.env.VERCEL && fs.existsSync(DEFAULT_CUMULATIVE_SCORES)
+    ? DEFAULT_CUMULATIVE_SCORES
     : "");
 
 if (scoreCsvPath) {

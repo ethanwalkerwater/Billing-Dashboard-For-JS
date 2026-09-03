@@ -73,9 +73,9 @@ export function mergeTeacherScores(teachers, csvText) {
     return {
       ...teacher,
       scores: {
-        "学习提升": score["学习提升"],
-        "责任心": score["责任心"],
-        "个人魅力": score["个人魅力"],
+        "学习提升": score["学习提升"] ?? teacher.scores?.["学习提升"] ?? null,
+        "责任心": score["责任心"] ?? teacher.scores?.["责任心"] ?? null,
+        "个人魅力": score["个人魅力"] ?? teacher.scores?.["个人魅力"] ?? null,
       },
     };
   });

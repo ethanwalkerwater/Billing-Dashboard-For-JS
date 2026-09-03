@@ -37,6 +37,7 @@ from monthly_teacher_feedback import (
     parse_month_or_exit,
     parse_name_set,
     read_schedule,
+    resolve_feedback_csv,
     shift_month,
     write_csv,
 )
@@ -47,7 +48,11 @@ DEFAULT_CUMULATIVE_OUTPUT_DIR = DEFAULT_OUTPUT_ROOT / "cumulative"
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="老师历史累计课时加权评分")
-    parser.add_argument("--feedback", default=str(DEFAULT_FEEDBACK), help="反馈 CSV 路径")
+    parser.add_argument(
+        "--feedback",
+        default=str(resolve_feedback_csv(DEFAULT_FEEDBACK)),
+        help="反馈 CSV 路径",
+    )
     parser.add_argument("--schedule", default=str(DEFAULT_SCHEDULE), help="课表 CSV 路径")
     parser.add_argument("--name-map", default=str(DEFAULT_NAME_MAP), help="姓名映射 CSV")
     parser.add_argument(

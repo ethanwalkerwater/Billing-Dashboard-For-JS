@@ -44,6 +44,19 @@ DEFAULT_OUTPUT_ROOT = REPO_ROOT / "outputs/teacher-feedback"
 DEFAULT_NAME_MAP = APP_ROOT / "templates/name_mapping.csv"
 
 
+def resolve_feedback_csv(path: Path = DEFAULT_FEEDBACK) -> Path:
+    """Use the canonical path, or the sole CSV in its directory as a safe fallback."""
+    path = Path(path).expanduser().resolve()
+    if path.exists():
+        return path
+    candidates = sorted(
+        candidate.resolve()
+        for candidate in path.parent.glob("*.csv")
+        if candidate.is_file()
+    )
+    return candidates[0] if len(candidates) == 1 else path
+
+
 # 单条评分字段。每个字段对应反馈表里的一列。
 # "column" 为新版问卷列名；"aliases" 为旧版列名（向后兼容，读取时按顺序回退）。
 # 新版问卷把责任心/个人魅力/推荐值都拆成了【家长】/【学生】两列，因此这里分开建字段，
@@ -306,7 +319,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--month", required=True, help="统计月份，例如 2026-02")
     parser.add_argument(
         "--feedback",
-        default=str(DEFAULT_FEEDBACK),
+        default=str(resolve_feedback_csv()),
         help="反馈 CSV 路径",
     )
     parser.add_argument(

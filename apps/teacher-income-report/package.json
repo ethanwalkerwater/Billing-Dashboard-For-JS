@@ -5,12 +5,14 @@
   "type": "module",
   "description": "老师收入详情：作为课时费计算 app 的下游，计算个人收入与公司成本。",
   "dependencies": {
-    "@jingshi/billing-core": "*"
+    "@jingshi/billing-core": "*",
+    "write-excel-file": "^4.1.1"
   },
   "scripts": {
     "sync-core": "node scripts/sync-core.mjs",
+    "sync:cumulative-teacher-scores": "node scripts/sync-cumulative-teacher-scores.mjs",
     "dev": "npm run sync-core && python3 -m http.server 4174 --directory web",
     "build": "node scripts/build-static.mjs && node scripts/verify-static-app.mjs",
-    "test": "npm run sync-core && node scripts/verify-static-app.mjs"
+    "test": "npm run sync-core && node --test tests/*.test.mjs && node scripts/verify-static-app.mjs"
   }
 }

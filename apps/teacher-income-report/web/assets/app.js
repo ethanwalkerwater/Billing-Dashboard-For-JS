@@ -8,6 +8,14 @@ import {
   parseTaxSocialCsv,
   parseTeacherScoresCsv,
 } from "./payroll-core.js";
+import {
+  adjustedLessonAmounts,
+  actualLessonAmount,
+  discountedLessonAmount,
+} from "./income-calculations.js";
+import { buildIncomeWorkbook } from "./income-workbook.js";
+
+const MASTER_STORAGE_KEY = "jingshi.teacher-income.master.v1";
 
 const state = {
   lessonReport: null,
@@ -60,6 +68,8 @@ const els = {
   drawerSubtitle: document.getElementById("drawerSubtitle"),
   drawerBody: document.getElementById("drawerBody"),
   addMasterRowButton: document.getElementById("addMasterRowButton"),
+  uploadMasterButton: document.getElementById("uploadMasterButton"),
+  masterCsvInput: document.getElementById("masterCsvInput"),
   saveMasterButton: document.getElementById("saveMasterButton"),
   closeDrawerButton: document.getElementById("closeDrawerButton"),
   exportSelectedButton: document.getElementById("exportSelectedButton"),
@@ -91,6 +101,16 @@ const TEMPLATE_ROWS = {
     ["老师", "学习提升效果", "责任心与服务态度", "个人魅力"],
     ["黄钢", "5.0", "5.0", "5.0"],
   ],
+  parameters: [
+    ["参数", "值"],
+    ["partTimeLessonRate", "0.6"],
+    ["ownerCommissionRate", "0.2"],
+    ["serviceCommissionRate", "0.07"],
+    ["baseSalaryDeductionMultiplier", "1.2"],
+    ["fullTimeFeedbackBaseRate", "0.47"],
+    ["fullTimeFeedbackStepRate", "0.05"],
+    ["fullTimeFeedbackMaxRate", "0.62"],
+  ],
 };
 
 const MASTER_CONFIG = {
@@ -119,8 +139,8 @@ const MASTER_CONFIG = {
     ],
   },
   teacherScores: {
-    title: "老师反馈评分表",
-    subtitle: "用于全职老师前 50% 排名",
+    title: "老师历史累计评分表",
+    subtitle: "使用 teacher-feedback/cumulative 的累计分，用于全职老师前 50% 排名",
     fields: [
       ["teacher", "老师"],
       ["learning", "学习提升", "number"],
@@ -185,7 +205,8 @@ function downloadTemplate(key) {
     reimbursements: "补贴报销",
     baseSalaries: "老师基础薪水",
     studentOwnership: "学生归属服务",
-    teacherScores: "老师反馈评分",
+    teacherScores: "老师历史累计评分",
+    parameters: "薪资参数",
   };
   downloadCsv(rows, `${labels[key] || key}-模板.csv`);
 }
@@ -237,7 +258,15 @@ function buildDownstreamReport(csvText, sourceName) {
     months.add(month);
     add(teacherMap, month, teacher, amount, duration);
     if (student) add(studentMap, month, student, amount, duration);
-    lessonRows.push({ month, teacher, student, amount, duration, source: row });
+    lessonRows.push({
+      month,
+      teacher,
+      student,
+      amount,
+      duration,
+      source: row,
+      sourceIndex: lessonRows.length,
+    });
   }
 
   const sortedMonths = [...months].sort();
@@ -325,13 +354,38 @@ function lessonAdjustmentKey(month, teacher, group) {
 
 function adjustmentFor(month, teacher, group) {
   const key = lessonAdjustmentKey(month, teacher, group);
-  if (!state.adjustments[key]) state.adjustments[key] = { discountPercent: "100", reason: "" };
+  if (!state.adjustments[key]) {
+    state.adjustments[key] = {
+      discountPercent: "100",
+      reason: "",
+      multiplier: "1",
+      multiplierReason: "",
+    };
+  }
   return state.adjustments[key];
 }
 
-function actualLessonAmount(amount, discountPercent) {
-  const discount = Number(discountPercent);
-  return round((amount || 0) * (Number.isFinite(discount) ? discount : 0) / 100);
+function lessonRowAdjustmentKey(entry) {
+  return JSON.stringify([
+    "row",
+    entry.month,
+    entry.teacher,
+    entry.student,
+    entry.sourceIndex,
+  ]);
+}
+
+function adjustmentForLessonRow(entry) {
+  const key = lessonRowAdjustmentKey(entry);
+  if (!state.adjustments[key]) {
+    state.adjustments[key] = {
+      discountPercent: "100",
+      reason: "",
+      multiplier: "1",
+      multiplierReason: "",
+    };
+  }
+  return state.adjustments[key];
 }
 
 function adjustedLessonReport() {
@@ -349,18 +403,48 @@ function adjustedLessonReport() {
       const hasGroups = Boolean(result.groups?.length);
       const groups = (result.groups || []).map((group) => {
         const adjustment = adjustmentFor(month, teacher, group);
-        const actualAmount = actualLessonAmount(group.amount, adjustment.discountPercent);
+        const amounts = adjustedLessonAmounts(
+          group.amount,
+          adjustment.discountPercent,
+          adjustment.multiplier,
+        );
         const student = cleanText(group.counterparty);
         if (student) {
           const current = studentAmounts.get(student) || { amount: 0, duration: 0, lessons: 0 };
-          current.amount = round(current.amount + actualAmount);
+          current.amount = round(current.amount + amounts.commissionBaseAmount);
           current.duration = round(current.duration + (group.duration || 0));
           current.lessons += group.lessons || 0;
           studentAmounts.set(student, current);
         }
-        return { ...group, amount: actualAmount, originalAmount: group.amount };
+        return { ...group, amount: amounts.teacherAmount, originalAmount: group.amount };
       });
-      const amount = hasGroups ? round(groups.reduce((total, group) => total + group.amount, 0)) : result.totals.amount;
+      const downstreamRows = hasGroups
+        ? []
+        : state.lessonRows.filter((entry) => entry.month === month && entry.teacher === teacher);
+      for (const entry of downstreamRows) {
+        const adjustment = adjustmentForLessonRow(entry);
+        const student = cleanText(entry.student);
+        if (!student) continue;
+        const current = studentAmounts.get(student) || { amount: 0, duration: 0, lessons: 0 };
+        current.amount = round(
+          current.amount + discountedLessonAmount(entry.amount, adjustment.discountPercent),
+        );
+        current.duration = round(current.duration + (entry.duration || 0));
+        current.lessons += 1;
+        studentAmounts.set(student, current);
+      }
+      const amount = hasGroups
+        ? round(groups.reduce((total, group) => total + group.amount, 0))
+        : downstreamRows.length
+          ? round(downstreamRows.reduce((total, entry) => {
+            const adjustment = adjustmentForLessonRow(entry);
+            return total + actualLessonAmount(
+              entry.amount,
+              adjustment.discountPercent,
+              adjustment.multiplier,
+            );
+          }, 0))
+          : result.totals.amount;
       views.teacher[month][teacher] = {
         ...result,
         groups,
@@ -430,6 +514,77 @@ async function readCsvFile(file, parser, onDone) {
   render();
 }
 
+function persistMasterData(key) {
+  try {
+    const existing = JSON.parse(localStorage.getItem(MASTER_STORAGE_KEY) || "null");
+    const sections = existing?.sections && typeof existing.sections === "object"
+      ? existing.sections
+      : {};
+    sections[key] = state.master[key];
+    localStorage.setItem(MASTER_STORAGE_KEY, JSON.stringify({ version: 1, sections }));
+  } catch (error) {
+    console.warn("无法保存主数据到浏览器", error);
+  }
+}
+
+function restorePersistedMasterData() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(MASTER_STORAGE_KEY) || "null");
+    if (!saved || typeof saved !== "object") return false;
+    const sections = saved.sections && typeof saved.sections === "object"
+      ? saved.sections
+      : saved;
+    const restoredKeys = [];
+    if (Array.isArray(sections.baseSalaries)) {
+      state.master.baseSalaries = sections.baseSalaries;
+      restoredKeys.push("baseSalaries");
+    }
+    if (Array.isArray(sections.studentOwnership)) {
+      state.master.studentOwnership = sections.studentOwnership;
+      restoredKeys.push("studentOwnership");
+    }
+    if (Array.isArray(sections.teacherScores)) {
+      state.master.teacherScores = sections.teacherScores;
+      restoredKeys.push("teacherScores");
+    }
+    if (sections.parameters && typeof sections.parameters === "object") {
+      state.master.parameters = { ...DEFAULT_PAYROLL_PARAMETERS, ...sections.parameters };
+      restoredKeys.push("parameters");
+    }
+    for (const key of restoredKeys) {
+      state.sources[key] = "浏览器上次保存";
+    }
+    return restoredKeys.length > 0;
+  } catch (error) {
+    console.warn("忽略损坏的浏览器主数据", error);
+    return false;
+  }
+}
+
+function parseParametersCsv(csvText) {
+  const rows = parseCsv(csvText);
+  const labelsByField = new Map(
+    MASTER_CONFIG.parameters.fields.flatMap(([field, label]) => [[field, field], [label, field]]),
+  );
+  const parameters = {};
+  for (const row of rows) {
+    const rawName = cleanText(row["参数"] || row["字段"] || row["parameter"] || row["Parameter"]);
+    const field = labelsByField.get(rawName);
+    const value = parseNumber(row["值"] || row["数值"] || row["value"] || row["Value"]);
+    if (field && value != null) parameters[field] = value;
+  }
+  return parameters;
+}
+
+function parseMasterCsv(key, csvText) {
+  const options = { nameAliases: state.master.nameAliases };
+  if (key === "baseSalaries") return parseBaseSalaryCsv(csvText, options);
+  if (key === "studentOwnership") return parseStudentOwnershipCsv(csvText, options);
+  if (key === "teacherScores") return parseTeacherScoresCsv(csvText, options);
+  if (key === "parameters") return parseParametersCsv(csvText);
+  throw new Error(`不支持的主数据类型：${key}`);
+}
+
 async function loadDefaults() {
   try {
     const response = await fetch("/assets/payroll/defaults.json", { cache: "no-store" });
@@ -440,10 +595,11 @@ async function loadDefaults() {
     state.master.teacherScores = defaults.teacherScores || [];
     state.master.parameters = { ...DEFAULT_PAYROLL_PARAMETERS, ...(defaults.parameters || {}) };
     state.master.nameAliases = defaults.nameAliases || {};
-    render();
-  } catch {
-    render();
+  } catch (error) {
+    console.warn("未加载项目默认主数据", error);
   }
+  restorePersistedMasterData();
+  render();
 }
 
 function renderMasterCards() {
@@ -662,7 +818,7 @@ function renderLessonDetails(row) {
         <div class="lesson-section-head">
           <div>
             <h3>课时费明细</h3>
-            <p>${escapeHtml(state.month)} · ${number(result.totals.lessons)} 课 · 原始课时费 ${money(result.totals.amount)}</p>
+            <p>${escapeHtml(state.month)} · ${number(result.totals.lessons)} 课 · 原始课时费 ${money(result.totals.amount)} · 实际金额 = 总金额 × 折扣% × 乘数</p>
           </div>
           <span class="badge">${number(result.groups.length)} 个分组</span>
         </div>
@@ -679,6 +835,8 @@ function renderLessonDetails(row) {
                 <th class="numeric">课程单价（¥）</th>
                 <th class="numeric">折扣（%）</th>
                 <th>折扣原因</th>
+                <th class="numeric">乘数</th>
+                <th>乘数原因</th>
                 <th class="numeric">总金额（¥）</th>
                 <th class="numeric">实际金额（¥）</th>
                 <th>原始数据</th>
@@ -687,7 +845,11 @@ function renderLessonDetails(row) {
             <tbody>
               ${result.groups.map((group, index) => {
                 const adjustment = adjustmentFor(state.month, row.teacher, group);
-                const actual = actualLessonAmount(group.amount, adjustment.discountPercent);
+                const actual = actualLessonAmount(
+                  group.amount,
+                  adjustment.discountPercent,
+                  adjustment.multiplier,
+                );
                 return `
                   <tr>
                     <td><strong>${escapeHtml(group.counterparty)}</strong></td>
@@ -699,6 +861,8 @@ function renderLessonDetails(row) {
                     <td class="numeric">${escapeHtml(group.unitPriceLabel)}</td>
                     <td class="numeric"><input class="table-input number-input" type="number" step="0.01" value="${escapeHtml(adjustment.discountPercent)}" data-lesson-discount="${index}" /></td>
                     <td><input class="table-input reason-input" type="text" value="${escapeHtml(adjustment.reason)}" data-lesson-reason="${index}" /></td>
+                    <td class="numeric"><input class="table-input number-input" type="number" step="0.01" value="${escapeHtml(adjustment.multiplier)}" data-lesson-multiplier="${index}" /></td>
+                    <td><input class="table-input reason-input" type="text" value="${escapeHtml(adjustment.multiplierReason)}" data-lesson-multiplier-reason="${index}" /></td>
                     <td class="numeric"><strong>${number(group.amount)}</strong></td>
                     <td class="numeric"><strong>${number(actual)}</strong></td>
                     <td>${group.rawRows?.length ? `${group.rawRows.length} 行明细` : "—"}</td>
@@ -719,7 +883,7 @@ function renderLessonDetails(row) {
       <div class="lesson-section-head">
         <div>
           <h3>课时费明细</h3>
-          <p>${escapeHtml(state.month)} · 来自下游课时费 CSV</p>
+          <p>${escapeHtml(state.month)} · 来自下游课时费 CSV · 实际金额 = 总金额 × 折扣% × 乘数</p>
         </div>
       </div>
       <div class="lesson-table-wrap">
@@ -728,19 +892,37 @@ function renderLessonDetails(row) {
             <tr>
               <th>学生</th>
               <th class="numeric">时长（h）</th>
-              <th class="numeric">金额（¥）</th>
+              <th class="numeric">折扣（%）</th>
+              <th>折扣原因</th>
+              <th class="numeric">乘数</th>
+              <th>乘数原因</th>
+              <th class="numeric">总金额（¥）</th>
+              <th class="numeric">实际金额（¥）</th>
               <th>来源</th>
             </tr>
           </thead>
           <tbody>
-            ${rows.map((entry) => `
-              <tr>
-                <td><strong>${escapeHtml(entry.student || "未填写学生")}</strong></td>
-                <td class="numeric">${number(entry.duration)}</td>
-                <td class="numeric"><strong>${number(entry.amount)}</strong></td>
-                <td>${escapeHtml(cleanText(entry.source?.课程类型 || entry.source?.授课类型 || "汇总行"))}</td>
-              </tr>
-            `).join("")}
+            ${rows.map((entry, index) => {
+              const adjustment = adjustmentForLessonRow(entry);
+              const actual = actualLessonAmount(
+                entry.amount,
+                adjustment.discountPercent,
+                adjustment.multiplier,
+              );
+              return `
+                <tr>
+                  <td><strong>${escapeHtml(entry.student || "未填写学生")}</strong></td>
+                  <td class="numeric">${number(entry.duration)}</td>
+                  <td class="numeric"><input class="table-input number-input" type="number" step="0.01" value="${escapeHtml(adjustment.discountPercent)}" data-row-discount="${index}" /></td>
+                  <td><input class="table-input reason-input" type="text" value="${escapeHtml(adjustment.reason)}" data-row-reason="${index}" /></td>
+                  <td class="numeric"><input class="table-input number-input" type="number" step="0.01" value="${escapeHtml(adjustment.multiplier)}" data-row-multiplier="${index}" /></td>
+                  <td><input class="table-input reason-input" type="text" value="${escapeHtml(adjustment.multiplierReason)}" data-row-multiplier-reason="${index}" /></td>
+                  <td class="numeric"><strong>${number(entry.amount)}</strong></td>
+                  <td class="numeric"><strong>${number(actual)}</strong></td>
+                  <td>${escapeHtml(cleanText(entry.source?.课程类型 || entry.source?.授课类型 || "汇总行"))}</td>
+                </tr>
+              `;
+            }).join("")}
           </tbody>
         </table>
       </div>
@@ -750,20 +932,50 @@ function renderLessonDetails(row) {
 
 function bindLessonDiscounts(row) {
   const result = state.lessonReport?.views?.teacher?.[state.month]?.[row.teacher];
-  if (!result?.groups?.length) return;
-  els.ledgerPanel.querySelectorAll("[data-lesson-discount]").forEach((input) => {
-    input.addEventListener("change", () => {
-      const group = result.groups[Number(input.dataset.lessonDiscount)];
-      adjustmentFor(state.month, row.teacher, group).discountPercent = input.value;
-      render();
+  if (result?.groups?.length) {
+    els.ledgerPanel.querySelectorAll("[data-lesson-discount]").forEach((input) => {
+      input.addEventListener("change", () => {
+        const group = result.groups[Number(input.dataset.lessonDiscount)];
+        adjustmentFor(state.month, row.teacher, group).discountPercent = input.value;
+        render();
+      });
     });
-  });
-  els.ledgerPanel.querySelectorAll("[data-lesson-reason]").forEach((input) => {
-    input.addEventListener("change", () => {
-      const group = result.groups[Number(input.dataset.lessonReason)];
-      adjustmentFor(state.month, row.teacher, group).reason = input.value;
+    els.ledgerPanel.querySelectorAll("[data-lesson-reason]").forEach((input) => {
+      input.addEventListener("change", () => {
+        const group = result.groups[Number(input.dataset.lessonReason)];
+        adjustmentFor(state.month, row.teacher, group).reason = input.value;
+      });
     });
-  });
+    els.ledgerPanel.querySelectorAll("[data-lesson-multiplier]").forEach((input) => {
+      input.addEventListener("change", () => {
+        const group = result.groups[Number(input.dataset.lessonMultiplier)];
+        adjustmentFor(state.month, row.teacher, group).multiplier = input.value;
+        render();
+      });
+    });
+    els.ledgerPanel.querySelectorAll("[data-lesson-multiplier-reason]").forEach((input) => {
+      input.addEventListener("change", () => {
+        const group = result.groups[Number(input.dataset.lessonMultiplierReason)];
+        adjustmentFor(state.month, row.teacher, group).multiplierReason = input.value;
+      });
+    });
+    return;
+  }
+
+  const rows = state.lessonRows.filter((entry) => entry.month === state.month && entry.teacher === row.teacher);
+  const bindRowField = (selector, datasetKey, field, shouldRender) => {
+    els.ledgerPanel.querySelectorAll(selector).forEach((input) => {
+      input.addEventListener("change", () => {
+        const entry = rows[Number(input.dataset[datasetKey])];
+        adjustmentForLessonRow(entry)[field] = input.value;
+        if (shouldRender) render();
+      });
+    });
+  };
+  bindRowField("[data-row-discount]", "rowDiscount", "discountPercent", true);
+  bindRowField("[data-row-reason]", "rowReason", "reason", false);
+  bindRowField("[data-row-multiplier]", "rowMultiplier", "multiplier", true);
+  bindRowField("[data-row-multiplier-reason]", "rowMultiplierReason", "multiplierReason", false);
 }
 
 function renderLedger() {
@@ -791,7 +1003,7 @@ function renderLedger() {
 
     <section class="ledger">
       <h3>Bonus 计算</h3>
-      ${ledgerItem("plus", "课时反馈奖金", row.lessonBonus, "来源：课时费 CSV + 老师反馈评分", `${money(row.lessonFee)} × ${percent(row.feedbackRate)}`)}
+      ${ledgerItem("plus", "课时反馈奖金", row.lessonBonus, "来源：课时费 CSV + 老师历史累计评分", `${money(row.lessonFee)} × ${percent(row.feedbackRate)}`)}
       ${ledgerItem("plus", "学员介绍提成", row.ownerCommission, "来源：学生归属服务表 + 学生当月学费", `学生学费 × ${percent(state.master.parameters.ownerCommissionRate)}`)}
       ${ledgerItem("plus", "服务/管理奖金", row.serviceCommission, "来源：学生归属服务表 + 学生当月学费", `学生学费 × ${percent(state.master.parameters.serviceCommissionRate)}`)}
       ${ledgerItem("subtotal", "Bonus 扣减前小计", bonusBeforeDeduction, "课时反馈奖金 + 介绍提成 + 服务奖金")}
@@ -802,20 +1014,24 @@ function renderLedger() {
     <section class="ledger">
       <h3>个人收入</h3>
       ${ledgerItem("plus", "基础薪水", row.baseSalary, "来源：老师基础薪水表")}
+      ${ledgerItem("plus", "管理费", row.managementFee, "来源：老师基础薪水表")}
+      ${ledgerItem("minus", "房租扣除", row.rentDeduction, "来源：老师基础薪水表")}
       ${ledgerItem("plus", "Bonus 薪水", row.bonusSalary, "来源：上方 Bonus 计算")}
       ${ledgerItem("plus", "补贴报销", row.reimbursement, "来源：补贴报销 CSV")}
       ${ledgerItem("minus", "个人五险", row.personalSocialInsurance, "来源：五险 + 个税 CSV")}
       ${ledgerItem("minus", "个税", row.tax, "来源：五险 + 个税 CSV")}
-      ${ledgerItem("total", "个人总收入", row.personalTotalIncome, "基础薪水 + Bonus + 报销 - 个人五险 - 个税")}
+      ${ledgerItem("total", "个人总收入", row.personalTotalIncome, "基础薪水 + 管理费 - 房租扣除 + Bonus + 报销 - 个人五险 - 个税")}
     </section>
 
     <section class="ledger">
       <h3>公司成本</h3>
       ${ledgerItem("plus", "基础薪水", row.baseSalary, "来源：老师基础薪水表")}
+      ${ledgerItem("plus", "管理费", row.managementFee, "来源：老师基础薪水表")}
+      ${ledgerItem("minus", "房租扣除", row.rentDeduction, "来源：老师基础薪水表")}
       ${ledgerItem("plus", "Bonus 薪水", row.bonusSalary, "来源：上方 Bonus 计算")}
       ${ledgerItem("plus", "补贴报销", row.reimbursement, "来源：补贴报销 CSV")}
       ${ledgerItem("plus", "公司五险", row.companySocialInsurance, "来源：五险 + 个税 CSV")}
-      ${ledgerItem("total", "公司总成本", row.companyTotalCost, "基础薪水 + Bonus + 报销 + 公司五险")}
+      ${ledgerItem("total", "公司总成本", row.companyTotalCost, "基础薪水 + 管理费 - 房租扣除 + Bonus + 报销 + 公司五险")}
     </section>
 
     <section class="source-panel">
@@ -836,6 +1052,8 @@ function payrollSummaryRow(row) {
     row.teacher,
     row.employmentType,
     row.baseSalary,
+    row.managementFee,
+    row.rentDeduction,
     row.lessonFee,
     row.feedbackRate,
     row.lessonBonus,
@@ -853,72 +1071,144 @@ function payrollSummaryRow(row) {
   ];
 }
 
-function exportAllTeachers() {
-  const rows = currentRows();
-  if (!rows.length) return;
-  downloadCsv([
-    ["老师", "雇佣属性", "基础薪水", "月度课时费", "课时系数", "课时反馈奖金", "学员介绍提成", "服务/管理奖金", "基础薪水扣减", "Bonus 薪水", "补贴报销", "个人五险", "个税", "个人总收入", "公司五险", "公司总成本", "数据提醒"],
-    ...rows.map(payrollSummaryRow),
-  ], `老师收入汇总-${state.month}.csv`);
-}
+const SUMMARY_HEADERS = [
+  "老师",
+  "雇佣属性",
+  "基础薪水",
+  "管理费",
+  "房租扣除",
+  "月度课时费",
+  "课时系数",
+  "课时反馈奖金",
+  "学员介绍提成",
+  "服务/管理奖金",
+  "基础薪水扣减",
+  "Bonus 薪水",
+  "补贴报销",
+  "个人五险",
+  "个税",
+  "个人总收入",
+  "公司五险",
+  "公司总成本",
+  "数据提醒",
+];
 
-function exportSelectedTeacher() {
-  const row = currentRow();
-  if (!row) return;
+function teacherExportModel(row) {
   const result = state.lessonReport?.views?.teacher?.[state.month]?.[row.teacher];
   const lessonRows = result?.groups?.length
     ? result.groups.map((group) => {
       const adjustment = adjustmentFor(state.month, row.teacher, group);
       return [
-        "课时明细",
         group.counterparty,
         group.courseType,
         group.teachingType,
         group.cancellationStatus,
         group.duration,
         group.unitPriceLabel,
-        adjustment.discountPercent,
+        Number(adjustment.discountPercent),
         adjustment.reason,
+        Number(adjustment.multiplier),
+        adjustment.multiplierReason,
         group.amount,
-        actualLessonAmount(group.amount, adjustment.discountPercent),
+        actualLessonAmount(group.amount, adjustment.discountPercent, adjustment.multiplier),
         group.rawRows?.join(" ") || "",
       ];
     })
     : state.lessonRows
       .filter((entry) => entry.month === state.month && entry.teacher === row.teacher)
-      .map((entry) => ["课时明细", entry.student, "", "", "", entry.duration, "", "", "", entry.amount, entry.amount, ""]);
+      .map((entry) => {
+        const adjustment = adjustmentForLessonRow(entry);
+        return [
+          entry.student,
+          cleanText(entry.source?.课程类型 || ""),
+          cleanText(entry.source?.授课类型 || ""),
+          "",
+          entry.duration,
+          "",
+          Number(adjustment.discountPercent),
+          adjustment.reason,
+          Number(adjustment.multiplier),
+          adjustment.multiplierReason,
+          entry.amount,
+          actualLessonAmount(entry.amount, adjustment.discountPercent, adjustment.multiplier),
+          entry.sourceIndex,
+        ];
+      });
 
   const bonusBeforeDeduction = round(row.lessonBonus + row.ownerCommission + row.serviceCommission);
-  const rows = [
-    ["类型", "项目", "来源/学生", "公式/说明", "金额"],
-    ["老师", row.teacher, state.month, row.employmentType, ""],
-    ["加项", "课时反馈奖金", "课时费 CSV + 老师反馈评分", `${row.lessonFee} × ${row.feedbackRate}`, row.lessonBonus],
-    ["加项", "学员介绍提成", "学生归属服务表", `学生学费 × ${state.master.parameters.ownerCommissionRate}`, row.ownerCommission],
-    ["加项", "服务/管理奖金", "学生归属服务表", `学生学费 × ${state.master.parameters.serviceCommissionRate}`, row.serviceCommission],
-    ["小计", "Bonus 扣减前小计", "", "", bonusBeforeDeduction],
-    ["减项", "基础薪水扣减", "老师基础薪水表 + 参数", `${row.baseSalary} × ${state.master.parameters.baseSalaryDeductionMultiplier}`, row.baseSalaryDeduction],
-    ["合计", "Bonus 薪水", "", "", row.bonusSalary],
-    ["加项", "基础薪水", "老师基础薪水表", "", row.baseSalary],
-    ["加项", "补贴报销", "补贴报销 CSV", "", row.reimbursement],
-    ["减项", "个人五险", "五险 + 个税 CSV", "", row.personalSocialInsurance],
-    ["减项", "个税", "五险 + 个税 CSV", "", row.tax],
-    ["合计", "个人总收入", "", "", row.personalTotalIncome],
-    ["合计", "公司总成本", "基础薪水 + Bonus + 报销 + 公司五险", "", row.companyTotalCost],
-    [],
-    ["类型", "学生", "课程类型", "授课类型", "状态", "时长", "单价", "折扣", "折扣原因", "总金额", "实际金额", "原始行"],
-    ...lessonRows,
-    [],
-    ["类型", "提成类型", "学生", "计提基数", "比例", "金额"],
-    ...row.commissionRows.map((entry) => [
-      "提成来源",
+  return {
+    teacher: row.teacher,
+    employmentType: row.employmentType,
+    personalTotalIncome: row.personalTotalIncome,
+    companyTotalCost: row.companyTotalCost,
+    financialHeaders: ["类型", "项目", "来源", "公式/说明", "金额"],
+    financialRows: [
+      ["加项", "课时反馈奖金", "课时费 CSV + 历史累计反馈评分", `${row.lessonFee} × ${row.feedbackRate}`, row.lessonBonus],
+      ["加项", "学员介绍提成", "学生归属服务表", `学生学费 × ${state.master.parameters.ownerCommissionRate}`, row.ownerCommission],
+      ["加项", "服务/管理奖金", "学生归属服务表", `学生学费 × ${state.master.parameters.serviceCommissionRate}`, row.serviceCommission],
+      ["小计", "Bonus 扣减前小计", "", "", bonusBeforeDeduction],
+      ["减项", "基础薪水扣减", "老师基础薪水表 + 参数", `${row.baseSalary} × ${state.master.parameters.baseSalaryDeductionMultiplier}`, row.baseSalaryDeduction],
+      ["合计", "Bonus 薪水", "", "", row.bonusSalary],
+      ["加项", "基础薪水", "老师基础薪水表", "", row.baseSalary],
+      ["加项", "管理费", "老师基础薪水表", "", row.managementFee],
+      ["减项", "房租扣除", "老师基础薪水表", "", row.rentDeduction],
+      ["加项", "补贴报销", "补贴报销 CSV", "", row.reimbursement],
+      ["减项", "个人五险", "五险 + 个税 CSV", "", row.personalSocialInsurance],
+      ["减项", "个税", "五险 + 个税 CSV", "", row.tax],
+      ["合计", "个人总收入", "", "", row.personalTotalIncome],
+      ["合计", "公司总成本", "固定收入 + Bonus + 报销 + 公司五险", "", row.companyTotalCost],
+    ],
+    lessonHeaders: [
+      "学生",
+      "课程类型",
+      "授课类型",
+      "状态",
+      "时长（h）",
+      "单价",
+      "折扣（%）",
+      "折扣原因",
+      "乘数",
+      "乘数原因",
+      "总金额",
+      "实际金额",
+      "原始行",
+    ],
+    lessonRows,
+    lessonCurrencyColumns: [11, 12],
+    commissionHeaders: ["提成类型", "学生", "来源学生", "计提基数", "比例", "金额"],
+    commissionRows: row.commissionRows.map((entry) => [
       entry.type === "owner" ? "归属提成" : "服务奖金",
       entry.student,
+      entry.sourceStudent,
       entry.commissionBase,
       entry.rate,
       entry.amount,
     ]),
-  ];
-  downloadCsv(rows, `${row.teacher}-${state.month}-收入详情.csv`);
+  };
+}
+
+async function downloadIncomeWorkbook(rows, filename) {
+  const model = {
+    month: state.month,
+    summaryHeaders: SUMMARY_HEADERS,
+    summaryRows: rows.map(payrollSummaryRow),
+    summaryCurrencyColumns: [3, 4, 5, 6, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18],
+    summaryRateColumns: [7],
+    teachers: rows.map(teacherExportModel),
+  };
+  await buildIncomeWorkbook(window.writeXlsxFile, model).toFile(filename);
+}
+
+async function exportAllTeachers() {
+  const rows = currentRows();
+  if (!rows.length) return;
+  await downloadIncomeWorkbook(rows, `老师收入汇总-${state.month}.xlsx`);
+}
+
+async function exportSelectedTeacher() {
+  const row = currentRow();
+  if (!row) return;
+  await downloadIncomeWorkbook([row], `${row.teacher}-${state.month}-收入详情.xlsx`);
 }
 
 function emptyMasterRow(key) {
@@ -950,6 +1240,7 @@ function openMasterEditor(key) {
   els.drawerTitle.textContent = config.title;
   els.drawerSubtitle.textContent = config.subtitle;
   els.addMasterRowButton.disabled = key === "parameters";
+  els.uploadMasterButton.disabled = false;
 
   const rows = key === "parameters"
     ? [state.master.parameters]
@@ -1012,6 +1303,7 @@ function saveMasterEditor() {
     state.master[key] = rows.filter((row) => Object.values(row).some((value) => cleanText(value)));
   }
   state.sources[key] = "网页端修改";
+  persistMasterData(key);
   closeDrawer();
   render();
 }
@@ -1072,6 +1364,31 @@ els.reimbursementInput.addEventListener("change", (event) => readCsvFile(event.t
 
 els.saveMasterButton.addEventListener("click", saveMasterEditor);
 els.addMasterRowButton.addEventListener("click", addMasterRow);
+els.uploadMasterButton.addEventListener("click", () => {
+  els.masterCsvInput.value = "";
+  els.masterCsvInput.click();
+});
+els.masterCsvInput.addEventListener("change", async (event) => {
+  const file = event.target.files[0];
+  const key = state.editingMaster;
+  if (!file || !key) return;
+  try {
+    const imported = parseMasterCsv(key, await file.text());
+    if (key === "parameters") {
+      if (!Object.keys(imported).length) throw new Error("没有识别到参数和值");
+      state.master.parameters = { ...DEFAULT_PAYROLL_PARAMETERS, ...imported };
+    } else {
+      if (!imported.length) throw new Error("没有识别到有效数据行");
+      state.master[key] = imported;
+    }
+    state.sources[key] = `${file.name} · 浏览器保存`;
+    persistMasterData(key);
+    openMasterEditor(key);
+    render();
+  } catch (error) {
+    window.alert(`CSV 导入失败：${error.message}`);
+  }
+});
 els.closeDrawerButton.addEventListener("click", closeDrawer);
 els.drawerBackdrop.addEventListener("click", closeDrawer);
 els.exportSelectedButton.addEventListener("click", exportSelectedTeacher);

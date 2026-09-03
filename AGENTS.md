@@ -25,7 +25,7 @@ npm run build:teacher-feedback
 
 ## 数据安全
 
-真实输入只允许出现在 `data/local/`，生成结果只允许出现在 `outputs/`。两者都不入 Git 或 Vercel。各模块的数据接口以 `data/README.md` 为准，不得重新创建 `data/raw/`、`data/private/`、`data/payroll/` 等旧目录，也不得把真实 CSV 复制到应用源码或 Vercel 静态目录。
+真实输入只允许出现在 `data/local/`，生成结果只允许出现在 `outputs/`。两者都不入 Git 或 Vercel。各模块的数据接口以 `data/README.md` 为准，不得重新创建 `data/raw/`、`data/private/`、`data/payroll/` 等旧目录，也不得把真实 CSV 复制到应用源码或 Vercel 静态目录。业务方已确认可公开的老师收入主数据例外放在 `apps/teacher-income-report/web/assets/payroll/defaults.json`，该文件可随应用部署。
 
 ## 部署边界
 

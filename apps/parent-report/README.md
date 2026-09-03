@@ -48,25 +48,25 @@ npm run test        -w @jingshi/parent-report
 
 1. 学生课时情况，可一次选择多份；
 2. 排课系统导出的完整课表；
-3. 老师反馈模块导出的上月老师评分。
+3. 老师反馈模块导出的历史累计老师评分。
 
 CSV 在浏览器内解析，只有用户校对并确认后的单个学生报告数据会提交给 PDF Function。网页支持修正课时、价格、取消比例、老师与授课类型；手动覆盖应付金额时必须填写修改原因。批量生成前会列出每位学生、月份、行号和具体错误。
 
 ## 累计老师评分更新
 
-师资卡展示的是历史累计分，不能用单月 `teacher_scores.csv` 直接覆盖。每项评分按
-`teacher_summary.csv` 中该项的真实有效评分数累计加权；`value_count=0` 的老师当月
-不参与该项平均，也不会用机构均分伪造评分。
+师资卡只使用 `teacher-feedback` 生成的历史累计评分，不能用单月
+`teacher_scores.csv` 直接覆盖。累计模块先复用月度算法，再按老师每月的实际授课
+课时加权，权威文件为 `outputs/teacher-feedback/cumulative/teacher_scores.csv`。
 
-追加一个新月份时，以现有累计 CSV 为基线，并传入该月的完整汇总：
+每个月新增反馈和课表数据后，运行一条命令重算累计评分、同步师资卡并重新生成师资数据：
 
 ```bash
-node apps/parent-report/scripts/build-teacher-score-averages.mjs \
-  --baseline-csv apps/parent-report/data/teacher-score-averages.csv \
-  --summary-csv 2026-07=/path/to/2026-07/teacher_summary.csv
-
-npm run build:faculty -w @jingshi/parent-report
+npm run update:parent-teacher-scores
 ```
+
+同步脚本会把累计文件的学习提升、责任心与服务态度、个人魅力三项分数按一位小数
+写回 `assets/teacher/老师卡片.txt`。这样 Vercel 不需要访问本地 `outputs/`，线上构建
+仍能得到已确认的历史累计评分。累计文件中的总评分和排名仅用于审计，不显示在师资卡。
 
 新月份的 `respondent_detail.csv`、`teacher_text_feedback.csv`、`teacher_summary.csv`
 等评价记录应保留在 `outputs/teacher-feedback/<YYYY-MM>/`。原始反馈仍只放在

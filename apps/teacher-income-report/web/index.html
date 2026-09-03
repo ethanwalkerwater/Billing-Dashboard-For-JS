@@ -74,6 +74,7 @@
           <button type="button" class="button ghost" data-template="baseSalaries">基础薪水模板</button>
           <button type="button" class="button ghost" data-template="studentOwnership">归属服务模板</button>
           <button type="button" class="button ghost" data-template="teacherScores">评分模板</button>
+          <button type="button" class="button ghost" data-template="parameters">薪资参数模板</button>
         </div>
       </div>
       <div id="masterCards" class="master-grid"></div>
@@ -139,6 +140,8 @@
         <p id="drawerSubtitle"></p>
       </div>
       <div class="drawer-actions">
+        <button id="uploadMasterButton" class="button outline" type="button">上传 CSV</button>
+        <input id="masterCsvInput" type="file" accept=".csv,text/csv" hidden />
         <button id="addMasterRowButton" class="button outline" type="button">新增一行</button>
         <button id="saveMasterButton" class="button primary" type="button">应用修改</button>
         <button id="closeDrawerButton" class="button ghost" type="button">关闭</button>
@@ -147,6 +150,7 @@
     <div id="drawerBody" class="drawer-body"></div>
   </aside>
 
+  <script src="/assets/vendor/write-excel-file.min.js"></script>
   <script type="module" src="/assets/app.js"></script>
 </body>
 </html>
