@@ -10,6 +10,8 @@ const NAME_ALIASES = new Map([
   ["valentina林", "valentinalin"],
   ["马", "马怡婷"],
   ["kevinliu", "刘峥"],
+  ["jackhou", "jackhou（侯东淳）"],
+  ["侯东淳", "jackhou（侯东淳）"],
 ]);
 
 export function normalizeTeacherName(value) {
