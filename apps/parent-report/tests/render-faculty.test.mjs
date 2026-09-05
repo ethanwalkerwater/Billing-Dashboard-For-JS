@@ -60,3 +60,16 @@ test("renderFacultyByRole keeps historical Kevin Liu lessons mapped to 刘峥", 
   assert.match(html.slice(teachingStart, moreStart), /刘峥/);
   assert.doesNotMatch(html.slice(moreStart), /刘峥/);
 });
+
+test("renderFacultyByRole matches Jack Hou's English and Chinese names", () => {
+  const teacher = { name: "Jack Hou（侯东淳）", tag: "英语", desc: "简介", scores: {} };
+
+  for (const lessonName of ["Jack Hou", "侯东淳"]) {
+    const html = renderFacultyByRole([teacher], [lessonName]);
+    const teachingStart = html.indexOf("授课老师");
+    const moreStart = html.indexOf("更多老师");
+    assert.ok(teachingStart >= 0);
+    assert.equal(moreStart, -1);
+    assert.match(html.slice(teachingStart), /Jack Hou（侯东淳）/);
+  }
+});
