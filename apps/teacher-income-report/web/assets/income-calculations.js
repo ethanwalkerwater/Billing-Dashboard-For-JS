@@ -8,6 +8,12 @@ function numericOrZero(value) {
   return Number.isFinite(number) ? number : 0;
 }
 
+export function effectiveLessonMultiplier(value, feedbackRate) {
+  return String(value ?? "").trim() === ""
+    ? numericOrZero(feedbackRate)
+    : numericOrZero(value);
+}
+
 export function discountedLessonAmount(amount, discountPercent) {
   return round(numericOrZero(amount) * numericOrZero(discountPercent) / 100);
 }
