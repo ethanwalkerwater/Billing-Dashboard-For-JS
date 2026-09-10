@@ -164,6 +164,7 @@ async function handleFile(file) {
   els.uploadPanel.hidden = true;
   els.reportPanel.hidden = false;
   els.sourceBadge.textContent = `${file.name} · ${number(state.data.metadata.reportableRows)} 计费行 / ${number(state.data.metadata.totalRows)} 原始行`;
+  ensureValidSelections();
   render();
 }
 
@@ -215,10 +216,21 @@ function renderEntityOptions() {
   const options = entityOptionsForSelectedMonths();
   const search = state.entitySearch.trim().toLowerCase();
   const visibleOptions = options.filter((option) => option.name.toLowerCase().includes(search));
+  const visibleNames = visibleOptions.map((option) => option.name);
+  const allVisibleSelected = visibleOptions.length > 0
+    && visibleOptions.every((option) => state.selectedEntities.includes(option.name));
   const entityName = state.view === "student" ? "学生" : "老师";
+  const selectAllLabel = search
+    ? `${allVisibleSelected ? "取消选择" : "全选"}筛选结果（${visibleOptions.length}）`
+    : `${allVisibleSelected ? "取消全选" : "全选学生"}（${visibleOptions.length}）`;
+  const selectAllControl = state.view === "student" && visibleOptions.length ? `
+    <button class="picker-select-all" type="button" data-entity-select-all aria-pressed="${allVisibleSelected}">
+      ${escapeHtml(selectAllLabel)}
+    </button>
+  ` : "";
   els.entityLabel.textContent = entityName;
   els.entitySearch.placeholder = `搜索${entityName}`;
-  els.entityOptions.innerHTML = visibleOptions.length ? visibleOptions.map((option) => {
+  els.entityOptions.innerHTML = visibleOptions.length ? selectAllControl + visibleOptions.map((option) => {
     const summary = `${option.name} · ${money(option.amount)} · ${number(option.duration)}h`;
     return `
       <label class="picker-option">
@@ -227,6 +239,18 @@ function renderEntityOptions() {
       </label>
     `;
   }).join("") : `<div class="empty">没有匹配${escapeHtml(entityName)}</div>`;
+
+  els.entityOptions.querySelector("[data-entity-select-all]")?.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (allVisibleSelected) {
+      const visibleNameSet = new Set(visibleNames);
+      state.selectedEntities = state.selectedEntities.filter((entity) => !visibleNameSet.has(entity));
+    } else {
+      state.selectedEntities = [...new Set([...state.selectedEntities, ...visibleNames])];
+    }
+    render();
+  });
 
   els.entityOptions.querySelectorAll("[data-entity-option]").forEach((input) => {
     input.addEventListener("change", () => {
@@ -514,7 +538,6 @@ function exportCurrentCsv() {
 
 function render() {
   if (!state.data) return;
-  ensureValidSelections();
   els.studentTab.classList.toggle("active", state.view === "student");
   els.teacherTab.classList.toggle("active", state.view === "teacher");
   renderSidebarState();
@@ -544,6 +567,7 @@ els.studentTab.addEventListener("click", () => {
   state.selectedEntities = [];
   state.entitySearch = "";
   els.entitySearch.value = "";
+  ensureValidSelections();
   render();
 });
 els.teacherTab.addEventListener("click", () => {
@@ -551,6 +575,7 @@ els.teacherTab.addEventListener("click", () => {
   state.selectedEntities = [];
   state.entitySearch = "";
   els.entitySearch.value = "";
+  ensureValidSelections();
   render();
 });
 els.monthSearch.addEventListener("input", (event) => {

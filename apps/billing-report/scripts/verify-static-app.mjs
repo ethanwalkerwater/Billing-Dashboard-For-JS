@@ -49,6 +49,8 @@ assert.match(app, /data-discount-input/, "discount percent input must be editabl
 assert.match(app, /data-discount-reason/, "discount reason input must be editable in summary rows");
 assert.match(app, /selectedMonths/, "app state must support selecting multiple months");
 assert.match(app, /selectedEntities/, "app state must support selecting multiple entities");
+assert.match(app, /data-entity-select-all/, "student selector must provide a select-all control");
+assert.match(app, /visibleOptions\.every/, "select-all state must follow the current filtered results");
 assert.match(app, /result-section/, "summary table must separate combined results above each table");
 assert.doesNotMatch(app, /data-section-row/, "section labels must not be mixed into table body rows");
 assert.match(app, /subjectLabel.*名/, "CSV first column must be named by the current view subject");
@@ -63,6 +65,7 @@ assert.match(css, /\.workspace-layout/, "workspace layout must be styled");
 assert.match(css, /\.sidebar-panel/, "sidebar panel must be styled");
 assert.match(css, /\.content-panel/, "content panel must be styled");
 assert.match(css, /\.selection-chip/, "selected filter chips must be styled");
+assert.match(css, /\.picker-select-all/, "student select-all control must be styled");
 assert.match(css, /\.workspace-layout\.sidebar-collapsed/, "collapsed sidebar layout must be styled");
 assert.match(css, /\.reason-input[^{]*{[^}]*max-width:\s*120px/s, "discount reason input must stay compact");
 assert.match(css, /\.result-section table[^{]*{[^}]*min-width:\s*1120px/s, "summary table must use a tighter minimum width");
