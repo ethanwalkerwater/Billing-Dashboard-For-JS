@@ -128,6 +128,32 @@ test("buildPayrollReport calculates full-time feedback rate and stacked commissi
   assert.equal(row.companyTotalCost, 1980);
 });
 
+test("buildPayrollReport uses a row-adjusted lesson bonus without applying feedback twice", () => {
+  const report = buildReportFromCsv(scheduleCsv, "schedule.csv");
+  report.views.teacher["2026-05"]["张老师"].totals.lessonBonus = 1300;
+  const payroll = buildPayrollReport(report, {
+    baseSalaries: parseBaseSalaryCsv([
+      "老师名,雇佣属性,基础薪水",
+      "张老师,全职,0",
+      "李老师,全职,0",
+      "王老师,全职,0",
+    ].join("\n")),
+    teacherScoresByMonth: {
+      "2026-05": parseTeacherScoresCsv([
+        "老师,学习提升效果,责任心与服务态度,个人魅力",
+        "张老师,5,5,5",
+        "李老师,4,4,4",
+        "王老师,3,3,3",
+      ].join("\n")),
+    },
+  });
+
+  const row = payroll.byMonth["2026-05"]["张老师"];
+  assert.equal(row.feedbackRate, 0.62);
+  assert.equal(row.lessonFee, 2000);
+  assert.equal(row.lessonBonus, 1300);
+});
+
 test("missing monthly feedback score uses the full-time base rate and explains why", () => {
   const report = buildReportFromCsv(scheduleCsv, "schedule.csv");
   const payroll = buildPayrollReport(report, {

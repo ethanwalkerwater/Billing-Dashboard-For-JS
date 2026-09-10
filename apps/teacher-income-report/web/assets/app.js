@@ -3,6 +3,7 @@ import {
   DEFAULT_PAYROLL_PARAMETERS,
   buildFeedbackRanking,
   buildPayrollReport,
+  canonicalName,
   parseBaseSalaryCsv,
   parseReimbursementsCsv,
   parseStudentOwnershipCsv,
@@ -13,6 +14,7 @@ import {
   adjustedLessonAmounts,
   actualLessonAmount,
   discountedLessonAmount,
+  effectiveLessonMultiplier,
 } from "./income-calculations.js";
 import { buildIncomeWorkbook } from "./income-workbook.js";
 
@@ -231,6 +233,13 @@ function round(value) {
   return Math.round((value + Number.EPSILON) * 1_000_000) / 1_000_000;
 }
 
+function teacherKey(value) {
+  return cleanText(canonicalName(value, state.master.nameAliases))
+    .replace(/老师$/u, "")
+    .replace(/\s+/g, "")
+    .toLowerCase();
+}
+
 function currentTeacherScores() {
   return state.month ? (state.monthly.teacherScoresByMonth[state.month] || []) : [];
 }
@@ -408,7 +417,7 @@ function adjustmentFor(month, teacher, group) {
     state.adjustments[key] = {
       discountPercent: "100",
       reason: "",
-      multiplier: "1",
+      multiplier: "",
       multiplierReason: "",
     };
   }
@@ -431,14 +440,14 @@ function adjustmentForLessonRow(entry) {
     state.adjustments[key] = {
       discountPercent: "100",
       reason: "",
-      multiplier: "1",
+      multiplier: "",
       multiplierReason: "",
     };
   }
   return state.adjustments[key];
 }
 
-function adjustedLessonReport() {
+function adjustedLessonReport(feedbackRatesByMonth = {}) {
   if (!state.lessonReport) return null;
   const source = state.lessonReport;
   const views = { teacher: {}, student: {} };
@@ -453,10 +462,14 @@ function adjustedLessonReport() {
       const hasGroups = Boolean(result.groups?.length);
       const groups = (result.groups || []).map((group) => {
         const adjustment = adjustmentFor(month, teacher, group);
+        const multiplier = effectiveLessonMultiplier(
+          adjustment.multiplier,
+          feedbackRatesByMonth?.[month]?.get(teacherKey(teacher)),
+        );
         const amounts = adjustedLessonAmounts(
           group.amount,
           adjustment.discountPercent,
-          adjustment.multiplier,
+          multiplier,
         );
         const student = cleanText(group.counterparty);
         if (student) {
@@ -466,7 +479,12 @@ function adjustedLessonReport() {
           current.lessons += group.lessons || 0;
           studentAmounts.set(student, current);
         }
-        return { ...group, amount: amounts.teacherAmount, originalAmount: group.amount };
+        return {
+          ...group,
+          amount: amounts.commissionBaseAmount,
+          lessonBonus: amounts.teacherAmount,
+          originalAmount: group.amount,
+        };
       });
       const downstreamRows = hasGroups
         ? []
@@ -488,17 +506,29 @@ function adjustedLessonReport() {
         : downstreamRows.length
           ? round(downstreamRows.reduce((total, entry) => {
             const adjustment = adjustmentForLessonRow(entry);
-            return total + actualLessonAmount(
-              entry.amount,
-              adjustment.discountPercent,
-              adjustment.multiplier,
-            );
+            return total + discountedLessonAmount(entry.amount, adjustment.discountPercent);
           }, 0))
           : result.totals.amount;
+      const lessonBonus = hasGroups
+        ? round(groups.reduce((total, group) => total + group.lessonBonus, 0))
+        : downstreamRows.length
+          ? round(downstreamRows.reduce((total, entry) => {
+            const adjustment = adjustmentForLessonRow(entry);
+            const multiplier = effectiveLessonMultiplier(
+              adjustment.multiplier,
+              feedbackRatesByMonth?.[month]?.get(teacherKey(teacher)),
+            );
+            return total + actualLessonAmount(entry.amount, adjustment.discountPercent, multiplier);
+          }, 0))
+          : null;
       views.teacher[month][teacher] = {
         ...result,
         groups,
-        totals: { ...result.totals, amount },
+        totals: {
+          ...result.totals,
+          amount,
+          ...(lessonBonus == null ? {} : { lessonBonus }),
+        },
       };
     }
 
@@ -542,7 +572,15 @@ function payrollInput() {
 
 function payrollReport() {
   if (!state.lessonReport) return null;
-  return buildPayrollReport(adjustedLessonReport(), payrollInput());
+  const input = payrollInput();
+  const preview = buildPayrollReport(state.lessonReport, input);
+  const feedbackRatesByMonth = Object.fromEntries(
+    Object.entries(preview.byMonth).map(([month, rows]) => [
+      month,
+      new Map(Object.values(rows).map((row) => [teacherKey(row.teacher), row.feedbackRate])),
+    ]),
+  );
+  return buildPayrollReport(adjustedLessonReport(feedbackRatesByMonth), input);
 }
 
 function currentRows() {
@@ -877,6 +915,15 @@ function feedbackDescription(row) {
   return labels.length ? `全职前 50%：${labels.join("、")}` : "全职 0 项前 50%";
 }
 
+function lessonMultiplierDetails(adjustment, row) {
+  const automatic = String(adjustment.multiplier ?? "").trim() === "";
+  return {
+    automatic,
+    value: effectiveLessonMultiplier(adjustment.multiplier, row.feedbackRate),
+    reason: automatic ? `自动读取课时系数 ${percent(row.feedbackRate)}` : adjustment.multiplierReason,
+  };
+}
+
 function renderCommissionRows(row) {
   if (!row.commissionRows.length) return '<div class="empty-state small">没有提成明细</div>';
   return `
@@ -927,10 +974,11 @@ function renderLessonDetails(row) {
             <tbody>
               ${result.groups.map((group, index) => {
                 const adjustment = adjustmentFor(state.month, row.teacher, group);
+                const multiplier = lessonMultiplierDetails(adjustment, row);
                 const actual = actualLessonAmount(
                   group.amount,
                   adjustment.discountPercent,
-                  adjustment.multiplier,
+                  multiplier.value,
                 );
                 return `
                   <tr>
@@ -943,8 +991,8 @@ function renderLessonDetails(row) {
                     <td class="numeric">${escapeHtml(group.unitPriceLabel)}</td>
                     <td class="numeric"><input class="table-input number-input" type="number" step="0.01" value="${escapeHtml(adjustment.discountPercent)}" data-lesson-discount="${index}" /></td>
                     <td><input class="table-input reason-input" type="text" value="${escapeHtml(adjustment.reason)}" data-lesson-reason="${index}" /></td>
-                    <td class="numeric"><input class="table-input number-input" type="number" step="0.01" value="${escapeHtml(adjustment.multiplier)}" data-lesson-multiplier="${index}" /></td>
-                    <td><input class="table-input reason-input" type="text" value="${escapeHtml(adjustment.multiplierReason)}" data-lesson-multiplier-reason="${index}" /></td>
+                    <td class="numeric"><input class="table-input number-input" type="number" min="0" step="0.01" value="${escapeHtml(multiplier.value)}" title="默认自动读取当月课时系数；输入数值可覆盖，清空后恢复自动" data-lesson-multiplier="${index}" /></td>
+                    <td><input class="table-input reason-input" type="text" value="${escapeHtml(multiplier.reason)}" ${multiplier.automatic ? "readonly" : ""} data-lesson-multiplier-reason="${index}" /></td>
                     <td class="numeric"><strong>${number(group.amount)}</strong></td>
                     <td class="numeric"><strong>${number(actual)}</strong></td>
                     <td>${group.rawRows?.length ? `${group.rawRows.length} 行明细` : "—"}</td>
@@ -986,10 +1034,11 @@ function renderLessonDetails(row) {
           <tbody>
             ${rows.map((entry, index) => {
               const adjustment = adjustmentForLessonRow(entry);
+              const multiplier = lessonMultiplierDetails(adjustment, row);
               const actual = actualLessonAmount(
                 entry.amount,
                 adjustment.discountPercent,
-                adjustment.multiplier,
+                multiplier.value,
               );
               return `
                 <tr>
@@ -997,8 +1046,8 @@ function renderLessonDetails(row) {
                   <td class="numeric">${number(entry.duration)}</td>
                   <td class="numeric"><input class="table-input number-input" type="number" step="0.01" value="${escapeHtml(adjustment.discountPercent)}" data-row-discount="${index}" /></td>
                   <td><input class="table-input reason-input" type="text" value="${escapeHtml(adjustment.reason)}" data-row-reason="${index}" /></td>
-                  <td class="numeric"><input class="table-input number-input" type="number" step="0.01" value="${escapeHtml(adjustment.multiplier)}" data-row-multiplier="${index}" /></td>
-                  <td><input class="table-input reason-input" type="text" value="${escapeHtml(adjustment.multiplierReason)}" data-row-multiplier-reason="${index}" /></td>
+                  <td class="numeric"><input class="table-input number-input" type="number" min="0" step="0.01" value="${escapeHtml(multiplier.value)}" title="默认自动读取当月课时系数；输入数值可覆盖，清空后恢复自动" data-row-multiplier="${index}" /></td>
+                  <td><input class="table-input reason-input" type="text" value="${escapeHtml(multiplier.reason)}" ${multiplier.automatic ? "readonly" : ""} data-row-multiplier-reason="${index}" /></td>
                   <td class="numeric"><strong>${number(entry.amount)}</strong></td>
                   <td class="numeric"><strong>${number(actual)}</strong></td>
                   <td>${escapeHtml(cleanText(entry.source?.课程类型 || entry.source?.授课类型 || "汇总行"))}</td>
@@ -1085,7 +1134,7 @@ function renderLedger() {
 
     <section class="ledger">
       <h3>Bonus 计算</h3>
-      ${ledgerItem(row.feedbackMissingScore ? "warning" : "plus", "课时反馈奖金", row.lessonBonus, `来源：课时费 CSV + ${state.month} 当月老师评分`, `${money(row.lessonFee)} × ${percent(row.feedbackRate)} · ${feedbackDescription(row)}`)}
+      ${ledgerItem(row.feedbackMissingScore ? "warning" : "plus", "课时反馈奖金", row.lessonBonus, `来源：课时明细实际金额合计`, `课时系数 ${percent(row.feedbackRate)} 已由每节课乘数体现 · ${feedbackDescription(row)}`)}
       ${ledgerItem("plus", "学员介绍提成", row.ownerCommission, "来源：学生归属服务表 + 学生当月学费", `学生学费 × ${percent(state.master.parameters.ownerCommissionRate)}`)}
       ${ledgerItem("plus", "服务/管理奖金", row.serviceCommission, "来源：学生归属服务表 + 学生当月学费", `学生学费 × ${percent(state.master.parameters.serviceCommissionRate)}`)}
       ${ledgerItem("subtotal", "Bonus 扣减前小计", bonusBeforeDeduction, "课时反馈奖金 + 介绍提成 + 服务奖金")}
@@ -1186,6 +1235,7 @@ function teacherExportModel(row) {
   const lessonRows = result?.groups?.length
     ? result.groups.map((group) => {
       const adjustment = adjustmentFor(state.month, row.teacher, group);
+      const multiplier = lessonMultiplierDetails(adjustment, row);
       return [
         group.counterparty,
         group.courseType,
@@ -1195,10 +1245,10 @@ function teacherExportModel(row) {
         group.unitPriceLabel,
         Number(adjustment.discountPercent),
         adjustment.reason,
-        Number(adjustment.multiplier),
-        adjustment.multiplierReason,
+        multiplier.value,
+        multiplier.reason,
         group.amount,
-        actualLessonAmount(group.amount, adjustment.discountPercent, adjustment.multiplier),
+        actualLessonAmount(group.amount, adjustment.discountPercent, multiplier.value),
         group.rawRows?.join(" ") || "",
       ];
     })
@@ -1206,6 +1256,7 @@ function teacherExportModel(row) {
       .filter((entry) => entry.month === state.month && entry.teacher === row.teacher)
       .map((entry) => {
         const adjustment = adjustmentForLessonRow(entry);
+        const multiplier = lessonMultiplierDetails(adjustment, row);
         return [
           entry.student,
           cleanText(entry.source?.课程类型 || ""),
@@ -1215,10 +1266,10 @@ function teacherExportModel(row) {
           "",
           Number(adjustment.discountPercent),
           adjustment.reason,
-          Number(adjustment.multiplier),
-          adjustment.multiplierReason,
+          multiplier.value,
+          multiplier.reason,
           entry.amount,
-          actualLessonAmount(entry.amount, adjustment.discountPercent, adjustment.multiplier),
+          actualLessonAmount(entry.amount, adjustment.discountPercent, multiplier.value),
           entry.sourceIndex,
         ];
       });
@@ -1231,7 +1282,7 @@ function teacherExportModel(row) {
     companyTotalCost: row.companyTotalCost,
     financialHeaders: ["类型", "项目", "来源", "公式/说明", "金额"],
     financialRows: [
-      [row.feedbackMissingScore ? "提醒" : "加项", "课时反馈奖金", `课时费 CSV + ${state.month} 当月老师评分`, `${row.lessonFee} × ${row.feedbackRate} · ${feedbackDescription(row)}`, row.lessonBonus],
+      [row.feedbackMissingScore ? "提醒" : "加项", "课时反馈奖金", "课时明细实际金额合计", `课时系数 ${row.feedbackRate} 已由每节课乘数体现 · ${feedbackDescription(row)}`, row.lessonBonus],
       ["加项", "学员介绍提成", "学生归属服务表", `学生学费 × ${state.master.parameters.ownerCommissionRate}`, row.ownerCommission],
       ["加项", "服务/管理奖金", "学生归属服务表", `学生学费 × ${state.master.parameters.serviceCommissionRate}`, row.serviceCommission],
       ["小计", "Bonus 扣减前小计", "", "", bonusBeforeDeduction],

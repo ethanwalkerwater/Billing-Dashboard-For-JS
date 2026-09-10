@@ -479,7 +479,10 @@ export function buildPayrollReport(reportData, input = {}) {
       const managementFee = round(base?.managementFee || 0);
       const rentDeduction = round(base?.rentDeduction || 0);
       const fixedIncome = round(baseSalary + managementFee - rentDeduction);
-      const lessonBonus = round(lessonFee * feedback.rate);
+      const adjustedLessonBonus = reportData.views?.teacher?.[month]?.[teacher]?.totals?.lessonBonus;
+      const lessonBonus = adjustedLessonBonus != null && Number.isFinite(Number(adjustedLessonBonus))
+        ? round(Number(adjustedLessonBonus))
+        : round(lessonFee * feedback.rate);
       const baseSalaryDeduction = round(baseSalary * params.baseSalaryDeductionMultiplier);
       const bonusSalary = round(lessonBonus + commissions.ownerCommission + commissions.serviceCommission - baseSalaryDeduction);
       const appliedBonusSalary = Math.max(0, bonusSalary);

@@ -5,6 +5,7 @@ import {
   adjustedLessonAmounts,
   actualLessonAmount,
   discountedLessonAmount,
+  effectiveLessonMultiplier,
 } from "../web/assets/income-calculations.js";
 
 test("lesson multiplier applies after percentage discount", () => {
@@ -22,4 +23,10 @@ test("multiplier changes teacher income but not the student commission base", ()
 test("invalid discount or multiplier safely produces zero", () => {
   assert.equal(actualLessonAmount(1000, "", 1.3), 0);
   assert.equal(actualLessonAmount(1000, 80, ""), 0);
+});
+
+test("lesson multiplier defaults to the teacher's monthly feedback rate", () => {
+  assert.equal(effectiveLessonMultiplier("", 0.62), 0.62);
+  assert.equal(effectiveLessonMultiplier(null, 0.47), 0.47);
+  assert.equal(effectiveLessonMultiplier("0.7", 0.62), 0.7);
 });
