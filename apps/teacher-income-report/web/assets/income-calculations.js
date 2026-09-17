@@ -14,17 +14,19 @@ export function effectiveLessonMultiplier(value, feedbackRate) {
     : numericOrZero(value);
 }
 
-export function discountedLessonAmount(amount, discountPercent) {
-  return round(numericOrZero(amount) * numericOrZero(discountPercent) / 100);
+export function lessonAmountFromUnitPrice(unitPrice, duration, cancellationRate = 1) {
+  return round(
+    numericOrZero(unitPrice) * numericOrZero(duration) * numericOrZero(cancellationRate),
+  );
 }
 
-export function actualLessonAmount(amount, discountPercent, multiplier) {
-  return round(discountedLessonAmount(amount, discountPercent) * numericOrZero(multiplier));
+export function actualLessonAmount(amount, multiplier) {
+  return round(numericOrZero(amount) * numericOrZero(multiplier));
 }
 
-export function adjustedLessonAmounts(amount, discountPercent, multiplier) {
+export function adjustedLessonAmounts(amount, multiplier) {
   return {
-    teacherAmount: actualLessonAmount(amount, discountPercent, multiplier),
-    commissionBaseAmount: discountedLessonAmount(amount, discountPercent),
+    teacherAmount: actualLessonAmount(amount, multiplier),
+    commissionBaseAmount: round(numericOrZero(amount)),
   };
 }

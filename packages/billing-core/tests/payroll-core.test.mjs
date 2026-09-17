@@ -154,6 +154,30 @@ test("buildPayrollReport uses a row-adjusted lesson bonus without applying feedb
   assert.equal(row.lessonBonus, 1300);
 });
 
+test("extra income and penalties are included in the lesson feedback bonus", () => {
+  const report = buildReportFromCsv(scheduleCsv, "schedule.csv");
+  const payroll = buildPayrollReport(report, {
+    baseSalaries: parseBaseSalaryCsv([
+      "老师名,雇佣属性,基础薪水",
+      "张老师,兼职,0",
+    ].join("\n")),
+    extraAdjustments: [
+      { month: "2026-05", teacher: "张老师", description: "临时代课补贴", amount: 300 },
+      { month: "2026-05", teacher: "张老师", description: "迟到罚款", amount: -100 },
+    ],
+  });
+
+  const row = payroll.byMonth["2026-05"]["张老师"];
+  assert.equal(row.lessonBaseBonus, 1200);
+  assert.deepEqual(row.extraAdjustments, [
+    { description: "临时代课补贴", amount: 300 },
+    { description: "迟到罚款", amount: -100 },
+  ]);
+  assert.equal(row.extraAdjustmentTotal, 200);
+  assert.equal(row.lessonBonus, 1400);
+  assert.equal(row.bonusSalary, 1400);
+});
+
 test("missing monthly feedback score uses the full-time base rate and explains why", () => {
   const report = buildReportFromCsv(scheduleCsv, "schedule.csv");
   const payroll = buildPayrollReport(report, {
