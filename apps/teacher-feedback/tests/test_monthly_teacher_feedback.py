@@ -287,8 +287,14 @@ class MonthlyTeacherFeedbackTests(unittest.TestCase):
                     ["teacher", "teacher_total_hours"],
                     [{"teacher": "包天翊", "teacher_total_hours": 10}],
                 )
+                source_kind = (
+                    ', "source_kind": "official_provided_monthly_summary", '
+                    '"summary_is_authoritative": true'
+                    if month == "2026-07"
+                    else ""
+                )
                 (month_dir / "run_meta.json").write_text(
-                    f'{{"month": "{month}"}}',
+                    f'{{"month": "{month}"{source_kind}}}',
                     encoding="utf-8",
                 )
 
@@ -301,6 +307,18 @@ class MonthlyTeacherFeedbackTests(unittest.TestCase):
             self.assertEqual(
                 "historical_monthly_output",
                 results["2026-02"]["source_kind"],
+            )
+
+            all_results = CUMULATIVE_MODULE.load_historical_monthly_results(
+                history_root,
+            )
+            self.assertEqual(["2026-02", "2026-07"], sorted(all_results))
+            self.assertEqual(
+                "official_provided_monthly_summary",
+                all_results["2026-07"]["source_kind"],
+            )
+            self.assertTrue(
+                all_results["2026-07"]["summary_is_authoritative"],
             )
 
     def test_cumulative_legacy_detail_scores_map_to_current_total_metrics(self):
