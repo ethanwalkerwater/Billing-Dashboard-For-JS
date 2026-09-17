@@ -29,3 +29,27 @@ test("cumulative score sync updates three card dimensions and keeps unrelated co
   assert.deepEqual(result.matchedTeachers, ["马怡婷"]);
   assert.deepEqual(result.unmatchedSourceNames, ["不在卡片中"]);
 });
+
+test("cumulative score sync preserves card separators when score values are blank", () => {
+  const cards = `姓名: 高志勇
+学习提升:
+责任心:
+个人魅力:
+
+---
+
+姓名: 李寅鑫
+学习提升: 4.5
+责任心: 4.9
+个人魅力: 4.7
+`;
+  const scores = `排名,老师,学习提升效果,责任心与服务态度,个人魅力,总评分
+1,高志勇,4.865,4.977,4.913,4.918`;
+
+  const result = syncCumulativeTeacherScores(cards, scores);
+
+  assert.match(
+    result.cardText,
+    /姓名: 高志勇\n学习提升: 4\.9\n责任心: 5\.0\n个人魅力: 4\.9\n\n---\n\n姓名: 李寅鑫/,
+  );
+});

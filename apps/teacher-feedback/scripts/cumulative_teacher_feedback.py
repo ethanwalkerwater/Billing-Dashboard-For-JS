@@ -137,7 +137,7 @@ def read_csv_rows(path: Path) -> List[Dict[str, object]]:
 
 def load_historical_monthly_results(
     history_root: Path,
-    through_report_month: str,
+    through_report_month: Optional[str] = None,
 ) -> Dict[str, Dict[str, object]]:
     results: Dict[str, Dict[str, object]] = {}
     history_root = Path(history_root).expanduser().resolve()
@@ -151,7 +151,7 @@ def load_historical_monthly_results(
             report_month = parse_month_or_exit(month_dir.name)
         except SystemExit:
             continue
-        if report_month > through_report_month:
+        if through_report_month and report_month > through_report_month:
             continue
         summary_path = month_dir / "teacher_summary.csv"
         meta_path = month_dir / "run_meta.json"
@@ -161,10 +161,18 @@ def load_historical_monthly_results(
         run_meta = json.loads(meta_path.read_text(encoding="utf-8"))
         if run_meta.get("month") != report_month:
             continue
+        source_kind = run_meta.get(
+            "source_kind",
+            "historical_monthly_output",
+        )
         results[report_month] = {
             "month": report_month,
             "summary_rows": read_csv_rows(summary_path),
-            "source_kind": "historical_monthly_output",
+            "source_kind": source_kind,
+            "summary_is_authoritative": (
+                bool(run_meta.get("summary_is_authoritative"))
+                or source_kind == "imported_monthly_output"
+            ),
             "source_path": str(summary_path),
         }
     return results
@@ -474,12 +482,14 @@ def generate_cumulative_feedback_report(
         resolved_history_root = Path(history_root).expanduser().resolve()
         historical_results = load_historical_monthly_results(
             resolved_history_root,
-            through_report_month=max(report_months),
         )
         excluded_teachers = parse_name_set(exclude_teachers_raw)
         for historical_month, historical_result in historical_results.items():
             detail_path = resolved_history_root / historical_month / "respondent_detail.csv"
-            if detail_path.exists():
+            if (
+                detail_path.exists()
+                and not historical_result.get("summary_is_authoritative")
+            ):
                 historical_result = rebuild_historical_result_from_detail(
                     report_month=historical_month,
                     detail_path=detail_path,

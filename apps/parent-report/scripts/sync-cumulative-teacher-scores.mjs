@@ -19,7 +19,7 @@ const SCORE_FIELDS = ["学习提升", "责任心", "个人魅力"];
 
 function replaceScore(block, field, value) {
   if (value == null || value === "") return block;
-  const line = new RegExp(`^${field}[:：]\\s*.*$`, "m");
+  const line = new RegExp(`^${field}[:：][ \\t]*[^\\r\\n]*$`, "m");
   if (line.test(block)) return block.replace(line, `${field}: ${value}`);
   return `${block.trimEnd()}\n${field}: ${value}`;
 }
@@ -28,10 +28,10 @@ export function syncCumulativeTeacherScores(cardText, scoreCsvText) {
   const scores = parseTeacherScoresCsv(scoreCsvText);
   const matchedSourceNames = new Set();
   const matchedTeachers = [];
-  const blocks = cardText.split(/(^---\s*$)/m);
+  const blocks = cardText.split(/(^---[ \t]*$)/m);
 
   for (let index = 0; index < blocks.length; index += 1) {
-    if (/^---\s*$/m.test(blocks[index])) continue;
+    if (/^---[ \t]*$/m.test(blocks[index])) continue;
     const name = blocks[index].match(/^姓名[:：]\s*(.+)$/m)?.[1]?.trim();
     if (!name) continue;
     const score = scores.get(canonicalTeacherName(name));
