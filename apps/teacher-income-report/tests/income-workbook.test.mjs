@@ -22,9 +22,12 @@ function fixtureModel() {
       companyTotalCost: 13000,
       financialHeaders: ["类型", "项目", "来源", "公式", "金额"],
       financialRows: [["加项", "管理费", "主数据", "", 1000]],
-      lessonHeaders: ["学生", "折扣（%）", "乘数", "乘数原因", "实际金额"],
-      lessonRows: [["学生A", 80, 1.3, "晚间课程", 1040]],
+      lessonHeaders: ["学生", "课程单价", "乘数", "乘数原因", "实际金额"],
+      lessonRows: [["学生A", 800, 1.3, "晚间课程", 1040]],
       lessonCurrencyColumns: [5],
+      extraHeaders: ["项目说明", "调整金额（元）"],
+      extraRows: [["临时代课补贴", 300], ["合计", 300]],
+      extraCurrencyColumns: [2],
       commissionHeaders: ["类型", "学生", "说明", "计提基数", "比例", "金额"],
       commissionRows: [["归属提成", "学生A", "", 1000, 0.2, 200]],
     })),
@@ -39,6 +42,8 @@ test("monthly income workbook contains summary and one sheet per teacher", async
   assert.equal(sheets[0].data[2][0].value, "老师");
   assert.equal(sheets[1].data.flat().some((cell) => cell?.value === "乘数"), true);
   assert.equal(sheets[1].data.flat().some((cell) => cell?.value === "乘数原因"), true);
+  assert.equal(sheets[1].data.flat().some((cell) => cell?.value === "额外收入与扣款"), true);
+  assert.equal(sheets[1].data.flat().some((cell) => cell?.value === "临时代课补贴"), true);
 
   const buffer = await buildIncomeWorkbook(writeXlsxFile, model).toBuffer();
   const files = unzipSync(buffer);

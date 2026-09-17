@@ -450,6 +450,19 @@ export function buildPayrollReport(reportData, input = {}) {
   const ownershipRows = input.studentOwnership || [];
   const reimbursementRows = input.reimbursements || [];
   const taxSocialRows = input.taxSocial || [];
+  const extraAdjustmentRows = (input.extraAdjustments || [])
+    .map((row) => ({
+      month: cleanText(row?.month ?? row?.["月份"]),
+      teacher: canonicalName(
+        row?.teacher ?? row?.teacherName ?? row?.["老师"] ?? row?.["老师姓名"],
+        aliases,
+      ),
+      description: cleanText(
+        row?.description ?? row?.desc ?? row?.label ?? row?.["项目说明"],
+      ),
+      amount: round(parseMoney(row?.amount ?? row?.number ?? row?.["调整金额（元）"])),
+    }))
+    .filter((row) => row.teacher && (row.description || row.amount));
   const baseByTeacher = indexByTeacher(baseRows, aliases);
   const reimbursementsByTeacher = indexReimbursementsByTeacher(reimbursementRows, aliases);
   const taxSocialByTeacher = indexByTeacher(taxSocialRows, aliases);
@@ -457,11 +470,16 @@ export function buildPayrollReport(reportData, input = {}) {
   const byMonth = {};
 
   for (const month of months) {
+    const monthlyExtraAdjustmentRows = extraAdjustmentRows.filter((row) => row.month === month);
     const scoreRows = input.teacherScoresByMonth?.[month] || [];
     const feedbackRates = buildFeedbackRates(baseRows, scoreRows, params, aliases);
     const commissionsByTeacher = buildCommissions(reportData, month, ownershipRows, params, aliases);
     byMonth[month] = {};
-    for (const teacher of teacherNamesForMonth(reportData, month, baseRows, [reimbursementRows, taxSocialRows])) {
+    for (const teacher of teacherNamesForMonth(reportData, month, baseRows, [
+      reimbursementRows,
+      taxSocialRows,
+      monthlyExtraAdjustmentRows,
+    ])) {
       const key = normalizeKey(teacher, aliases);
       const base = baseByTeacher.get(key);
       const reimbursement = reimbursementsByTeacher.get(key);
@@ -480,9 +498,16 @@ export function buildPayrollReport(reportData, input = {}) {
       const rentDeduction = round(base?.rentDeduction || 0);
       const fixedIncome = round(baseSalary + managementFee - rentDeduction);
       const adjustedLessonBonus = reportData.views?.teacher?.[month]?.[teacher]?.totals?.lessonBonus;
-      const lessonBonus = adjustedLessonBonus != null && Number.isFinite(Number(adjustedLessonBonus))
+      const lessonBaseBonus = adjustedLessonBonus != null && Number.isFinite(Number(adjustedLessonBonus))
         ? round(Number(adjustedLessonBonus))
         : round(lessonFee * feedback.rate);
+      const extraAdjustments = monthlyExtraAdjustmentRows
+        .filter((row) => normalizeKey(row.teacher, aliases) === key)
+        .map(({ description, amount }) => ({ description, amount }));
+      const extraAdjustmentTotal = round(
+        extraAdjustments.reduce((sum, row) => sum + row.amount, 0),
+      );
+      const lessonBonus = round(lessonBaseBonus + extraAdjustmentTotal);
       const baseSalaryDeduction = round(baseSalary * params.baseSalaryDeductionMultiplier);
       const bonusSalary = round(lessonBonus + commissions.ownerCommission + commissions.serviceCommission - baseSalaryDeduction);
       const appliedBonusSalary = Math.max(0, bonusSalary);
@@ -513,6 +538,9 @@ export function buildPayrollReport(reportData, input = {}) {
         rentDeduction,
         fixedIncome,
         lessonFee,
+        lessonBaseBonus,
+        extraAdjustments,
+        extraAdjustmentTotal,
         feedbackRate: feedback.rate,
         feedbackType: feedback.type,
         qualifiedMetrics: feedback.qualifiedMetrics,

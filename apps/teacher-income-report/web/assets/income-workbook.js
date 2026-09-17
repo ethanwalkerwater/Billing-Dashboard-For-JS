@@ -126,6 +126,7 @@ function teacherSheet(model, teacher, usedNames) {
   const span = Math.max(
     teacher.lessonHeaders.length,
     teacher.financialHeaders.length,
+    teacher.extraHeaders.length,
     teacher.commissionHeaders.length,
   );
   const metaValues = [
@@ -147,6 +148,9 @@ function teacherSheet(model, teacher, usedNames) {
   const lessonRows = teacher.lessonRows.map((row) => row.map((value, index) => (
     bodyCell(value, teacher.lessonCurrencyColumns.includes(index + 1) ? CURRENCY_FORMAT : "")
   )));
+  const extraRows = teacher.extraRows.map((row) => row.map((value, index) => (
+    bodyCell(value, teacher.extraCurrencyColumns.includes(index + 1) ? CURRENCY_FORMAT : "")
+  )));
   const commissionRows = teacher.commissionRows.map((row) => row.map((value, index) => (
     bodyCell(value, index === 3 || index === 5 ? CURRENCY_FORMAT : index === 4 ? "0%" : "")
   )));
@@ -163,6 +167,10 @@ function teacherSheet(model, teacher, usedNames) {
       sectionRow("课时费明细", span),
       teacher.lessonHeaders.map(headerCell),
       ...lessonRows,
+      [null],
+      sectionRow("额外收入与扣款", span),
+      teacher.extraHeaders.map(headerCell),
+      ...extraRows,
       [null],
       sectionRow("提成来源明细", span),
       teacher.commissionHeaders.map(headerCell),
