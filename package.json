@@ -11,7 +11,7 @@
   ],
   "scripts": {
     "build": "turbo run build",
-    "test": "npm run test:node && npm run test:billing-python && npm run test:teacher-income-report && npm run test:feedback && npm run test:course-feedback-tracker",
+    "test": "npm run test:node && npm run test:billing-python && npm run test:teacher-income-report && npm run test:feedback && npm run test:course-feedback-tracker && npm run test:teacher-income-alert",
     "test:node": "node --test packages/billing-core/tests/*.test.mjs apps/parent-report/tests/*.test.mjs",
     "test:core": "npm test -w @jingshi/billing-core",
     "test:billing-python": "npm run test:python -w @jingshi/billing-report",
@@ -28,6 +28,9 @@
     "dev:course-feedback-tracker": "npm run dev -w @jingshi/course-feedback-tracker",
     "build:course-feedback-tracker": "npm run build -w @jingshi/course-feedback-tracker",
     "test:course-feedback-tracker": "npm test -w @jingshi/course-feedback-tracker",
+    "dev:teacher-income-alert": "npm run dev -w @jingshi/teacher-income-alert",
+    "build:teacher-income-alert": "npm run build -w @jingshi/teacher-income-alert",
+    "test:teacher-income-alert": "npm test -w @jingshi/teacher-income-alert",
     "generate:teacher-feedback-cumulative": "npm run generate:cumulative -w @jingshi/teacher-feedback",
     "update:parent-teacher-scores": "npm run generate:teacher-feedback-cumulative && npm run sync:cumulative-teacher-scores -w @jingshi/parent-report && npm run build:faculty -w @jingshi/parent-report",
     "generate:billing-report": "python3 apps/billing-report/python/course_billing_report.py",
