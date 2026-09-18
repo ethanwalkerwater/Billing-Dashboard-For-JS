@@ -1,0 +1,7 @@
+dist/
+dist-functions/
+node_modules/
+.env
+.env.local
+server.env
+cloudbaserc.local.json
