@@ -35,3 +35,4 @@ apps/teacher-income-report/web/assets/report-core.js
 apps/teacher-income-report/web/assets/payroll-core.js
 apps/teacher-income-report/web/assets/vendor/
 .vercel
+.gstack/
