@@ -2,6 +2,9 @@
 node_modules/
 .turbo/
 .vercel/
+.env
+.env.*
+!.env.example
 .venv/
 .runtime/
 __pycache__/
@@ -20,6 +23,7 @@ outputs/
 apps/billing-report/dist/
 apps/teacher-income-report/dist/
 apps/parent-report/dist/
+apps/course-feedback-tracker/dist/
 apps/teacher-feedback/.venv/
 apps/teacher-feedback/.vercel_python_packages/
 apps/teacher-feedback/templates/name_mapping.local.csv
