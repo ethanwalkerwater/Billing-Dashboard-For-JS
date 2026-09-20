@@ -80,3 +80,35 @@ test("evaluateTeacher 三种状态与差距、课时数", () => {
   assert.equal(evaluateTeacher({ lessonFee: 20000, unitPriceAuto: null, settings: { ...settings, baseSalary: null }, rates }).status, "no-base");
   assert.equal(evaluateTeacher({ lessonFee: 20000, unitPriceAuto: null, settings, rates }).hoursToAlert, null);
 });
+
+test("Excel 导出列与页面口径一致，空值留空", async () => {
+  const { buildExcelColumns } = await import("@/web/export-excel");
+  const columns = buildExcelColumns({ min: 0.47, max: 0.62 });
+  const line = {
+    teacher: "汤朔",
+    status: "reached" as const,
+    lessonFee: 96100,
+    lessons: 63,
+    hours: 131.5,
+    students: ["顾子言Tina", "潘奕恺"],
+    unitPriceAuto: 731,
+    settings: { baseSalary: 24000, unitPrice: null, note: "" },
+    predictedMin: 45167,
+    predictedMax: 59582,
+    marginToAlert: 35582,
+    marginToTarget: 21167,
+    unitPrice: 731,
+    hoursToAlert: 0,
+    hoursToTarget: 0,
+  };
+  const headers = columns.map((column) => (column.header as { value: string }).value);
+  assert.deepEqual(headers.slice(0, 4), ["老师", "状态", "基础薪水", "本月课时费"]);
+  assert.equal(headers.at(-1), "学生");
+  const cells = columns.map((column) => column.cell(line, 0));
+  assert.deepEqual(cells[1], { value: "已达标", type: String });
+  assert.deepEqual(cells[3], { value: 96100, type: Number, format: "#,##0" });
+  assert.deepEqual(cells[8], { value: 35582, type: Number, format: "+#,##0;-#,##0;0" });
+  assert.deepEqual(cells.at(-1), { value: "顾子言Tina、潘奕恺", type: String });
+  // 没底薪的老师基础薪水一格留空，不写 0
+  assert.equal(columns[2].cell({ ...line, settings: { ...line.settings, baseSalary: null } }, 0), null);
+});
