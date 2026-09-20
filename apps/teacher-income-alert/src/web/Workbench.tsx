@@ -1,4 +1,4 @@
-import { Loader2, LogOut, RefreshCw, Search } from "lucide-react";
+import { Download, Loader2, LogOut, RefreshCw, Search } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -13,6 +13,7 @@ import { STATUS_LABELS } from "@/domain/income";
 import type { AlertStatus } from "@/domain/income";
 import { cn } from "@/lib/utils";
 import { EditableCell } from "./EditableCell";
+import { downloadExcel } from "./export-excel";
 import { useIncomeData } from "./useIncomeData";
 import type { TeacherLine } from "./useIncomeData";
 
@@ -194,6 +195,16 @@ export function Workbench({ onSignOut }: { onSignOut: () => void | Promise<void>
         <span className="text-muted-foreground text-sm">
           {visible.length} / {lines.length} 位老师
         </span>
+        <Button
+          variant="outline"
+          className="ml-auto"
+          disabled={visible.length === 0}
+          onClick={() => void downloadExcel(visible, rates, month)}
+          title="导出当前筛选出的老师，列与页面一致"
+        >
+          <Download />
+          导出 Excel
+        </Button>
       </div>
 
       {/* overflow-hidden 会把这个 div 变成滚动容器，thead 的 sticky 就只相对它生效而失效；overflow-clip 只裁圆角、不产生滚动容器 */}
