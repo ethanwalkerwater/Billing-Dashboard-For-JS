@@ -7,16 +7,17 @@ export function pct(value: number | null): string {
   return value == null ? "—" : `${Math.round(value * 100)}%`;
 }
 
-export function signed(value: number | null): string {
+/** 带正负号；平均值传 digits=2 统一两位小数，单条提分保持 0.5 步长原样。 */
+export function signed(value: number | null, digits?: number): string {
   if (value == null) return "—";
-  const text = (Math.round(value * 100) / 100).toString();
+  const text = digits == null ? String(value) : value.toFixed(digits);
   return value > 0 ? `+${text}` : text;
 }
 
 function TallyTip({ value }: { value: Tally }) {
   return (
     <span className="tabular-nums">
-      提升 {value.up} · 持平 {value.flat} · 下降 {value.down} · 平均提分 {signed(averageDelta(value))}
+      提升 {value.up} · 持平 {value.flat} · 下降 {value.down} · 平均提分 {signed(averageDelta(value), 2)}
     </span>
   );
 }
@@ -65,12 +66,13 @@ export interface TeacherRow {
 export function TeacherBars({ rows, focused, onPick }: { rows: TeacherRow[]; focused: string | null; onPick: (teacher: string) => void }) {
   return (
     <div className="grid gap-1">
-      <div className="text-muted-foreground grid grid-cols-[7rem_1fr_3.5rem_3rem_4rem] items-center gap-3 px-2 text-xs">
+      <OutcomeLegend />
+      <div className="text-muted-foreground grid grid-cols-[4.5rem_1fr_3rem_2.5rem] sm:grid-cols-[7rem_1fr_3.5rem_3rem_4rem] items-center gap-3 px-2 text-xs">
         <span>老师</span>
-        <OutcomeLegend />
+        <span />
         <span className="text-right">正向率</span>
         <span className="text-right">样本</span>
-        <span className="text-right">平均提分</span>
+        <span className="hidden text-right sm:block">平均提分</span>
       </div>
       {rows.map(({ teacher, tally }) => {
         const few = tally.n < MIN_SAMPLES;
@@ -81,7 +83,7 @@ export function TeacherBars({ rows, focused, onPick }: { rows: TeacherRow[]; foc
                 type="button"
                 onClick={() => onPick(teacher)}
                 className={cn(
-                  "grid grid-cols-[7rem_1fr_3.5rem_3rem_4rem] items-center gap-3 rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent",
+                  "grid grid-cols-[4.5rem_1fr_3rem_2.5rem] sm:grid-cols-[7rem_1fr_3.5rem_3rem_4rem] items-center gap-3 rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent",
                   focused === teacher && "bg-accent ring-foreground/20 ring-1",
                   few && "opacity-50",
                 )}
@@ -90,7 +92,7 @@ export function TeacherBars({ rows, focused, onPick }: { rows: TeacherRow[]; foc
                 <OutcomeBar value={tally} />
                 <span className="text-right font-medium tabular-nums">{few ? "样本少" : pct(positiveRate(tally))}</span>
                 <span className="text-muted-foreground text-right tabular-nums">{tally.n}</span>
-                <span className="text-muted-foreground text-right tabular-nums">{signed(averageDelta(tally))}</span>
+                <span className="text-muted-foreground hidden text-right tabular-nums sm:block">{signed(averageDelta(tally), 2)}</span>
               </button>
             </TooltipTrigger>
             <TooltipContent side="top">

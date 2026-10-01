@@ -1,14 +1,10 @@
 import cloudbase from "@cloudbase/js-sdk/app";
-import { registerAuth } from "@cloudbase/js-sdk/auth";
-import { registerFunctions } from "@cloudbase/js-sdk/functions";
-import { registerMySQL } from "@cloudbase/js-sdk/mysql";
+// 按需引入：只要登录、云函数、rdb()，各模块 import 时自行注册。全量引入会带上 AI、存储、实时等，包体多 1/3。
+import "@cloudbase/js-sdk/auth";
+import "@cloudbase/js-sdk/functions";
+import "@cloudbase/js-sdk/mysql";
 
 import type { PostgrestLike } from "../shared/postgrest";
-
-// 按需注册：只用登录、云函数、rdb()。全量引入会把 AI、存储、实时等一并打进来，包体大三倍。
-registerAuth(cloudbase);
-registerFunctions(cloudbase);
-registerMySQL(cloudbase);
 
 const envId = import.meta.env.VITE_CLOUDBASE_ENV_ID;
 if (!envId) throw new Error("缺少 VITE_CLOUDBASE_ENV_ID");
