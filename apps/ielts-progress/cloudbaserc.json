@@ -8,7 +8,7 @@
     {
       "name": "ielts-api",
       "timeout": 120,
-      "memorySize": 256,
+      "memorySize": 128,
       "runtime": "Nodejs20.19",
       "handler": "index.main",
       "installDependency": false,

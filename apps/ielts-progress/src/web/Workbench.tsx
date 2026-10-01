@@ -50,9 +50,9 @@ const columnOf = (sample: Sample, by: MatrixBy) => (by === "subject" ? sample.su
 
 const recordUrl = (recordId: string | null) => (SCORE_TABLE_URL && recordId ? `${SCORE_TABLE_URL}&record=${recordId}` : null);
 
-function Stat({ label, value, hint }: { label: string; value: string; hint?: string }) {
+function Stat({ label, value, hint, className }: { label: string; value: string; hint?: string; className?: string }) {
   return (
-    <Card className="gap-1 py-4">
+    <Card className={cn("gap-1 py-4", className)}>
       <CardHeader className="px-4">
         <CardDescription>{label}</CardDescription>
         <CardTitle className="text-2xl tabular-nums">{value}</CardTitle>
@@ -136,7 +136,7 @@ function IssuesPanel({ issues, unknownTypes }: { issues: Issue[]; unknownTypes: 
 function SamplesTable({ samples }: { samples: Sample[] }) {
   const rows = useMemo(() => [...samples].sort((a, b) => b.date.localeCompare(a.date) || a.studentName.localeCompare(b.studentName, "zh-CN")), [samples]);
   return (
-    <Table>
+    <Table containerClassName="overflow-visible">
       <TableHeader>
         <TableRow>
           <TableHead>考试日期</TableHead>
@@ -357,14 +357,14 @@ export function Workbench({ onSignOut }: { onSignOut: () => void | Promise<void>
         ) : (
           <>
             <section className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-5">
-              <Stat label="样本" value={String(overall.n)} hint="实考 × 科目，去重" />
+              <Stat label="样本" value={String(overall.n)} hint="实考 × 科目，去重" className="col-span-2 md:col-span-1" />
               <Stat label="正向率" value={pct(positiveRate(overall))} hint="本次比上一次高" />
-              <Stat label="平均提分" value={signed(averageDelta(overall))} />
+              <Stat label="平均提分" value={signed(averageDelta(overall), 2)} />
               <Stat label="持平" value={pct(overall.n ? overall.flat / overall.n : null)} hint={`${overall.flat} 条`} />
               <Stat label="下降" value={pct(overall.n ? overall.down / overall.n : null)} hint={`${overall.down} 条`} />
             </section>
 
-            <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,5fr)_minmax(0,6fr)]">
+            <div className="mt-4 grid grid-cols-[minmax(0,1fr)] gap-4 xl:grid-cols-[minmax(0,5fr)_minmax(0,6fr)]">
               <Card className="gap-3">
                 <CardHeader>
                   <CardTitle className="text-base">老师对比</CardTitle>
@@ -385,7 +385,7 @@ export function Workbench({ onSignOut }: { onSignOut: () => void | Promise<void>
                     <CardTitle className="text-base">正向率矩阵</CardTitle>
                     <CardDescription>颜色越深正向率越高；虚线格样本少于 {MIN_SAMPLES} 条</CardDescription>
                   </div>
-                  <div className="flex rounded-md border p-0.5 text-sm" role="group" aria-label="矩阵列">
+                  <div className="flex shrink-0 rounded-md border p-0.5 text-sm" role="group" aria-label="矩阵列">
                     {(
                       [
                         ["subject", "按科目"],
@@ -432,7 +432,7 @@ export function Workbench({ onSignOut }: { onSignOut: () => void | Promise<void>
                   </Badge>
                 ) : null}
               </CardHeader>
-              <CardContent className="px-2">
+              <CardContent className="max-h-[560px] overflow-auto px-2 [&_thead_th]:sticky [&_thead_th]:top-0 [&_thead_th]:bg-card">
                 <SamplesTable samples={detail} />
               </CardContent>
             </Card>
