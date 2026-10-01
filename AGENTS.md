@@ -6,6 +6,7 @@
 - **老师收入**：`apps/teacher-income-report`，面向老师收入与公司成本。
 - **老师反馈**：`apps/teacher-feedback`，把反馈表和课表生成老师月度评分。
 - **家长报告**：`apps/parent-report`，本地生成家长 HTML/PDF。
+- **雅思正向率**：`apps/ielts-progress`，飞书录入雅思成绩，按课表归属老师，看老师的学生正向率（CloudBase）。
 - **计费内核**：`packages/billing-core`，课时、取消、金额和薪资计算唯一真源。
 
 ## 依赖关系

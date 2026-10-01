@@ -1,0 +1,25 @@
+{
+  "$schema": "https://static.cloudbase.net/cli/cloudbaserc.schema.json",
+  "version": "2.0",
+  "envId": "jingshi-test-d5gp401i44a0fa7a7",
+  "region": "ap-shanghai",
+  "functionRoot": "dist-functions",
+  "functions": [
+    {
+      "name": "ielts-api",
+      "timeout": 120,
+      "memorySize": 256,
+      "runtime": "Nodejs20.19",
+      "handler": "index.main",
+      "installDependency": false,
+      "description": "雅思正向率：读飞书雅思成绩表和课表里的雅思课，写一行快照",
+      "triggers": [
+        {
+          "name": "daily",
+          "type": "timer",
+          "config": "0 0 7 * * * *"
+        }
+      ]
+    }
+  ]
+}

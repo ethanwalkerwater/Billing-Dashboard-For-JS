@@ -11,7 +11,7 @@
   ],
   "scripts": {
     "build": "turbo run build",
-    "test": "npm run test:node && npm run test:billing-python && npm run test:teacher-income-report && npm run test:feedback && npm run test:course-feedback-tracker && npm run test:teacher-income-alert",
+    "test": "npm run test:node && npm run test:billing-python && npm run test:teacher-income-report && npm run test:feedback && npm run test:course-feedback-tracker && npm run test:teacher-income-alert && npm run test:ielts-progress",
     "test:node": "node --test packages/billing-core/tests/*.test.mjs apps/parent-report/tests/*.test.mjs",
     "test:core": "npm test -w @jingshi/billing-core",
     "test:billing-python": "npm run test:python -w @jingshi/billing-report",
@@ -34,7 +34,10 @@
     "generate:teacher-feedback-cumulative": "npm run generate:cumulative -w @jingshi/teacher-feedback",
     "update:parent-teacher-scores": "npm run generate:teacher-feedback-cumulative && npm run sync:cumulative-teacher-scores -w @jingshi/parent-report && npm run build:faculty -w @jingshi/parent-report",
     "generate:billing-report": "python3 apps/billing-report/python/course_billing_report.py",
-    "generate:parent-reports": "npm run generate:student-billing -w @jingshi/parent-report"
+    "generate:parent-reports": "npm run generate:student-billing -w @jingshi/parent-report",
+    "dev:ielts-progress": "npm run dev -w @jingshi/ielts-progress",
+    "build:ielts-progress": "npm run build -w @jingshi/ielts-progress",
+    "test:ielts-progress": "npm test -w @jingshi/ielts-progress"
   },
   "devDependencies": {
     "turbo": "^2.10.5"
