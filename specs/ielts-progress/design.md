@@ -96,7 +96,7 @@ apps/ielts-progress/
 `teacher_score_records_*.csv`（119 行）已是「学生 × 科目 × 老师」展开后的配对结果，无基线日期：
 
 - 按（学生, 科目, 基线分, 实考分）合并成一条样本，老师取并集，日期取最早 `createdAt`。
-- 老师名统一成课表写法：`Kevin → Kevin Liu`、`Valentina 林 → Valentina 林老师`；对不上的名字导入直接失败。
+- 老师名统一成课表写法：`Kevin → Kevin Liu`、`Valentina 林 → Valentina Lin`；对不上的名字导入直接失败。
 - 视为已核验，来源标「历史」，可单独筛选。
 
 ## 看板（细节后续可再调）
