@@ -171,6 +171,7 @@ function summarize(result: {
   duplicate: number;
   unlinked: number;
   exception: number;
+  removed: number;
 }) {
   return {
     responseMonth: result.collectionMonth,
@@ -180,6 +181,7 @@ function summarize(result: {
     unlinked: result.unlinked,
     exception: result.exception,
     tasksCovered: result.tasksCovered,
+    removed: result.removed,
   };
 }
 

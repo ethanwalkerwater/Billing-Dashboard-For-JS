@@ -17,12 +17,15 @@ export function MultiSelectFilter({
   selected,
   onChange,
   className,
+  summary: summaryOverride,
 }: {
   label: string;
   options: string[];
   selected: string[];
   onChange: (next: string[]) => void;
   className?: string;
+  /** 按钮上的文字，不传则显示「全部X / 选中的名字 / N 位X」 */
+  summary?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -51,11 +54,12 @@ export function MultiSelectFilter({
   }
 
   const summary =
-    selected.length === 0
+    summaryOverride ??
+    (selected.length === 0
       ? `全部${label}`
       : selected.length === 1
         ? selected[0]
-        : `${selected.length} 位${label}`;
+        : `${selected.length} 位${label}`);
 
   return (
     <Popover open={open} onOpenChange={setOpen}>

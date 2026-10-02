@@ -81,6 +81,7 @@ tcb db execute --sql "$(cat migrations/202609170001_initial_feedback_tracker.sql
 tcb db execute --sql "$(cat migrations/202609170002_task_status_audit.sql)"
 tcb db execute --sql "$(cat migrations/202609170003_response_unlinked_status.sql)"
 tcb db execute --sql "$(cat migrations/202609170004_name_binding.sql)"
+tcb db execute --sql "$(cat migrations/202610020001_excluded_teachers.sql)"
 ```
 
 > 测试必须用 `npm run test:course-feedback-tracker` 跑（工作区脚本），不能在仓库根目录直接
@@ -111,7 +112,11 @@ tcb db execute --sql "$(cat migrations/202609170004_name_binding.sql)"
   同一身份的第二份标 `duplicate`。
 - 对不上的答卷标 `unlinked`，在「对不上任务的答卷」里带原始姓名列出来，教务加别名或手动绑定
   （`feedback_responses.bound_by='manual'` + `task_id`，重新同步时保留）。
-- 系统**不会**往飞书写任何东西：问卷下拉里缺的姓名只在同步结果里提示，由教务在飞书里手动加。
+- 系统对飞书唯一的写操作：「生成名单」时把本月课表学生**追加**进问卷「学生姓名」下拉（只加不删，删单选选项会清空历史答卷的值）。
+  姓名取学生表「学生姓名」，不是课表关联字段里的「姓名-手机尾号」。老师下拉缺的名字仍只提示，由教务手动加。
+- 飞书里删掉的答卷（或学生、老师都没填的空行）在下一次全量对账（定时 5 分钟 / 「刷新反馈」）时从库里清掉，
+  并腾出任务上的学生/家长位置；两个位置都空了的「已填写」退回「已发未填」。飞书整表读回 0 行时不清理，防误删。
+- 「不统计的老师」名单（`feedback_excluded_teachers`，所有月份通用）：任务照常生成和对账，只在工作台统计、表格、横幅里隐藏。
 - 2026-09 实测：182 份答卷 → 177 对上、4 重复、1 对不上，覆盖 176/258 个任务。
   唯一对不上的「杨呈悦Joy × 蓝浪」两个名字都在课表里，但 8 月没排过这对组合——加别名无用，
   顶部横幅会直接这么说，并提供手动绑定。

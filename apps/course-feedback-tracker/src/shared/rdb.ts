@@ -28,12 +28,14 @@ export interface PostgrestLike {
       options?: { onConflict?: string },
     ): PromiseLike<PostgrestResult<unknown>>;
     update(values: Record<string, unknown>): PostgrestFilter<unknown>;
+    delete(): PostgrestFilter<unknown>;
   };
 }
 
 export const TASKS_TABLE = "feedback_tasks";
 export const RESPONSES_TABLE = "feedback_responses";
 export const ALIASES_TABLE = "feedback_name_aliases";
+export const EXCLUDED_TEACHERS_TABLE = "feedback_excluded_teachers";
 
 function unwrap<T>(result: PostgrestResult<T>, context: string): T[] {
   if (result.error) throw new Error(`${context}失败：${result.error.message}`);
@@ -91,6 +93,37 @@ export class RdbFeedbackTaskRepository implements FeedbackTaskRepository {
     return unwrap(result, "读取手动绑定")
       .filter((row) => row.task_id)
       .map((row) => ({ responseRecordId: row.response_record_id, taskId: row.task_id! }));
+  }
+
+  async listResponseIds(collectionMonth: string): Promise<string[]> {
+    const result = await this.db
+      .from(RESPONSES_TABLE)
+      .select<{ response_record_id: string }>("response_record_id")
+      .eq("collection_month", collectionMonth);
+    return unwrap(result, "读取答卷引用").map((row) => row.response_record_id);
+  }
+
+  async deleteResponses(responseRecordIds: string[]): Promise<void> {
+    for (const chunk of chunked(responseRecordIds, 200)) {
+      const result = await this.db.from(RESPONSES_TABLE).delete().in("response_record_id", chunk);
+      if (result.error) throw new Error(`删除答卷引用失败：${result.error.message}`);
+    }
+  }
+
+  async updateTaskSlots(tasks: StoredFeedbackTask[]): Promise<void> {
+    for (const task of tasks) {
+      const result = await this.db
+        .from(TASKS_TABLE)
+        .update({
+          status: task.status,
+          student_response_id: task.studentResponseId ?? null,
+          parent_response_id: task.parentResponseId ?? null,
+          submitted_at: task.submittedAt ?? null,
+          bound_by: task.boundBy ?? null,
+        })
+        .eq("task_id", task.taskId);
+      if (result.error) throw new Error(`清理任务答卷位置失败：${result.error.message}`);
+    }
   }
 
   async applyResponseOutcomes(outcomes: ResponseOutcome[]): Promise<void> {

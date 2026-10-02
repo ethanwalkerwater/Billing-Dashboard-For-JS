@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { assertTaskStatusTransition } from "@/domain";
+import { assertTaskStatusTransition, nameMatchKey } from "@/domain";
 import type { TaskStatus } from "@/domain";
 import type { StoredFeedbackTask } from "@/server/tasks/types";
-import { ALIASES_TABLE, RESPONSES_TABLE, TASKS_TABLE } from "@/shared/rdb";
+import { ALIASES_TABLE, EXCLUDED_TEACHERS_TABLE, RESPONSES_TABLE, TASKS_TABLE } from "@/shared/rdb";
 import { db, taskRepository } from "./cloudbase";
 
 /** 对不上任务的答卷，顶部横幅和手动绑定都用它。 */
@@ -43,52 +43,41 @@ export interface Filters {
 
 export const EMPTY_FILTERS: Filters = { status: "all", teachers: [], students: [], respondent: "all", query: "" };
 
+interface ResponseRow {
+  response_record_id: string;
+  task_id: string | null;
+  student_name: string | null;
+  teacher_name: string | null;
+  identity: string | null;
+  submitted_at: string;
+  sync_status: string;
+}
+
 export function useWorkbenchData(collectionMonth: string) {
-  const [tasks, setTasks] = useState<StoredFeedbackTask[]>([]);
-  const [unlinked, setUnlinked] = useState<UnlinkedResponse[]>([]);
-  const [summary, setSummary] = useState<MonthSummary | null>(null);
+  const [allTasks, setAllTasks] = useState<StoredFeedbackTask[]>([]);
+  const [responses, setResponses] = useState<ResponseRow[]>([]);
+  /** 不参与统计的老师（课表规范名），所有月份通用 */
+  const [excludedTeachers, setExcludedTeachersState] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
     setLoading(true);
     try {
-      const [taskRows, responseRows] = await Promise.all([
+      const [taskRows, responseRows, excludedRows] = await Promise.all([
         taskRepository.listByCollectionMonth(collectionMonth),
         db
           .from(RESPONSES_TABLE)
-          .select<{
-            response_record_id: string;
-            student_name: string | null;
-            teacher_name: string | null;
-            identity: string | null;
-            submitted_at: string;
-            sync_status: string;
-          }>("response_record_id,student_name,teacher_name,identity,submitted_at,sync_status")
+          .select<ResponseRow>("response_record_id,task_id,student_name,teacher_name,identity,submitted_at,sync_status")
           .eq("collection_month", collectionMonth),
+        db.from(EXCLUDED_TEACHERS_TABLE).select<{ teacher_name: string }>("teacher_name"),
       ]);
       if (responseRows.error) throw new Error(responseRows.error.message);
+      if (excludedRows.error) throw new Error(excludedRows.error.message);
 
-      const responses = responseRows.data ?? [];
-      setTasks(taskRows);
-      setUnlinked(
-        responses
-          .filter((row) => row.sync_status === "unlinked")
-          .map((row) => ({
-            responseRecordId: row.response_record_id,
-            studentName: row.student_name ?? "",
-            teacherName: row.teacher_name ?? "",
-            identity: (row.identity === "parent" ? "parent" : "student") as "student" | "parent",
-            submittedAt: row.submitted_at,
-          }))
-          .sort((a, b) => a.teacherName.localeCompare(b.teacherName, "zh-CN")),
-      );
-      setSummary({
-        total: responses.length,
-        matched: responses.filter((row) => row.sync_status === "matched").length,
-        duplicate: responses.filter((row) => row.sync_status === "duplicate").length,
-        unlinked: responses.filter((row) => row.sync_status === "unlinked").length,
-      });
+      setAllTasks(taskRows);
+      setResponses(responseRows.data ?? []);
+      setExcludedTeachersState((excludedRows.data ?? []).map((row) => row.teacher_name));
       setError(null);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -100,6 +89,56 @@ export function useWorkbenchData(collectionMonth: string) {
   useEffect(() => {
     void reload();
   }, [reload]);
+
+  // 不参与统计的老师：任务、答卷都从工作台视图里拿掉，应发、完成率、对不上横幅都不算他们。
+  const { tasks, unlinked, summary } = useMemo(() => {
+    const excludedKeys = new Set(excludedTeachers.map(nameMatchKey));
+    const isExcluded = (task: StoredFeedbackTask) => excludedKeys.has(nameMatchKey(task.teacherCanonicalName));
+    const tasks = allTasks.filter((task) => !isExcluded(task));
+    const hiddenTaskIds = new Set(allTasks.filter(isExcluded).map((task) => task.taskId));
+    const visible = responses.filter((row) =>
+      row.task_id ? !hiddenTaskIds.has(row.task_id) : !excludedKeys.has(nameMatchKey(row.teacher_name ?? "")),
+    );
+    const unlinked: UnlinkedResponse[] = visible
+      .filter((row) => row.sync_status === "unlinked")
+      .map((row): UnlinkedResponse => ({
+        responseRecordId: row.response_record_id,
+        studentName: row.student_name ?? "",
+        teacherName: row.teacher_name ?? "",
+        identity: row.identity === "parent" ? "parent" : "student",
+        submittedAt: row.submitted_at,
+      }))
+      .sort((a, b) => a.teacherName.localeCompare(b.teacherName, "zh-CN"));
+    const summary: MonthSummary = {
+      total: visible.length,
+      matched: visible.filter((row) => row.sync_status === "matched").length,
+      duplicate: visible.filter((row) => row.sync_status === "duplicate").length,
+      unlinked: unlinked.length,
+    };
+    return { tasks, unlinked, summary: loading && allTasks.length === 0 ? null : summary };
+  }, [allTasks, responses, excludedTeachers, loading]);
+
+  /** 改「不参与统计的老师」名单：多选框给出完整新名单，这里算出增删。 */
+  const setExcludedTeachers = useCallback(
+    async (next: string[]) => {
+      const current = new Set(excludedTeachers);
+      const wanted = new Set(next);
+      const added = next.filter((name) => !current.has(name));
+      const removed = excludedTeachers.filter((name) => !wanted.has(name));
+      if (added.length > 0) {
+        const result = await db
+          .from(EXCLUDED_TEACHERS_TABLE)
+          .upsert(added.map((teacher_name) => ({ teacher_name, created_by: "workbench" })), { onConflict: "teacher_name" });
+        if (result.error) throw new Error(`保存不统计老师失败：${result.error.message}`);
+      }
+      if (removed.length > 0) {
+        const result = await db.from(EXCLUDED_TEACHERS_TABLE).delete().in("teacher_name", removed);
+        if (result.error) throw new Error(`恢复统计老师失败：${result.error.message}`);
+      }
+      setExcludedTeachersState(next);
+    },
+    [excludedTeachers],
+  );
 
   /** 批量改状态。有答卷的任务不允许退回未完成，跳过而不是整批报错。 */
   const updateStatus = useCallback(
@@ -179,7 +218,20 @@ export function useWorkbenchData(collectionMonth: string) {
     [reload],
   );
 
-  return { tasks, unlinked, summary, loading, error, reload, updateStatus, addAlias, bindResponse };
+  return {
+    tasks,
+    allTasks,
+    unlinked,
+    summary,
+    excludedTeachers,
+    setExcludedTeachers,
+    loading,
+    error,
+    reload,
+    updateStatus,
+    addAlias,
+    bindResponse,
+  };
 }
 
 /** 一行任务的显示状态：有答卷即"已评"，与数据库 status 保持一致但更直白。 */

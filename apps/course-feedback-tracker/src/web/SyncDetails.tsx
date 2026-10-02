@@ -17,6 +17,8 @@ export interface SyncSummary {
   unlinked?: number;
   exception?: number;
   tasksCovered?: number;
+  removed?: number;
+  studentsAddedToForm?: string[];
   outcomes?: Array<{ responseRecordId: string; taskId: string | null; syncStatus: string; exceptionCode?: string }>;
 }
 
@@ -62,8 +64,13 @@ export function SyncDetails({ summary }: { summary: SyncSummary }) {
       </CardHeader>
       <CardContent>
         <Bucket
+          title="已自动加进问卷的学生"
+          hint="本月课表里有、问卷「学生姓名」下拉里原来没有的学生，已自动追加为选项。"
+          items={summary.studentsAddedToForm ?? []}
+        />
+        <Bucket
           title="问卷下拉里缺的姓名"
-          hint="课表里有、问卷「学生姓名 / 老师姓名」下拉里没有的名字。系统不会改飞书表；这些人扫码后预填会失败，需要在飞书里手动把选项加上。"
+          hint="课表里有、问卷「学生姓名 / 老师姓名」下拉里没有的名字。学生会自动追加；老师需要在飞书里手动把选项加上，否则扫码后预填会失败。"
           items={[
             ...(summary.studentsMissingFromForm ?? []).map((name) => `学生 · ${name}`),
             ...(summary.teachersMissingFromForm ?? []).map((name) => `老师 · ${name}`),
