@@ -15,7 +15,10 @@ import { createServiceDb } from "./service-db";
 
 const app = cloudbase.init({ env: cloudbase.SYMBOL_CURRENT_ENV });
 
-const SCORE_FIELDS = ["编号", "学生", "成绩类型", "考试日期", "听力", "阅读", "写作", "口语", "成绩单", "已核验", "提交人"];
+const SCORE_FIELDS = [
+  ...["编号", "学生", "成绩类型", "考试日期", "听力", "阅读", "写作", "口语", "成绩单", "已核验", "提交人", "备注"],
+  ...["听力老师", "阅读老师", "写作老师", "口语老师"],
+];
 const LESSON_FIELDS = ["学生", "课程类型", "老师", "上课时间", "临时取消"];
 
 function requireEnv(name: string): string {
@@ -64,18 +67,24 @@ async function sync() {
     }),
   ]);
 
+  const scores = scoreRecords.map((record) => parseScoreRecord(record.record_id, record.fields));
+  // 只留有成绩的学生的课：快照小一半以上，页面打开更快；新学生录了成绩，下次同步自然带上他的课
+  const scored = new Set(scores.map((score) => score.studentId));
   const lessons: Lesson[] = [];
   const unknownTypes: Record<string, number> = {};
   for (const record of scheduleRecords) {
     const parsed = parseLesson(record.fields);
     if (!parsed) continue;
     if ("unknownType" in parsed) unknownTypes[parsed.unknownType] = (unknownTypes[parsed.unknownType] ?? 0) + 1;
-    else lessons.push(parsed);
+    else {
+      const studentIds = parsed.studentIds.filter((id) => scored.has(id));
+      if (studentIds.length > 0) lessons.push({ ...parsed, studentIds });
+    }
   }
 
   const syncedAt = new Date().toISOString();
   const snapshot: FeishuSnapshot = {
-    scores: scoreRecords.map((record) => parseScoreRecord(record.record_id, record.fields)),
+    scores,
     lessons,
     unknownTypes,
     syncedAt,

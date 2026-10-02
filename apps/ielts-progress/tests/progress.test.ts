@@ -4,7 +4,6 @@ import { test } from "node:test";
 import {
   buildSamples,
   groupTally,
-  legacySamples,
   parseLesson,
   parseScoreRecord,
   positiveRate,
@@ -53,8 +52,13 @@ test("parseScoreRecord 读飞书真实字段形状", () => {
     attachments: 1,
     verified: true,
     submitter: "排课机器人",
+    note: "",
+    teachers: {},
     problems: [],
   });
+  const assigned = parseScoreRecord("rec4", { 学生: [{ record_ids: ["a"] }], 成绩类型: "阶段模考", 考试日期: SEP22, 写作: "6", 写作老师: "陈依依、 Valentina Lin/Kevin Liu" });
+  assert.equal(assigned.kind, "mock");
+  assert.deepEqual(assigned.teachers, { 写作: ["陈依依", "Valentina Lin", "Kevin Liu"] });
   assert.deepEqual(parseScoreRecord("rec2", { 听力: "65" }).problems, ["没选学生", "没选成绩类型", "没填考试日期", "听力分数「65」不合法"]);
   assert.deepEqual(parseScoreRecord("rec3", { 学生: [{ record_ids: ["a"] }], 成绩类型: "基线", 考试日期: SEP22 }).problems, ["四科都没填分数"]);
 });
@@ -76,7 +80,7 @@ test("parseLesson：取消、刷题、无学生不计入；识别不出科目单
 let seq = 0;
 function score(partial: Partial<ScoreRecord> & Pick<ScoreRecord, "date" | "kind" | "scores">): ScoreRecord {
   seq += 1;
-  return { id: `r${seq}`, no: String(seq), studentId: "s1", studentName: "小明", attachments: 1, verified: true, submitter: "", problems: [], ...partial };
+  return { id: `r${seq}`, no: String(seq), studentId: "s1", studentName: "小明", attachments: 1, verified: true, submitter: "", note: "", teachers: {}, problems: [], ...partial };
 }
 const lesson = (date: string, teacher: string, subjects: Lesson["subjects"], studentIds = ["s1"]): Lesson => ({ date, teacher, subjects, studentIds });
 
@@ -100,15 +104,27 @@ test("buildSamples：每次实考和上一次比（C 规则），授课窗口 [�
   ]);
 });
 
-test("buildSamples：未核验 / 缺成绩单不计入，也不当作下一次的上一次成绩", () => {
+test("buildSamples：未核验不计入、也不当作下一次的上一次成绩；阶段模考只记录不比较", () => {
   const baseline = score({ kind: "baseline", date: "2026-06-01", scores: { 口语: 5 }, attachments: 0, verified: false });
   const pending = score({ kind: "exam", date: "2026-07-01", scores: { 口语: 7 }, verified: false });
-  const noFile = score({ kind: "exam", date: "2026-07-15", scores: { 口语: 7 }, attachments: 0, verified: true });
-  const exam = score({ kind: "exam", date: "2026-08-01", scores: { 口语: 6 } });
-  const { samples, issues } = buildSamples([baseline, pending, noFile, exam], [lesson("2026-06-10", "甲", ["口语"])]);
+  const noFile = score({ kind: "exam", date: "2026-07-15", scores: { 口语: 7 }, attachments: 0, verified: false });
+  const mock = score({ kind: "mock", date: "2026-07-20", scores: { 口语: 6.5 }, attachments: 0, verified: false });
+  const exam = score({ kind: "exam", date: "2026-08-01", scores: { 口语: 6 }, attachments: 0 }); // 已核验的历史补录，没有成绩单也计入
+  const { samples, issues, records } = buildSamples([baseline, pending, noFile, mock, exam], [lesson("2026-06-10", "甲", ["口语"])]);
   assert.deepEqual(issues.map((i) => [i.kind, i.recordId]), [["待核验", pending.id], ["缺成绩单", noFile.id]]);
   assert.equal(samples.length, 1);
-  assert.equal(samples[0]!.before, 5, "跳过未核验的实考，直接和基线比");
+  assert.equal(samples[0]!.before, 5, "跳过未核验实考和阶段模考，直接和基线比");
+  assert.deepEqual(records.map((r) => r.id).sort(), [baseline.id, mock.id, exam.id].sort());
+});
+
+test("buildSamples：手动指定老师优先于课表，课数仍按课表数", () => {
+  const { samples, issues } = buildSamples(
+    [score({ kind: "baseline", date: "2026-06-01", scores: { 写作: 5 } }), score({ kind: "exam", date: "2026-07-01", scores: { 写作: 6 }, teachers: { 写作: ["乙", "丙"] } })],
+    [lesson("2026-06-10", "甲", ["写作"]), lesson("2026-06-11", "乙", ["写作"])],
+  );
+  assert.deepEqual(issues, []);
+  assert.deepEqual(samples[0]!.teachers, [{ name: "乙", lessons: 1 }, { name: "丙", lessons: 0 }]);
+  assert.equal(samples[0]!.assigned, true);
 });
 
 test("buildSamples：各类待处理", () => {
@@ -135,24 +151,4 @@ test("多位老师各算一次，整体按样本去重", () => {
   assert.equal(positiveRate(byTeacher.get("甲")!), 0.5);
   assert.equal(byTeacher.get("乙")!.n, 1);
   assert.equal(positiveRate(byTeacher.get("乙")!), 1);
-});
-
-test("legacySamples：按学生科目分数合并老师，别名统一，未知老师报错", () => {
-  const row = { studentName: "张惟枝", subject: "写作", baselineScore: "5.5", finalScore: "5", createdAt: "2026-09-09 10:33:06" };
-  const known = new Set(["陈依依", "Kevin Liu", "Valentina Lin"]);
-  const aliases = { Kevin: "Kevin Liu", "Valentina 林": "Valentina Lin" };
-  const samples = legacySamples(
-    [
-      { ...row, teacher: "陈依依" },
-      { ...row, teacher: "Valentina 林" },
-      { ...row, teacher: "Kevin", createdAt: "2026-08-05 16:09:28" },
-    ],
-    aliases,
-    known,
-  );
-  assert.equal(samples.length, 1);
-  assert.deepEqual(samples[0]!.teachers.map((t) => t.name), ["陈依依", "Valentina Lin", "Kevin Liu"]);
-  assert.equal(samples[0]!.date, "2026-08-05");
-  assert.equal(samples[0]!.outcome, "down");
-  assert.throws(() => legacySamples([{ ...row, teacher: "路人" }], aliases, known), /路人/);
 });

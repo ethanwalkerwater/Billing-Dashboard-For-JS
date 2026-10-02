@@ -7,8 +7,10 @@
 export const SUBJECTS = ["听力", "阅读", "写作", "口语"] as const;
 export type Subject = (typeof SUBJECTS)[number];
 
-export type ScoreKind = "baseline" | "exam";
-export const KIND_LABELS: Record<ScoreKind, string> = { baseline: "基线", exam: "实考" };
+/** 阶段模考只做记录（学生视图里能看到走势），不当作实考、也不当作实考的比较对象。 */
+export type ScoreKind = "baseline" | "mock" | "exam";
+export const KIND_LABELS: Record<ScoreKind, string> = { baseline: "基线", mock: "阶段模考", exam: "实考" };
+const KIND_BY_LABEL: Record<string, ScoreKind> = { 基线: "baseline", 阶段模考: "mock", 实考: "exam" };
 
 /** 飞书「雅思成绩」表一行，云函数解析后存进快照。 */
 export interface ScoreRecord {
@@ -24,6 +26,9 @@ export interface ScoreRecord {
   attachments: number;
   verified: boolean;
   submitter: string;
+  note: string;
+  /** 教务手动指定的授课老师（「听力老师」等字段），有就不按课表推算 */
+  teachers: Partial<Record<Subject, string[]>>;
   /** 录入层面的问题（没选学生、分数不合法…），有问题的整条不计入 */
   problems: string[];
 }
@@ -50,8 +55,8 @@ export const OUTCOME_LABELS: Record<Outcome, string> = { up: "提升", flat: "�
 /** 一次实考的一科 = 一条样本。多位老师共享同一条样本。 */
 export interface Sample {
   key: string;
-  source: "feishu" | "legacy";
-  recordId: string | null;
+  recordId: string;
+  studentId: string;
   studentName: string;
   subject: Subject;
   date: string;
@@ -61,8 +66,10 @@ export interface Sample {
   after: number;
   delta: number;
   outcome: Outcome;
-  /** 老师 → 两次成绩之间该科的课数（历史数据没有课数，记 0） */
+  /** 老师 → 两次成绩之间该科的课数 */
   teachers: Array<{ name: string; lessons: number }>;
+  /** 老师来自教务手动指定，而不是课表推算 */
+  assigned: boolean;
 }
 
 export type IssueKind = "录入有误" | "疑似重复" | "缺成绩单" | "待核验" | "缺少上一次成绩" | "无授课老师";
@@ -141,7 +148,7 @@ export function parseScoreRecord(recordId: string, fields: Record<string, unknow
   if (students.length > 1) problems.push(`选了 ${students.length} 个学生`);
 
   const kindText = readText(fields["成绩类型"]);
-  const kind: ScoreKind | null = kindText === "基线" ? "baseline" : kindText === "实考" ? "exam" : null;
+  const kind: ScoreKind | null = KIND_BY_LABEL[kindText] ?? null;
   if (!kind) problems.push(kindText ? `成绩类型「${kindText}」无法识别` : "没选成绩类型");
 
   const rawDate = fields["考试日期"];
@@ -158,6 +165,12 @@ export function parseScoreRecord(recordId: string, fields: Record<string, unknow
   }
   if (Object.keys(scores).length === 0 && !problems.some((p) => p.includes("分数"))) problems.push("四科都没填分数");
 
+  const teachers: Partial<Record<Subject, string[]>> = {};
+  for (const subject of SUBJECTS) {
+    const names = readText(fields[`${subject}老师`]).split(/[、,，/&]+/).map((name) => name.trim()).filter(Boolean);
+    if (names.length > 0) teachers[subject] = [...new Set(names)];
+  }
+
   return {
     id: recordId,
     no: readText(fields["编号"]),
@@ -169,6 +182,8 @@ export function parseScoreRecord(recordId: string, fields: Record<string, unknow
     attachments: Array.isArray(fields["成绩单"]) ? fields["成绩单"].length : 0,
     verified: fields["已核验"] === true,
     submitter: readText(fields["提交人"]),
+    note: readText(fields["备注"]),
+    teachers,
     problems,
   };
 }
@@ -192,13 +207,13 @@ function outcomeOf(delta: number): Outcome {
   return delta > 0 ? "up" : delta < 0 ? "down" : "flat";
 }
 
-const KIND_RANK: Record<ScoreKind, number> = { baseline: 0, exam: 1 };
+const KIND_RANK: Record<ScoreKind, number> = { baseline: 0, mock: 1, exam: 2 };
 
 /**
  * 每次已核验的实考，每科和该学生上一次该科有分的成绩比；授课老师取
  * 上一次成绩日期 ≤ 上课日期 < 本次考试日期 之间教过该科的老师。
  */
-export function buildSamples(scores: ScoreRecord[], lessons: Lesson[]): { samples: Sample[]; issues: Issue[] } {
+export function buildSamples(scores: ScoreRecord[], lessons: Lesson[]): { samples: Sample[]; issues: Issue[]; records: ScoreRecord[] } {
   const issues: Issue[] = [];
   const issue = (record: ScoreRecord, kind: IssueKind, detail: string, subject?: Subject) =>
     issues.push({ kind, recordId: record.id, no: record.no, studentName: record.studentName || "（未选学生）", date: record.date, subject, detail });
@@ -223,9 +238,11 @@ export function buildSamples(scores: ScoreRecord[], lessons: Lesson[]): { sample
       continue;
     }
     const record = group[0]!;
-    if (record.kind === "exam" && record.attachments === 0) issue(record, "缺成绩单", "实考没有上传成绩单");
-    else if (record.kind === "exam" && !record.verified) issue(record, "待核验", "教务在飞书勾选「已核验」后计入");
-    else usable.push(record);
+    // 「已核验」是教务的最终确认：历史补录没有成绩单，核验过照样计入
+    if (record.kind === "exam" && !record.verified) {
+      if (record.attachments === 0) issue(record, "缺成绩单", "实考没有上传成绩单");
+      else issue(record, "待核验", "教务在飞书勾选「已核验」后计入");
+    } else usable.push(record);
   }
 
   const lessonsByStudent = new Map<string, Lesson[]>();
@@ -244,7 +261,7 @@ export function buildSamples(scores: ScoreRecord[], lessons: Lesson[]): { sample
       let prev: ScoreRecord | null = null;
       for (const record of records) {
         const after = record.scores[subject];
-        if (after === undefined) continue;
+        if (after === undefined || record.kind === "mock") continue;
         if (record.kind === "exam") {
           if (!prev) issue(record, "缺少上一次成绩", `${subject}之前没有基线或实考成绩可比`, subject);
           else {
@@ -254,14 +271,18 @@ export function buildSamples(scores: ScoreRecord[], lessons: Lesson[]): { sample
                 counts.set(lesson.teacher, (counts.get(lesson.teacher) ?? 0) + 1);
               }
             }
-            if (counts.size === 0) issue(record, "无授课老师", `${prev.date} 至 ${record.date} 之间课表里没有${subject}课`, subject);
+            const assigned = record.teachers[subject];
+            const teachers = assigned
+              ? assigned.map((name) => ({ name, lessons: counts.get(name) ?? 0 }))
+              : [...counts].map(([name, count]) => ({ name, lessons: count })).sort((a, b) => b.lessons - a.lessons);
+            if (teachers.length === 0) issue(record, "无授课老师", `${prev.date} 至 ${record.date} 之间课表里没有${subject}课`, subject);
             else {
               const before = prev.scores[subject]!;
               const delta = after - before;
               samples.push({
                 key: `${record.id}|${subject}`,
-                source: "feishu",
                 recordId: record.id,
+                studentId: record.studentId,
                 studentName: record.studentName,
                 subject,
                 date: record.date,
@@ -271,7 +292,8 @@ export function buildSamples(scores: ScoreRecord[], lessons: Lesson[]): { sample
                 after,
                 delta,
                 outcome: outcomeOf(delta),
-                teachers: [...counts].map(([name, count]) => ({ name, lessons: count })).sort((a, b) => b.lessons - a.lessons),
+                teachers,
+                assigned: Boolean(assigned),
               });
             }
           }
@@ -280,60 +302,7 @@ export function buildSamples(scores: ScoreRecord[], lessons: Lesson[]): { sample
       }
     }
   }
-  return { samples, issues };
-}
-
-// ---------- 历史 CSV ----------
-
-export interface LegacyRow {
-  studentName: string;
-  subject: string;
-  teacher: string;
-  baselineScore: string;
-  finalScore: string;
-  createdAt: string;
-}
-
-/**
- * 旧系统导出已是「学生 × 科目 × 老师」展开后的配对结果，一位老师一行。
- * 按（学生, 科目, 基线, 实考）合并回一条样本，老师取并集，日期取最早录入日。
- */
-export function legacySamples(rows: LegacyRow[], teacherAliases: Record<string, string>, knownTeachers: Set<string>): Sample[] {
-  const merged = new Map<string, Sample>();
-  for (const row of rows) {
-    const subject = row.subject.trim() as Subject;
-    if (!SUBJECTS.includes(subject)) throw new Error(`历史数据科目无法识别：${row.subject}`);
-    const teacher = teacherAliases[row.teacher.trim()] ?? row.teacher.trim();
-    if (!knownTeachers.has(teacher)) throw new Error(`历史数据老师「${row.teacher}」在课表里找不到，请补别名`);
-    const before = Number(row.baselineScore);
-    const after = Number(row.finalScore);
-    if (!isValidBand(before) || !isValidBand(after)) throw new Error(`历史数据分数不合法：${row.studentName} ${subject} ${row.baselineScore}→${row.finalScore}`);
-    const date = row.createdAt.trim().slice(0, 10);
-    const key = `legacy|${row.studentName.trim()}|${subject}|${before}|${after}`;
-    const existing = merged.get(key);
-    if (existing) {
-      if (!existing.teachers.some((item) => item.name === teacher)) existing.teachers.push({ name: teacher, lessons: 0 });
-      if (date < existing.date) existing.date = date;
-      continue;
-    }
-    const delta = after - before;
-    merged.set(key, {
-      key,
-      source: "legacy",
-      recordId: null,
-      studentName: row.studentName.trim(),
-      subject,
-      date,
-      prevDate: null,
-      prevKind: null,
-      before,
-      after,
-      delta,
-      outcome: outcomeOf(delta),
-      teachers: [{ name: teacher, lessons: 0 }],
-    });
-  }
-  return [...merged.values()];
+  return { samples, issues, records: usable };
 }
 
 // ---------- 汇总 ----------

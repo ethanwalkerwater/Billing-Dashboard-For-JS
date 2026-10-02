@@ -57,38 +57,61 @@ function OutcomeBar({ value }: { value: Tally }) {
   );
 }
 
-export interface TeacherRow {
-  teacher: string;
+export interface OutcomeRow {
+  key: string;
   tally: Tally;
 }
 
-/** 老师对比：按正向率排序；样本不足的放最后灰显、不排名。 */
-export function TeacherBars({ rows, focused, onPick }: { rows: TeacherRow[]; focused: string | null; onPick: (teacher: string) => void }) {
+/** 正向率排行：样本不足的放最后、灰显、不排名。sortOutcomeRows 负责排序。 */
+export function sortOutcomeRows(rows: OutcomeRow[]): OutcomeRow[] {
+  const ranked = (row: OutcomeRow) => row.tally.n >= MIN_SAMPLES;
+  return [...rows].sort(
+    (a, b) =>
+      Number(ranked(b)) - Number(ranked(a)) ||
+      (ranked(a) ? positiveRate(b.tally)! - positiveRate(a.tally)! : 0) ||
+      b.tally.n - a.tally.n ||
+      a.key.localeCompare(b.key, "zh-CN"),
+  );
+}
+
+/** 一行一条 100% 堆叠条（老师、科目、月份都用它）。onPick 不传就是纯展示。 */
+export function OutcomeRows({
+  rows,
+  head,
+  focused = null,
+  onPick,
+}: {
+  rows: OutcomeRow[];
+  head: string;
+  focused?: string | null;
+  onPick?: (key: string) => void;
+}) {
   return (
     <div className="grid gap-1">
       <OutcomeLegend />
       <div className="text-muted-foreground grid grid-cols-[4.5rem_1fr_3rem_2.5rem] sm:grid-cols-[7rem_1fr_3.5rem_3rem_4rem] items-center gap-3 px-2 text-xs">
-        <span>老师</span>
+        <span>{head}</span>
         <span />
         <span className="text-right">正向率</span>
         <span className="text-right">样本</span>
         <span className="hidden text-right sm:block">平均提分</span>
       </div>
-      {rows.map(({ teacher, tally }) => {
+      {rows.map(({ key, tally }) => {
         const few = tally.n < MIN_SAMPLES;
         return (
-          <Tooltip key={teacher}>
+          <Tooltip key={key}>
             <TooltipTrigger asChild>
               <button
                 type="button"
-                onClick={() => onPick(teacher)}
+                disabled={!onPick}
+                onClick={() => onPick?.(key)}
                 className={cn(
-                  "grid grid-cols-[4.5rem_1fr_3rem_2.5rem] sm:grid-cols-[7rem_1fr_3.5rem_3rem_4rem] items-center gap-3 rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent",
-                  focused === teacher && "bg-accent ring-foreground/20 ring-1",
+                  "grid grid-cols-[4.5rem_1fr_3rem_2.5rem] sm:grid-cols-[7rem_1fr_3.5rem_3rem_4rem] items-center gap-3 rounded-md px-2 py-1.5 text-left text-sm transition-colors enabled:hover:bg-accent",
+                  focused === key && "bg-accent ring-foreground/20 ring-1",
                   few && "opacity-50",
                 )}
               >
-                <span className="truncate font-medium">{teacher}</span>
+                <span className="truncate font-medium">{key}</span>
                 <OutcomeBar value={tally} />
                 <span className="text-right font-medium tabular-nums">{few ? "样本少" : pct(positiveRate(tally))}</span>
                 <span className="text-muted-foreground text-right tabular-nums">{tally.n}</span>

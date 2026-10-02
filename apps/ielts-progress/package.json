@@ -11,8 +11,7 @@
     "test": "tsx --test tests/*.test.ts",
     "build:functions": "node scripts/build-functions.mjs",
     "deploy:functions": "npm run build:functions && node scripts/deploy-function.mjs",
-    "deploy:web": "npm run build && tcb hosting deploy dist /ielts -e jingshi-test-d5gp401i44a0fa7a7",
-    "import:legacy": "tsx scripts/import-legacy.ts"
+    "deploy:web": "npm run build && tcb hosting deploy dist /ielts -e jingshi-test-d5gp401i44a0fa7a7"
   },
   "dependencies": {
     "@cloudbase/js-sdk": "^3.9.4",
