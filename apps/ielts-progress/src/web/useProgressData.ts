@@ -1,21 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { buildSamples } from "@/domain/progress";
-import type { FeishuSnapshot, Sample } from "@/domain/progress";
+import type { FeishuSnapshot } from "@/domain/progress";
 import { SNAPSHOTS_TABLE } from "@/shared/postgrest";
 import type { SnapshotRow } from "@/shared/postgrest";
 import { callIelts, db } from "./cloudbase";
 
-interface LegacySnapshot {
-  samples: Sample[];
-  sourceFile: string;
-  importedAt: string;
-}
-
-/** 两行快照一次读完；配对、归属、待处理全在浏览器里现算。 */
+/** 一行快照一次读完；配对、归属、待处理全在浏览器里现算。 */
 export function useProgressData() {
-  const [feishu, setFeishu] = useState<FeishuSnapshot | null>(null);
-  const [legacy, setLegacy] = useState<LegacySnapshot | null>(null);
+  const [snapshot, setSnapshot] = useState<FeishuSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -23,11 +16,9 @@ export function useProgressData() {
   const reload = useCallback(async () => {
     setLoading(true);
     try {
-      const result = await db.from(SNAPSHOTS_TABLE).select<SnapshotRow<unknown>>("*");
+      const result = await db.from(SNAPSHOTS_TABLE).select<SnapshotRow<FeishuSnapshot>>("*").eq("key", "feishu");
       if (result.error) throw new Error(result.error.message);
-      const rows = result.data ?? [];
-      setFeishu((rows.find((row) => row.key === "feishu")?.data as FeishuSnapshot | undefined) ?? null);
-      setLegacy((rows.find((row) => row.key === "legacy")?.data as LegacySnapshot | undefined) ?? null);
+      setSnapshot(result.data?.[0]?.data ?? null);
       setError(null);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -53,14 +44,12 @@ export function useProgressData() {
     }
   }, [reload]);
 
-  const built = useMemo(() => buildSamples(feishu?.scores ?? [], feishu?.lessons ?? []), [feishu]);
-  const samples = useMemo(() => [...built.samples, ...(legacy?.samples ?? [])], [built, legacy]);
+  const built = useMemo(() => buildSamples(snapshot?.scores ?? [], snapshot?.lessons ?? []), [snapshot]);
 
   return {
-    samples,
-    issues: built.issues,
-    unknownTypes: feishu?.unknownTypes ?? {},
-    syncedAt: feishu?.syncedAt ?? null,
+    ...built,
+    unknownTypes: snapshot?.unknownTypes ?? {},
+    syncedAt: snapshot?.syncedAt ?? null,
     loading,
     syncing,
     error,

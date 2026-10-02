@@ -22,7 +22,7 @@ export interface PostgrestLike {
 export const SNAPSHOTS_TABLE = "ielts_snapshots";
 
 export interface SnapshotRow<T> {
-  key: "feishu" | "legacy";
+  key: "feishu";
   data: T;
   updated_at: string;
 }
