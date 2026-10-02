@@ -226,9 +226,12 @@ export function parseTeacherScoresCsv(csvText, options = {}) {
       const learning = parseNumber(pick(row, ["学习提升效果", "学习提升"]));
       const responsibility = parseNumber(pick(row, ["责任心与服务态度", "责任心"]));
       const charisma = parseNumber(pick(row, ["个人魅力"]));
+      // 额外课时系数按百分点填写：10 或 10% 都表示 +10%
+      const extraPercent = parseNumber(cleanText(pick(row, ["额外课时系数", "额外加成"])).replace(/%$/, ""));
       return {
         teacher: canonicalName(name, options.nameAliases),
         metrics: { learning, responsibility, charisma },
+        extraRate: extraPercent ? round(extraPercent / 100) : 0,
         sourceName: cleanText(name),
       };
     })
@@ -260,6 +263,11 @@ const FEEDBACK_METRICS = ["learning", "responsibility", "charisma"];
 
 function isValidFeedbackScore(value) {
   return value != null && Number.isFinite(value) && value >= 1 && value <= 5;
+}
+
+function extraRateOf(score) {
+  const value = Number(score?.extraRate);
+  return Number.isFinite(value) ? value : 0;
 }
 
 function hasAllScores(score) {
@@ -316,8 +324,10 @@ export function buildFeedbackRanking(baseRows, scoreRows, aliases = {}) {
             ? "兼职，不参与排名"
             : "";
       return {
+        key,
         teacher: score.teacher,
         metrics: score.metrics || {},
+        extraRate: extraRateOf(score),
         average: complete
           ? round(values.reduce((sum, value) => sum + value, 0) / values.length)
           : null,
@@ -338,7 +348,7 @@ export function buildFeedbackRanking(baseRows, scoreRows, aliases = {}) {
   };
 }
 
-function buildFeedbackRates(baseRows, scoreRows, params, aliases = {}) {
+export function buildFeedbackRates(baseRows, scoreRows, params, aliases = {}) {
   const scoreByTeacher = indexByTeacher(scoreRows, aliases);
   const ranking = buildFeedbackRanking(baseRows, scoreRows, aliases);
   const rankedByTeacher = new Map(
@@ -349,9 +359,11 @@ function buildFeedbackRates(baseRows, scoreRows, params, aliases = {}) {
   for (const row of baseRows || []) {
     const key = normalizeKey(row.teacher, aliases);
     const score = scoreByTeacher.get(key);
+    const extraRate = extraRateOf(score);
     if (cleanText(row.employmentType) !== "全职") {
       rates.set(key, {
-        rate: params.partTimeLessonRate,
+        rate: round(params.partTimeLessonRate + extraRate),
+        extraRate,
         type: "part_time",
         qualifiedMetrics: 0,
         qualifiedMetricKeys: [],
@@ -362,7 +374,8 @@ function buildFeedbackRates(baseRows, scoreRows, params, aliases = {}) {
 
     if (!hasAllScores(score)) {
       rates.set(key, {
-        rate: params.fullTimeFeedbackBaseRate,
+        rate: round(params.fullTimeFeedbackBaseRate + extraRate),
+        extraRate,
         type: "full_time",
         qualifiedMetrics: 0,
         qualifiedMetricKeys: [],
@@ -377,8 +390,10 @@ function buildFeedbackRates(baseRows, scoreRows, params, aliases = {}) {
       params.fullTimeFeedbackMaxRate,
       params.fullTimeFeedbackBaseRate + qualifiedMetrics * params.fullTimeFeedbackStepRate,
     );
+    // 额外课时系数（如知识竞赛奖励）叠加在封顶之后，不受全职最高系数限制
     rates.set(key, {
-      rate,
+      rate: round(rate + extraRate),
+      extraRate,
       type: "full_time",
       qualifiedMetrics,
       qualifiedMetricKeys,
@@ -486,6 +501,7 @@ export function buildPayrollReport(reportData, input = {}) {
       const taxSocial = taxSocialByTeacher.get(key);
       const feedback = feedbackRates.get(key) || {
         rate: params.partTimeLessonRate,
+        extraRate: 0,
         type: "part_time",
         qualifiedMetrics: 0,
         qualifiedMetricKeys: [],
@@ -542,6 +558,7 @@ export function buildPayrollReport(reportData, input = {}) {
         extraAdjustments,
         extraAdjustmentTotal,
         feedbackRate: feedback.rate,
+        feedbackExtraRate: feedback.extraRate,
         feedbackType: feedback.type,
         qualifiedMetrics: feedback.qualifiedMetrics,
         qualifiedMetricKeys: feedback.qualifiedMetricKeys,

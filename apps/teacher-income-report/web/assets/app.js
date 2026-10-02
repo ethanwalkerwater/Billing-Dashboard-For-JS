@@ -2,6 +2,7 @@ import { buildReportFromCsv, cleanText, parseCsv, parseNumber } from "./report-c
 import {
   DEFAULT_PAYROLL_PARAMETERS,
   buildFeedbackRanking,
+  buildFeedbackRates,
   buildPayrollReport,
   canonicalName,
   parseBaseSalaryCsv,
@@ -190,7 +191,7 @@ function scoreNumber(value) {
 }
 
 function percent(value) {
-  return new Intl.NumberFormat("zh-CN", { style: "percent", maximumFractionDigits: 0 }).format(value || 0);
+  return new Intl.NumberFormat("zh-CN", { style: "percent", maximumFractionDigits: 1 }).format(value || 0);
 }
 
 function escapeHtml(value) {
@@ -958,10 +959,16 @@ function ledgerItem(kind, label, amount, source, formula = "") {
 }
 
 function feedbackDescription(row) {
-  if (row.feedbackType === "part_time") return "兼职课时系数";
-  if (row.feedbackMissingScore) return "缺少当月评分，按全职 0 项前 50% 计算";
+  const extra = row.feedbackExtraRate ? ` · 额外 +${percent(row.feedbackExtraRate)}` : "";
+  if (row.feedbackType === "part_time") return `兼职课时系数${extra}`;
+  if (row.feedbackMissingScore) return `缺少当月评分，按全职 0 项前 50% 计算${extra}`;
   const labels = (row.qualifiedMetricKeys || []).map((metric) => FEEDBACK_METRIC_LABELS[metric]);
-  return labels.length ? `全职前 50%：${labels.join("、")}` : "全职 0 项前 50%";
+  return (labels.length ? `全职前 50%：${labels.join("、")}` : "全职 0 项前 50%") + extra;
+}
+
+function extraRateCell(rowIndex, extraRate) {
+  const value = extraRate ? Math.round(extraRate * 10000) / 100 : "";
+  return `<td class="numeric"><input class="extra-rate-input" data-row="${rowIndex}" data-field="extraRate" type="number" step="0.5" min="0" placeholder="0" title="额外课时系数（百分点），如知识竞赛奖励 10 / 5 / 2.5" value="${value}" /></td>`;
 }
 
 function lessonMultiplierDetails(adjustment, row) {
@@ -1495,7 +1502,7 @@ function addMasterRow() {
       <input data-row="${rowIndex}" data-field="${escapeHtml(field)}" type="${type === "number" ? "number" : "text"}" step="0.001" ${key === "teacherScores" && type === "number" ? 'min="1" max="5"' : ""} value="${escapeHtml(row[field] ?? "")}" />
     </td>
   `).join("")
-    + (key === "teacherScores" ? "<td>—</td><td>保存后重排</td>" : "")
+    + (key === "teacherScores" ? `<td>—</td>${extraRateCell(rowIndex, 0)}<td>—</td><td>保存后重排</td>` : "")
     + deleteCell();
   tbody.appendChild(tr);
   tr.querySelector("[data-delete-row]")?.addEventListener("click", (event) => deleteEditorRow(event.currentTarget));
@@ -1513,6 +1520,14 @@ function openMasterEditor(key) {
   els.uploadMasterButton.disabled = false;
 
   const ranking = key === "teacherScores" ? currentFeedbackRanking() : null;
+  const rates = key === "teacherScores"
+    ? buildFeedbackRates(
+      state.master.baseSalaries,
+      currentTeacherScores(),
+      { ...DEFAULT_PAYROLL_PARAMETERS, ...state.master.parameters },
+      state.master.nameAliases,
+    )
+    : null;
   const rows = key === "parameters"
     ? [state.master.parameters]
     : key === "teacherScores"
@@ -1520,6 +1535,8 @@ function openMasterEditor(key) {
         teacher: row.teacher,
         ...(row.metrics || {}),
         average: row.average,
+        extraRate: row.extraRate,
+        totalRate: rates.get(row.key)?.rate,
         eligible: row.eligible,
         rankingNote: row.rankingNote,
         qualifiedMetricKeys: row.qualifiedMetricKeys,
@@ -1534,7 +1551,7 @@ function openMasterEditor(key) {
         <span>分界线：学习提升 ${scoreNumber(ranking.metrics.learning.cutoff)} · 责任心 ${scoreNumber(ranking.metrics.responsibility.cutoff)} · 个人魅力 ${scoreNumber(ranking.metrics.charisma.cutoff)}</span>
       </div>`
     : "";
-  const extraHeaders = key === "teacherScores" ? "<th>三项均分</th><th>前 50% 项</th>" : "";
+  const extraHeaders = key === "teacherScores" ? "<th>三项均分</th><th>额外课时系数 (%)</th><th>总课时系数</th><th>前 50% 项</th>" : "";
   const actionHeader = key === "parameters" ? "" : "<th>操作</th>";
 
   els.drawerBody.innerHTML = `
@@ -1552,7 +1569,7 @@ function openMasterEditor(key) {
                   <input data-row="${rowIndex}" data-field="${escapeHtml(field)}" type="${type === "number" ? "number" : "text"}" step="0.001" ${key === "teacherScores" && type === "number" ? 'min="1" max="5"' : ""} value="${escapeHtml(row[field] ?? "")}" />
                 </td>
               `).join("")}
-              ${key === "teacherScores" ? `<td class="numeric"><strong>${scoreNumber(row.average)}</strong></td><td>${row.eligible ? (row.qualifiedMetricKeys.length ? row.qualifiedMetricKeys.map((metric) => FEEDBACK_METRIC_LABELS[metric]).join("、") : "0 项") : escapeHtml(row.rankingNote || "不参与排名")}</td>` : ""}
+              ${key === "teacherScores" ? `<td class="numeric"><strong>${scoreNumber(row.average)}</strong></td>${extraRateCell(rowIndex, row.extraRate)}<td class="numeric"><strong>${row.totalRate == null ? "—" : percent(row.totalRate)}</strong></td><td>${row.eligible ? (row.qualifiedMetricKeys.length ? row.qualifiedMetricKeys.map((metric) => FEEDBACK_METRIC_LABELS[metric]).join("、") : "0 项") : escapeHtml(row.rankingNote || "不参与排名")}</td>` : ""}
               ${key === "parameters" ? "" : deleteCell()}
             </tr>
           `).join("")}
@@ -1580,6 +1597,10 @@ function saveMasterEditor() {
     const type = config.fields.find(([name]) => name === field)?.[2];
     if (!rows[rowIndex]) rows[rowIndex] = {};
     const rawValue = input.value.trim();
+    if (field === "extraRate") {
+      rows[rowIndex].extraRate = Number(rawValue || 0) / 100;
+      continue;
+    }
     rows[rowIndex][field] = type === "number"
       ? (key === "teacherScores" && rawValue === "" ? null : Number(rawValue || 0))
       : rawValue;
@@ -1600,6 +1621,7 @@ function saveMasterEditor() {
           responsibility: row.responsibility,
           charisma: row.charisma,
         },
+        extraRate: Number.isFinite(row.extraRate) ? row.extraRate : 0,
       }));
     state.monthly.teacherScoreSourcesByMonth[state.month] = "网页端修改";
     persistMonthlyTeacherScores();
