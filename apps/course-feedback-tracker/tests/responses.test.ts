@@ -4,7 +4,8 @@ import { describe, it } from "node:test";
 
 import { feishuSignature, verifyFeishuEvent } from "../functions/feedback-api/feishu-event";
 import type { FeedbackResponseRecord } from "../src/server/feishu/parsers";
-import { matchResponsesToTasks } from "../src/server/sync/reconcile-responses";
+import { matchResponsesToTasks, reconcileResponses, releaseDeletedResponses } from "../src/server/sync/reconcile-responses";
+import type { FeedbackTaskRepository } from "../src/server/tasks/repository";
 import type { StoredFeedbackTask } from "../src/server/tasks/types";
 
 function task(overrides: Partial<StoredFeedbackTask> = {}): StoredFeedbackTask {
@@ -142,6 +143,51 @@ describe("response matching by name", () => {
       tasks: [],
     });
     assert.equal(outcomes[0].collectionMonth, "2026-09");
+  });
+});
+
+describe("responses deleted in Feishu", () => {
+  it("frees the slot and reverts a task with no answers left to sent", () => {
+    const { tasks, changed } = releaseDeletedResponses(
+      [
+        task({ taskId: "t-both", status: "completed", studentResponseId: "rec-gone", parentResponseId: "rec-kept" }),
+        task({ taskId: "t-only", status: "completed", studentResponseId: "rec-gone-2", submittedAt: "2026-09-03T02:00:00.000Z", boundBy: "name" }),
+        task({ taskId: "t-untouched", status: "completed", studentResponseId: "rec-other" }),
+      ],
+      new Set(["rec-gone", "rec-gone-2"]),
+    );
+    assert.deepEqual(changed.map((t) => t.taskId), ["t-both", "t-only"]);
+    assert.equal(tasks[0].status, "completed");
+    assert.equal(tasks[0].studentResponseId, undefined);
+    assert.equal(tasks[0].parentResponseId, "rec-kept");
+    assert.equal(tasks[1].status, "sent");
+    assert.equal(tasks[1].submittedAt, undefined);
+  });
+
+  it("removes stored responses that are gone from Feishu or blank, keeps the rest", async () => {
+    const calls: { deleted: string[]; slots: string[] } = { deleted: [], slots: [] };
+    const repository = {
+      listByCollectionMonth: async () => [task({ collectionMonth: "2026-10", status: "completed", studentResponseId: "rec-deleted" })],
+      listAliases: async () => [],
+      listManualBindings: async () => [],
+      listResponseIds: async () => ["rec-live", "rec-deleted", "rec-blank"],
+      deleteResponses: async (ids: string[]) => void calls.deleted.push(...ids),
+      updateTaskSlots: async (tasks: StoredFeedbackTask[]) => void calls.slots.push(...tasks.map((t) => t.status)),
+      applyResponseOutcomes: async () => {},
+    } as unknown as FeedbackTaskRepository;
+    const at = Date.parse("2026-10-01T06:00:00.000Z");
+    const client = {
+      listAllRecords: async () => [
+        { record_id: "rec-live", fields: { 学生姓名: "姚凯榕", 老师姓名: "应雁心", 提交时间: at } },
+        { record_id: "rec-blank", fields: { 提交时间: at } },
+      ],
+    } as never;
+    const result = await reconcileResponses({ client, config: {} as never, repository, collectionMonth: "2026-10" });
+    assert.deepEqual(calls.deleted.sort(), ["rec-blank", "rec-deleted"]);
+    // 被删的答卷腾出位置后，rec-live 重新占上去，任务仍是已填写
+    assert.equal(result.removed, 2);
+    assert.equal(result.unlinked, 0);
+    assert.equal(result.matched, 1);
   });
 });
 

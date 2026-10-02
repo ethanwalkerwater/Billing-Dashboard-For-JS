@@ -5,6 +5,7 @@ import type { FeishuConfig } from "../feishu/config";
 import { FeishuSchemaError } from "../feishu/errors";
 import { parseScheduleRecord, parseStudentRecord } from "../feishu/parsers";
 import { planSelectOptionAppend } from "../feishu/options";
+import { ensureSelectFieldOptions } from "../feishu/sync-options";
 import { buildTaskSyncPlan } from "../tasks/reconcile";
 import type { FeedbackTaskRepository } from "../tasks/repository";
 import type { TaskSyncPlan } from "../tasks/types";
@@ -19,7 +20,9 @@ export interface GenerateTasksResult {
   excludedRecords: SkippedScheduleRecord[];
   reviewRecords: SkippedScheduleRecord[];
   invalidRecords: Array<{ recordId: string; reasons: string[] }>;
-  /** 课表里有、问卷下拉里没有的姓名。业务方决定不改飞书表，所以只提示，不写。 */
+  /** 本次自动追加进问卷「学生姓名」下拉的学生 */
+  studentsAddedToForm: string[];
+  /** 课表里有、问卷下拉里没有的姓名。学生会自动追加（预演时只列出），老师只提示。 */
   studentsMissingFromForm: string[];
   teachersMissingFromForm: string[];
 }
@@ -84,10 +87,26 @@ export async function generateMonthlyTasks(input: {
 
   const invalidRecords = [...grouped.invalidRecords, ...schedule.failures, ...students.failures];
 
-  // 预填值不在问卷下拉里时扫码后会静默失败。业务方不允许改飞书表，所以这里只读出来提示教务。
+  // 预填值不在问卷下拉里时扫码后会静默失败。
+  // 学生：业务方要求自动同步，把本月课表学生追加进「学生姓名」下拉。只追加不删除——
+  // 删掉单选选项会清空历史答卷里的这个值。姓名取学生表「学生姓名」，不带课表里「姓名-手机尾号」的后缀。
+  // 老师：仍只提示，由教务在飞书里手动加。
+  let studentsAddedToForm: string[] = [];
   let studentsMissingFromForm: string[] = [];
   let teachersMissingFromForm: string[] = [];
   if (grouped.tasks.length > 0) {
+    const studentNames = [...new Set(grouped.tasks.map((task) => task.studentName))];
+    if (!input.dryRun) {
+      studentsAddedToForm = (
+        await ensureSelectFieldOptions({
+          client: input.client,
+          appToken: input.config.feedbackAppToken,
+          tableId: input.config.responseTableId,
+          fieldName: "学生姓名",
+          requiredNames: studentNames,
+        })
+      ).addedNames;
+    }
     const fields = await input.client.listAllFields({
       appToken: input.config.feedbackAppToken,
       tableId: input.config.responseTableId,
@@ -95,7 +114,7 @@ export async function generateMonthlyTasks(input: {
     studentsMissingFromForm = planSelectOptionAppend({
       fields,
       fieldName: "学生姓名",
-      requiredNames: [...new Set(grouped.tasks.map((task) => task.studentName))],
+      requiredNames: studentNames,
     }).missingNames;
     teachersMissingFromForm = planSelectOptionAppend({
       fields,
@@ -124,6 +143,7 @@ export async function generateMonthlyTasks(input: {
     excludedRecords: grouped.excludedRecords,
     reviewRecords: grouped.reviewRecords,
     invalidRecords,
+    studentsAddedToForm,
     studentsMissingFromForm,
     teachersMissingFromForm,
   };

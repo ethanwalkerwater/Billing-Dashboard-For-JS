@@ -96,6 +96,14 @@ export function Workbench({ onSignOut }: { onSignOut: () => void | Promise<void>
     () => [...new Set(data.tasks.map((task) => task.studentName))].sort((a, b) => a.localeCompare(b, "zh-CN")),
     [data.tasks],
   );
+  // 包含已排除的老师，即使他这个月没课也能在这里移出名单。
+  const allTeachers = useMemo(
+    () =>
+      [...new Set([...data.allTasks.map((task) => task.teacherCanonicalName), ...data.excludedTeachers])].sort((a, b) =>
+        a.localeCompare(b, "zh-CN"),
+      ),
+    [data.allTasks, data.excludedTeachers],
+  );
   const monthOptions = useMemo(() => {
     const now = currentCollectionMonth();
     return Array.from({ length: 12 }, (_, index) => shiftMonth(now, -index));
@@ -189,7 +197,7 @@ export function Workbench({ onSignOut }: { onSignOut: () => void | Promise<void>
                   const result = await callFeedbackApi<SyncSummary>({ action: "sync-tasks", collectionMonth });
                   setSync(result);
                   await data.reload();
-                  return `名单已更新：新增 ${result.created} · 变更 ${result.updated} · 不变 ${result.unchanged}`;
+                  return `名单已更新：新增 ${result.created} · 变更 ${result.updated} · 不变 ${result.unchanged}${result.studentsAddedToForm?.length ? ` · 问卷新增学生 ${result.studentsAddedToForm.length}` : ""}`;
                 })
               }
             >
@@ -203,7 +211,7 @@ export function Workbench({ onSignOut }: { onSignOut: () => void | Promise<void>
                   const result = await callFeedbackApi<SyncSummary>({ action: "sync-responses", collectionMonth });
                   setSync((current) => ({ ...current, ...result }));
                   await data.reload();
-                  return `收到 ${result.monthTotal} 份 · 对上 ${result.matched} · 对不上 ${result.unlinked}`;
+                  return `收到 ${result.monthTotal} 份 · 对上 ${result.matched} · 对不上 ${result.unlinked}${result.removed ? ` · 清理已删除 ${result.removed}` : ""}`;
                 })
               }
             >
@@ -286,6 +294,20 @@ export function Workbench({ onSignOut }: { onSignOut: () => void | Promise<void>
                 <SelectItem value="both">双方都评了</SelectItem>
               </SelectContent>
             </Select>
+            <MultiSelectFilter
+              label="老师"
+              summary={data.excludedTeachers.length === 0 ? "不统计的老师" : `不统计 ${data.excludedTeachers.length} 位老师`}
+              options={allTeachers}
+              selected={data.excludedTeachers}
+              onChange={(next) =>
+                void run("设置不统计老师", async () => {
+                  await data.setExcludedTeachers(next);
+                  setSelected(new Set());
+                  return next.length === 0 ? "所有老师都参与统计" : `已排除 ${next.length} 位老师，应发和完成率已不含他们`;
+                })
+              }
+              className="w-40"
+            />
             {notice ? <span className="text-muted-foreground ml-2 text-xs">{notice}</span> : null}
             {data.error ? <span className="text-destructive ml-2 text-xs">{data.error}</span> : null}
             <span className="text-muted-foreground ml-auto text-xs">
