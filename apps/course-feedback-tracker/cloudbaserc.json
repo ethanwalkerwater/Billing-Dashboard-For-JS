@@ -12,14 +12,7 @@
       "runtime": "Nodejs20.19",
       "handler": "index.main",
       "installDependency": false,
-      "description": "月度反馈问卷：飞书课表同步、答卷对账、扫码短链接、飞书事件回调",
-      "triggers": [
-        {
-          "name": "reconcileResponses",
-          "type": "timer",
-          "config": "0 */5 * * * * *"
-        }
-      ]
+      "description": "月度反馈问卷：飞书课表同步、答卷对账、扫码短链接、飞书事件回调"
     }
   ],
   "framework": {

@@ -3,7 +3,9 @@
  *
  * 两种入口：
  *  1. 教务前端 `app.callFunction({ name: 'feedback-api', data: { action } })`，带 CloudBase 登录身份；
- *  2. HTTP 触发：`GET /t/:token` 学生扫码跳转、`POST /webhooks/feishu` 答卷事件、定时对账。
+ *  2. HTTP 触发：`GET /t/:token` 学生扫码跳转、`POST /webhooks/feishu` 答卷事件。
+ *
+ * 没有定时对账：答卷库只有工作台在看，工作台打开时自动刷新一次就够了，定时跑只是白耗资源点。
  *
  * 任务列表、筛选、改状态和导出都由前端经 PostgREST + RLS 直接读写 feedback_tasks，
  * 不走这个函数——函数只负责需要飞书密钥或公开访问的那几件事。
@@ -185,7 +187,7 @@ function summarize(result: {
   };
 }
 
-/** 上海时区的当前月份，定时对账用它当默认收集月份。 */
+/** 上海时区的当前月份，Webhook 和未指定月份的刷新用它当默认收集月份。 */
 function currentShanghaiMonth(): string {
   return new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit" })
     .format(new Date())
@@ -219,18 +221,6 @@ export async function main(event: HttpEvent & CallEvent) {
         return jsonResponse(404, { ok: false, error: "NOT_FOUND" });
       }
       return jsonResponse(405, { ok: false, error: "METHOD_NOT_ALLOWED" });
-    }
-
-    // ---- 定时触发：每 5 分钟补偿对账 ----
-    if ((event as { Type?: string }).Type === "Timer" || event.action === "sync-responses-timer") {
-      const { client, config } = feishu();
-      const result = await reconcileResponses({
-        client,
-        config,
-        repository: repository(),
-        collectionMonth: currentShanghaiMonth(),
-      });
-      return { ok: true, ...summarize(result) };
     }
 
     // ---- 教务前端 callFunction ----
