@@ -338,6 +338,42 @@ class MonthlyTeacherFeedbackTests(unittest.TestCase):
         self.assertEqual(3, record.scores["charisma_student"])
         self.assertEqual(9, record.scores["recommendation_student"])
 
+    def test_cumulative_detail_rebuild_applies_teacher_name_map(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            schedule_csv = tmp_path / "schedule.csv"
+            self.write_csv(
+                schedule_csv,
+                ["上课时间", "老师", "学生", "课程时长", "课程类型", "临时取消"],
+                [{"上课时间": "2026/03/02 10:00", "老师": "高老师", "学生": "Alice", "课程时长": "2", "课程类型": "1v1", "临时取消": ""}],
+            )
+            name_map_csv = tmp_path / "name_mapping.csv"
+            self.write_csv(
+                name_map_csv,
+                ["entity", "raw", "normalized", "notes"],
+                [{"entity": "teacher", "raw": "高", "normalized": "高志勇", "notes": ""}],
+            )
+            detail_csv = tmp_path / "respondent_detail.csv"
+            self.write_csv(
+                detail_csv,
+                ["teacher", "student", "score_learning_effect_student"],
+                [{"teacher": "高", "student": "Alice", "score_learning_effect_student": "5"}],
+            )
+
+            result = CUMULATIVE_MODULE.rebuild_historical_result_from_detail(
+                report_month="2026-03",
+                detail_path=detail_csv,
+                schedule_csv=schedule_csv,
+                name_map_csv=name_map_csv,
+                include_cancelled=False,
+                max_duration_hours=8.0,
+                exclude_course_type_keywords=[],
+                excluded_teachers=set(),
+            )
+
+            self.assertEqual(["高志勇"], [row["teacher"] for row in result["summary_rows"]])
+            self.assertEqual(2, float(result["summary_rows"][0]["teacher_total_hours"]))
+
     def test_generate_report_writes_teacher_scores_csv(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)

@@ -33,6 +33,7 @@ from monthly_teacher_feedback import (
     finalize_teacher_score_rows,
     generate_monthly_feedback_report,
     load_name_map,
+    normalize_teacher,
     parse_datetime,
     parse_month_or_exit,
     parse_name_set,
@@ -236,6 +237,9 @@ def rebuild_historical_result_from_detail(
         for row in detail_rows
         if row.get("teacher") and row.get("student")
     ]
+    # 历史明细里的老师名按当前姓名映射统一，才能和课表课时对上
+    for record in feedback_records:
+        record.teacher = normalize_teacher(record.teacher, name_map["teacher"])
     raw_feedback_records = [
         {
             "teacher": record.teacher,
