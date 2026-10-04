@@ -79,6 +79,7 @@ const els = {
   masterCsvInput: document.getElementById("masterCsvInput"),
   saveMasterButton: document.getElementById("saveMasterButton"),
   closeDrawerButton: document.getElementById("closeDrawerButton"),
+  unsavedDialog: document.getElementById("unsavedDialog"),
   exportSelectedButton: document.getElementById("exportSelectedButton"),
   exportAllButton: document.getElementById("exportAllButton"),
 };
@@ -249,14 +250,6 @@ function currentTeacherScores() {
 function currentTeacherScoreSource() {
   if (!state.month) return "未选择工资月份";
   return state.monthly.teacherScoreSourcesByMonth[state.month] || "未上传";
-}
-
-function currentFeedbackRanking() {
-  return buildFeedbackRanking(
-    state.master.baseSalaries,
-    currentTeacherScores(),
-    state.master.nameAliases,
-  );
 }
 
 function renderTeacherScoreStatus() {
@@ -966,6 +959,95 @@ function feedbackDescription(row) {
   return (labels.length ? `全职前 50%：${labels.join("、")}` : "全职 0 项前 50%") + extra;
 }
 
+function scoreLegendHtml(ranking) {
+  return `<div class="score-ranking-legend">
+    <strong>${escapeHtml(state.month || "未选择月份")} 当月排名</strong>
+    <span><i></i>绿色单元格 = 该项进入前 50%</span>
+    <span>参与排名 ${number(ranking.eligibleCount)} 人 · 名义前 50% ${number(ranking.winnerCount)} 人</span>
+    <span>分界线：学习提升 ${scoreNumber(ranking.metrics.learning.cutoff)} · 责任心 ${scoreNumber(ranking.metrics.responsibility.cutoff)} · 个人魅力 ${scoreNumber(ranking.metrics.charisma.cutoff)}</span>
+  </div>`;
+}
+
+function top50Text(row) {
+  if (!row) return "—";
+  if (!row.eligible) return row.rankingNote || "不参与排名";
+  return row.qualifiedMetricKeys.length
+    ? row.qualifiedMetricKeys.map((metric) => FEEDBACK_METRIC_LABELS[metric]).join("、")
+    : "0 项";
+}
+
+// 评分表的排名与总课时系数：打开时用已保存评分，编辑中用表格里的当前输入
+function scoreEditorModel(scores) {
+  const ranking = buildFeedbackRanking(state.master.baseSalaries, scores, state.master.nameAliases);
+  const rates = buildFeedbackRates(
+    state.master.baseSalaries,
+    scores,
+    { ...DEFAULT_PAYROLL_PARAMETERS, ...state.master.parameters },
+    state.master.nameAliases,
+  );
+  const teachers = ranking.teachers.map((row) => ({ ...row, totalRate: rates.get(row.key)?.rate }));
+  return { ranking, teachers, byTeacher: new Map(teachers.map((row) => [row.teacher, row])) };
+}
+
+function readEditorRows(key) {
+  const config = MASTER_CONFIG[key];
+  const rows = [];
+  for (const input of els.drawerBody.querySelectorAll("input[data-field]")) {
+    const rowIndex = Number(input.dataset.row);
+    const field = input.dataset.field;
+    const type = config.fields.find(([name]) => name === field)?.[2];
+    if (!rows[rowIndex]) rows[rowIndex] = {};
+    const rawValue = input.value.trim();
+    if (field === "extraRate") {
+      rows[rowIndex].extraRate = Number(rawValue || 0) / 100;
+      continue;
+    }
+    rows[rowIndex][field] = type === "number"
+      ? (key === "teacherScores" && rawValue === "" ? null : Number(rawValue || 0))
+      : rawValue;
+  }
+  return rows;
+}
+
+function teacherScoresFromEditorRows(rows) {
+  return rows
+    .filter((row) => row?.teacher)
+    .map((row) => ({
+      teacher: row.teacher,
+      metrics: {
+        learning: row.learning,
+        responsibility: row.responsibility,
+        charisma: row.charisma,
+      },
+      extraRate: Number.isFinite(row.extraRate) ? row.extraRate : 0,
+    }));
+}
+
+function refreshScorePreview() {
+  const { ranking, byTeacher } = scoreEditorModel(teacherScoresFromEditorRows(readEditorRows("teacherScores")));
+  const legend = els.drawerBody.querySelector(".score-ranking-legend");
+  if (legend) legend.outerHTML = scoreLegendHtml(ranking);
+  els.drawerBody.querySelectorAll("tbody tr").forEach((tr) => {
+    const row = byTeacher.get(tr.querySelector('[data-field="teacher"]')?.value.trim());
+    tr.querySelectorAll("input[data-field]").forEach((input) => {
+      const field = input.dataset.field;
+      if (FEEDBACK_METRIC_LABELS[field]) {
+        input.closest("td").classList.toggle("score-top50", Boolean(row?.qualifiedMetricKeys.includes(field)));
+      }
+    });
+    tr.querySelector('[data-preview="average"]').innerHTML = `<strong>${scoreNumber(row?.average)}</strong>`;
+    tr.querySelector('[data-preview="totalRate"]').innerHTML = `<strong>${row?.totalRate == null ? "—" : percent(row.totalRate)}</strong>`;
+    tr.querySelector('[data-preview="top50"]').textContent = top50Text(row);
+  });
+}
+
+function scorePreviewCells(rowIndex, row) {
+  return `<td class="numeric" data-preview="average"><strong>${scoreNumber(row?.average)}</strong></td>`
+    + extraRateCell(rowIndex, row?.extraRate)
+    + `<td class="numeric" data-preview="totalRate"><strong>${row?.totalRate == null ? "—" : percent(row.totalRate)}</strong></td>`
+    + `<td data-preview="top50">${escapeHtml(top50Text(row))}</td>`;
+}
+
 function extraRateCell(rowIndex, extraRate) {
   const value = extraRate ? Math.round(extraRate * 10000) / 100 : "";
   return `<td class="numeric"><input class="extra-rate-input" data-row="${rowIndex}" data-field="extraRate" type="number" step="0.5" min="0" placeholder="0" title="额外课时系数（百分点），如知识竞赛奖励 10 / 5 / 2.5" value="${value}" /></td>`;
@@ -1477,11 +1559,13 @@ function emptyMasterRow(key) {
 
 function deleteEditorRow(button) {
   button.closest("tr")?.remove();
+  state.editorDirty = true;
   els.drawerBody.querySelectorAll("tbody tr").forEach((row, rowIndex) => {
     row.querySelectorAll("[data-row]").forEach((input) => {
       input.dataset.row = String(rowIndex);
     });
   });
+  if (state.editingMaster === "teacherScores") refreshScorePreview();
 }
 
 function deleteCell() {
@@ -1502,7 +1586,7 @@ function addMasterRow() {
       <input data-row="${rowIndex}" data-field="${escapeHtml(field)}" type="${type === "number" ? "number" : "text"}" step="0.001" ${key === "teacherScores" && type === "number" ? 'min="1" max="5"' : ""} value="${escapeHtml(row[field] ?? "")}" />
     </td>
   `).join("")
-    + (key === "teacherScores" ? `<td>—</td>${extraRateCell(rowIndex, 0)}<td>—</td><td>保存后重排</td>` : "")
+    + (key === "teacherScores" ? scorePreviewCells(rowIndex, null) : "")
     + deleteCell();
   tbody.appendChild(tr);
   tr.querySelector("[data-delete-row]")?.addEventListener("click", (event) => deleteEditorRow(event.currentTarget));
@@ -1519,38 +1603,14 @@ function openMasterEditor(key) {
   els.addMasterRowButton.disabled = key === "parameters";
   els.uploadMasterButton.disabled = false;
 
-  const ranking = key === "teacherScores" ? currentFeedbackRanking() : null;
-  const rates = key === "teacherScores"
-    ? buildFeedbackRates(
-      state.master.baseSalaries,
-      currentTeacherScores(),
-      { ...DEFAULT_PAYROLL_PARAMETERS, ...state.master.parameters },
-      state.master.nameAliases,
-    )
-    : null;
+  const scoreModel = key === "teacherScores" ? scoreEditorModel(currentTeacherScores()) : null;
   const rows = key === "parameters"
     ? [state.master.parameters]
     : key === "teacherScores"
-      ? ranking.teachers.map((row) => ({
-        teacher: row.teacher,
-        ...(row.metrics || {}),
-        average: row.average,
-        extraRate: row.extraRate,
-        totalRate: rates.get(row.key)?.rate,
-        eligible: row.eligible,
-        rankingNote: row.rankingNote,
-        qualifiedMetricKeys: row.qualifiedMetricKeys,
-      }))
+      ? scoreModel.teachers.map((row) => ({ ...row, ...(row.metrics || {}) }))
       : state.master[key];
 
-  const scoreLegend = key === "teacherScores"
-    ? `<div class="score-ranking-legend">
-        <strong>${escapeHtml(state.month || "未选择月份")} 当月排名</strong>
-        <span><i></i>绿色单元格 = 该项进入前 50%</span>
-        <span>参与排名 ${number(ranking.eligibleCount)} 人 · 名义前 50% ${number(ranking.winnerCount)} 人</span>
-        <span>分界线：学习提升 ${scoreNumber(ranking.metrics.learning.cutoff)} · 责任心 ${scoreNumber(ranking.metrics.responsibility.cutoff)} · 个人魅力 ${scoreNumber(ranking.metrics.charisma.cutoff)}</span>
-      </div>`
-    : "";
+  const scoreLegend = scoreModel ? scoreLegendHtml(scoreModel.ranking) : "";
   const extraHeaders = key === "teacherScores" ? "<th>三项均分</th><th>额外课时系数 (%)</th><th>总课时系数</th><th>前 50% 项</th>" : "";
   const actionHeader = key === "parameters" ? "" : "<th>操作</th>";
 
@@ -1569,7 +1629,7 @@ function openMasterEditor(key) {
                   <input data-row="${rowIndex}" data-field="${escapeHtml(field)}" type="${type === "number" ? "number" : "text"}" step="0.001" ${key === "teacherScores" && type === "number" ? 'min="1" max="5"' : ""} value="${escapeHtml(row[field] ?? "")}" />
                 </td>
               `).join("")}
-              ${key === "teacherScores" ? `<td class="numeric"><strong>${scoreNumber(row.average)}</strong></td>${extraRateCell(rowIndex, row.extraRate)}<td class="numeric"><strong>${row.totalRate == null ? "—" : percent(row.totalRate)}</strong></td><td>${row.eligible ? (row.qualifiedMetricKeys.length ? row.qualifiedMetricKeys.map((metric) => FEEDBACK_METRIC_LABELS[metric]).join("、") : "0 项") : escapeHtml(row.rankingNote || "不参与排名")}</td>` : ""}
+              ${key === "teacherScores" ? scorePreviewCells(rowIndex, row) : ""}
               ${key === "parameters" ? "" : deleteCell()}
             </tr>
           `).join("")}
@@ -1580,6 +1640,7 @@ function openMasterEditor(key) {
   els.drawerBody.querySelectorAll("[data-delete-row]").forEach((button) => {
     button.addEventListener("click", (event) => deleteEditorRow(event.currentTarget));
   });
+  state.editorDirty = false;
   els.drawerBackdrop.classList.add("open");
   els.masterDrawer.classList.add("open");
   els.masterDrawer.setAttribute("aria-hidden", "false");
@@ -1588,23 +1649,7 @@ function openMasterEditor(key) {
 function saveMasterEditor() {
   const key = state.editingMaster;
   if (!key) return;
-  const config = MASTER_CONFIG[key];
-  const inputs = [...els.drawerBody.querySelectorAll("input")];
-  const rows = [];
-  for (const input of inputs) {
-    const rowIndex = Number(input.dataset.row);
-    const field = input.dataset.field;
-    const type = config.fields.find(([name]) => name === field)?.[2];
-    if (!rows[rowIndex]) rows[rowIndex] = {};
-    const rawValue = input.value.trim();
-    if (field === "extraRate") {
-      rows[rowIndex].extraRate = Number(rawValue || 0) / 100;
-      continue;
-    }
-    rows[rowIndex][field] = type === "number"
-      ? (key === "teacherScores" && rawValue === "" ? null : Number(rawValue || 0))
-      : rawValue;
-  }
+  const rows = readEditorRows(key);
   if (key === "parameters") {
     state.master.parameters = { ...state.master.parameters, ...rows[0] };
   } else if (key === "teacherScores") {
@@ -1612,17 +1657,7 @@ function saveMasterEditor() {
       window.alert("请先选择工资月份，再编辑当月评分。");
       return;
     }
-    state.monthly.teacherScoresByMonth[state.month] = rows
-      .filter((row) => row.teacher)
-      .map((row) => ({
-        teacher: row.teacher,
-        metrics: {
-          learning: row.learning,
-          responsibility: row.responsibility,
-          charisma: row.charisma,
-        },
-        extraRate: Number.isFinite(row.extraRate) ? row.extraRate : 0,
-      }));
+    state.monthly.teacherScoresByMonth[state.month] = teacherScoresFromEditorRows(rows);
     state.monthly.teacherScoreSourcesByMonth[state.month] = "网页端修改";
     persistMonthlyTeacherScores();
   } else {
@@ -1634,6 +1669,16 @@ function saveMasterEditor() {
   }
   closeDrawer();
   render();
+}
+
+function requestCloseDrawer() {
+  if (!state.editingMaster || els.unsavedDialog.open) return;
+  if (!state.editorDirty) {
+    closeDrawer();
+    return;
+  }
+  els.unsavedDialog.returnValue = "";
+  els.unsavedDialog.showModal();
 }
 
 function closeDrawer() {
@@ -1751,15 +1796,26 @@ els.masterCsvInput.addEventListener("change", async (event) => {
     window.alert(`CSV 导入失败：${error.message}`);
   }
 });
-els.closeDrawerButton.addEventListener("click", closeDrawer);
-els.drawerBackdrop.addEventListener("click", closeDrawer);
+els.closeDrawerButton.addEventListener("click", requestCloseDrawer);
+els.drawerBackdrop.addEventListener("click", requestCloseDrawer);
+els.drawerBody.addEventListener("input", () => {
+  state.editorDirty = true;
+  if (state.editingMaster === "teacherScores") refreshScorePreview();
+});
+els.unsavedDialog.addEventListener("close", () => {
+  if (els.unsavedDialog.returnValue === "save") saveMasterEditor();
+  if (els.unsavedDialog.returnValue === "discard") closeDrawer();
+});
+window.addEventListener("beforeunload", (event) => {
+  if (state.editingMaster && state.editorDirty) event.preventDefault();
+});
 els.exportSelectedButton.addEventListener("click", exportSelectedTeacher);
 els.exportAllButton.addEventListener("click", exportAllTeachers);
 document.querySelectorAll("[data-template]").forEach((button) => {
   button.addEventListener("click", () => downloadTemplate(button.dataset.template));
 });
 document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape") closeDrawer();
+  if (event.key === "Escape") requestCloseDrawer();
 });
 
 loadDefaults();

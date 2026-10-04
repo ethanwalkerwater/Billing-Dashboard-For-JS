@@ -158,6 +158,18 @@
     <div id="drawerBody" class="drawer-body"></div>
   </aside>
 
+  <dialog id="unsavedDialog" class="confirm-dialog">
+    <form method="dialog">
+      <h3>有未保存的修改</h3>
+      <p>关闭前要保存这些修改吗？放弃后将恢复为上次保存的内容。</p>
+      <div class="confirm-dialog-actions">
+        <button class="button ghost" value="cancel">继续编辑</button>
+        <button class="button outline" value="discard">放弃修改</button>
+        <button class="button primary" value="save" autofocus>保存并关闭</button>
+      </div>
+    </form>
+  </dialog>
+
   <script src="/assets/vendor/write-excel-file.min.js"></script>
   <script type="module" src="/assets/app.js"></script>
 </body>

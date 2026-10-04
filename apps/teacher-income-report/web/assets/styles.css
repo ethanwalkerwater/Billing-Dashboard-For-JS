@@ -1112,3 +1112,35 @@ p {
 .editor-table input.extra-rate-input {
   width: 88px;
 }
+
+.confirm-dialog {
+  width: min(420px, calc(100vw - 32px));
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius-lg);
+  background: hsl(var(--card));
+  color: hsl(var(--foreground));
+  padding: 20px;
+  box-shadow: 0 24px 60px hsl(222 47% 11% / .25);
+}
+
+.confirm-dialog::backdrop {
+  background: hsl(222 47% 11% / .4);
+}
+
+.confirm-dialog h3 {
+  margin: 0 0 8px;
+  font-size: 16px;
+}
+
+.confirm-dialog p {
+  margin: 0 0 20px;
+  color: hsl(var(--muted-foreground));
+  font-size: 13px;
+}
+
+.confirm-dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
