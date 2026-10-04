@@ -27,7 +27,6 @@ export function useSort<T>(rows: T[], accessors: Record<string, (row: T) => Valu
       return sign * (typeof x === "number" && typeof y === "number" ? x - y : String(x).localeCompare(String(y), "zh-CN"));
     });
     // accessors 每次渲染都是新对象，按 key 取用，不放进依赖
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows, state]);
   const sort: Sort = {
     ...state,

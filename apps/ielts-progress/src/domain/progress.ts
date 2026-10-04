@@ -347,6 +347,3 @@ export function positiveRate(value: Tally): number | null {
 export function averageDelta(value: Tally): number | null {
   return value.n === 0 ? null : value.deltaSum / value.n;
 }
-
-/** 样本少于这个数的老师灰显、不参与排名 */
-export const MIN_SAMPLES = 5;

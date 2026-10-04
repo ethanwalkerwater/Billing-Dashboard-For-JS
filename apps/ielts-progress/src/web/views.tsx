@@ -5,10 +5,11 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { KIND_LABELS, MIN_SAMPLES, OUTCOME_LABELS, SUBJECTS, averageDelta, emptyTally, groupTally, positiveRate, tally, teachersOf } from "@/domain/progress";
+import { KIND_LABELS, OUTCOME_LABELS, SUBJECTS, averageDelta, emptyTally, groupTally, positiveRate, tally, teachersOf } from "@/domain/progress";
 import type { Outcome, Sample, ScoreRecord, Subject, Tally } from "@/domain/progress";
 import { cn } from "@/lib/utils";
 import { Matrix, OutcomeRows, pct, signed, sortOutcomeRows } from "./charts";
+import { MultiSelect } from "./MultiSelect";
 import { SortHead, useSort } from "./sort";
 
 const SCORE_TABLE_URL = import.meta.env.VITE_FEISHU_SCORE_TABLE_URL as string | undefined;
@@ -216,7 +217,7 @@ export function OverviewView({ samples, subjects, nav }: { samples: Sample[]; su
         </Section>
         <Section
           title="正向率矩阵"
-          description={`颜色越深正向率越高；虚线格样本少于 ${MIN_SAMPLES} 条；点格子筛明细`}
+          description="颜色越深正向率越高；点格子筛明细"
           action={
             <Segmented
               label="矩阵列"
@@ -265,105 +266,138 @@ export function OverviewView({ samples, subjects, nav }: { samples: Sample[]; su
 
 // ---------- 老师 ----------
 
-export function TeacherView({ samples, teacher, onTeacher, nav }: { samples: Sample[]; teacher: string | null; onTeacher: (name: string) => void; nav: Nav }) {
+interface TeacherLine {
+  teacher: string;
+  rank: number;
+  tally: Tally;
+  students: number;
+}
+
+/** 选一位或几位老师：一位看详情，几位就并排比较。表、条形、矩阵用的是同一组老师。 */
+export function TeacherView({ samples, teachers, onTeachers, nav }: { samples: Sample[]; teachers: string[]; onTeachers: (next: string[]) => void; nav: Nav }) {
   const ranking = useMemo(() => teacherRowsOf(samples), [samples]);
-  const current = teacher && ranking.some((row) => row.key === teacher) ? teacher : (ranking[0]?.key ?? null);
-  const mine = useMemo(() => samples.filter((s) => current && teachersOf(s).includes(current)), [samples, current]);
-  const mineTally = useMemo(() => tally(mine), [mine]);
-  const ranked = ranking.filter((row) => row.tally.n >= MIN_SAMPLES);
-  const rank = ranked.findIndex((row) => row.key === current);
+  const names = ranking.map((row) => row.key);
+  const chosen = teachers.filter((name) => names.includes(name));
+  const selected = chosen.length > 0 ? chosen : names.slice(0, 1);
+  const selectedKey = selected.join("|");
+  // selectedKey 变了才重算；selectedSet 由它派生
+  const selectedSet = useMemo(() => new Set(selectedKey.split("|")), [selectedKey]);
 
-  const bySubject = useMemo(
-    () => SUBJECTS.flatMap((subject) => {
-      const value = tally(mine.filter((s) => s.subject === subject));
-      return value.n ? [{ key: subject, tally: value }] : [];
-    }),
-    [mine],
+  const mine = useMemo(() => samples.filter((s) => teachersOf(s).some((name) => selectedSet.has(name))), [samples, selectedSet]);
+  const all = useMemo(() => tally(samples), [samples]);
+
+  const lines = useMemo<TeacherLine[]>(
+    () =>
+      ranking
+        .map((row, index) => ({
+          teacher: row.key,
+          rank: index + 1,
+          tally: row.tally,
+          students: new Set(samples.filter((s) => teachersOf(s).includes(row.key)).map((s) => s.studentId)).size,
+        }))
+        .filter((line) => selectedSet.has(line.teacher)),
+    [ranking, samples, selectedSet],
   );
-
-  const months = useMemo(() => {
-    const allByMonth = groupTally(samples, (s) => [s.date.slice(0, 7)]);
-    return [...groupTally(mine, (s) => [s.date.slice(0, 7)])].map(([month, value]) => ({ month, value, all: allByMonth.get(month)! }));
-  }, [samples, mine]);
-  const monthSort = useSort(
-    months,
+  const { sorted, sort } = useSort(
+    lines,
     {
-      month: (r) => r.month,
-      n: (r) => r.value.n,
-      rate: (r) => positiveRate(r.value),
-      avg: (r) => averageDelta(r.value),
-      all: (r) => positiveRate(r.all),
-      diff: (r) => rateDiff(r.value, r.all),
+      teacher: (l) => l.teacher,
+      rank: (l) => -l.rank,
+      n: (l) => l.tally.n,
+      rate: (l) => positiveRate(l.tally),
+      avg: (l) => averageDelta(l.tally),
+      students: (l) => l.students,
+      up: (l) => l.tally.up,
+      flat: (l) => l.tally.flat,
+      down: (l) => l.tally.down,
     },
-    { key: "month", dir: "desc" },
+    { key: "rate", dir: "desc" },
   );
 
-  if (!current) return <Empty />;
+  const bySubject = useMemo(() => groupTally(mine, (s) => teachersOf(s).filter((t) => selectedSet.has(t)).map((t) => `${t}|${s.subject}`)), [mine, selectedSet]);
+  const byMonth = useMemo(() => groupTally(mine, (s) => teachersOf(s).filter((t) => selectedSet.has(t)).map((t) => `${t}|${s.date.slice(0, 7)}`)), [mine, selectedSet]);
+  const allBySubject = useMemo(() => groupTally(samples, (s) => [s.subject]), [samples]);
+  const allByMonth = useMemo(() => groupTally(samples, (s) => [s.date.slice(0, 7)]), [samples]);
+  const monthColumns = useMemo(() => [...new Set(mine.map((s) => s.date.slice(0, 7)))].sort(), [mine]);
+  const subjectColumns = SUBJECTS.filter((subject) => allBySubject.has(subject));
+  const order = sorted.map((line) => line.teacher);
+
+  if (names.length === 0) return <Empty />;
   return (
     <>
-      <div className="flex flex-wrap items-center gap-3">
-        <Select value={current} onValueChange={onTeacher}>
-          <SelectTrigger className="w-48">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {ranking.map((row) => (
-              <SelectItem key={row.key} value={row.key}>
-                {row.key}（{row.tally.n}）
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <span className="text-muted-foreground text-sm">
-          {rank >= 0 ? `正向率排名 ${rank + 1} / ${ranked.length}` : `样本少于 ${MIN_SAMPLES} 条，不参与排名`}
-        </span>
+      <div className="flex flex-wrap items-center gap-2">
+        <MultiSelect label="老师" options={names} selected={selected} onChange={(next) => onTeachers(next.length > 0 ? next : selected)} className="min-w-44" />
+        {selected.map((name) => (
+          <Badge key={name} variant="secondary" className="gap-1">
+            {name}
+            {selected.length > 1 ? (
+              <button type="button" aria-label={`移除 ${name}`} onClick={() => onTeachers(selected.filter((t) => t !== name))}>
+                <X className="size-3" />
+              </button>
+            ) : null}
+          </Badge>
+        ))}
+        <span className="text-muted-foreground text-xs">选几位老师就并排比较；排名按当前筛选下的正向率</span>
       </div>
 
-      <section className="grid grid-cols-2 gap-3 md:grid-cols-5">
-        <Stat label="样本" value={mineTally.n} className="col-span-2 md:col-span-1" />
-        <Stat label="正向率" value={pct(positiveRate(mineTally))} hint={<>全体 {pct(positiveRate(tally(samples)))}</>} />
-        <Stat label="平均提分" value={signed(averageDelta(mineTally), 2)} hint={<>全体 {signed(averageDelta(tally(samples)), 2)}</>} />
-        <Stat label="学生" value={new Set(mine.map((s) => s.studentId)).size} />
-        <Stat label="持平 / 下降" value={`${mineTally.flat} / ${mineTally.down}`} />
-      </section>
+      <Section title={selected.length > 1 ? `${selected.length} 位老师对比` : `${selected[0]} 概况`} description="点表头排序；最后一行是全体老师，作参照">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <SortHead label="老师" sortKey="teacher" sort={sort} text />
+              <SortHead label="排名" sortKey="rank" sort={sort} className="text-right" />
+              <SortHead label="样本" sortKey="n" sort={sort} className="text-right" />
+              <SortHead label="正向率" sortKey="rate" sort={sort} className="text-right" />
+              <SortHead label="平均提分" sortKey="avg" sort={sort} className="text-right" />
+              <SortHead label="学生" sortKey="students" sort={sort} className="text-right" />
+              <SortHead label="提升" sortKey="up" sort={sort} className="text-right" />
+              <SortHead label="持平" sortKey="flat" sort={sort} className="text-right" />
+              <SortHead label="下降" sortKey="down" sort={sort} className="text-right" />
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {sorted.map((line) => (
+              <TableRow key={line.teacher}>
+                <TableCell className="font-medium">{line.teacher}</TableCell>
+                <TableCell className="text-right tabular-nums">
+                  {line.rank} / {ranking.length}
+                </TableCell>
+                <TableCell className="text-right tabular-nums">{line.tally.n}</TableCell>
+                <TableCell className="text-right font-medium tabular-nums">{pct(positiveRate(line.tally))}</TableCell>
+                <TableCell className="text-right">
+                  <Delta value={averageDelta(line.tally)} digits={2} />
+                </TableCell>
+                <TableCell className="text-right tabular-nums">{line.students}</TableCell>
+                <TableCell className="text-right tabular-nums">{line.tally.up}</TableCell>
+                <TableCell className="text-right tabular-nums">{line.tally.flat}</TableCell>
+                <TableCell className="text-right tabular-nums">{line.tally.down}</TableCell>
+              </TableRow>
+            ))}
+            <TableRow className="text-muted-foreground">
+              <TableCell>全体老师</TableCell>
+              <TableCell />
+              <TableCell className="text-right tabular-nums">{all.n}</TableCell>
+              <TableCell className="text-right tabular-nums">{pct(positiveRate(all))}</TableCell>
+              <TableCell className="text-right tabular-nums">{signed(averageDelta(all), 2)}</TableCell>
+              <TableCell className="text-right tabular-nums">{new Set(samples.map((s) => s.studentId)).size}</TableCell>
+              <TableCell className="text-right tabular-nums">{all.up}</TableCell>
+              <TableCell className="text-right tabular-nums">{all.flat}</TableCell>
+              <TableCell className="text-right tabular-nums">{all.down}</TableCell>
+            </TableRow>
+          </TableBody>
+        </Table>
+      </Section>
 
       <div className="grid grid-cols-[minmax(0,1fr)] gap-4 xl:grid-cols-2">
-        <Section title="按科目">
-          <OutcomeRows rows={bySubject} head="科目" />
+        <Section title="按科目" description="首行「整体」是全体老师">
+          <Matrix teachers={order} columns={subjectColumns} cells={bySubject} overall={allBySubject} active={{ teacher: null, column: null }} onPick={() => {}} />
         </Section>
-        <Section title="按月份" description="和同月全体老师比；点表头排序">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <SortHead label="月份" sortKey="month" sort={monthSort.sort} />
-                <SortHead label="样本" sortKey="n" sort={monthSort.sort} className="text-right" />
-                <SortHead label="正向率" sortKey="rate" sort={monthSort.sort} className="text-right" />
-                <SortHead label="平均提分" sortKey="avg" sort={monthSort.sort} className="text-right" />
-                <SortHead label="同月全体" sortKey="all" sort={monthSort.sort} className="text-right" />
-                <SortHead label="差距" sortKey="diff" sort={monthSort.sort} className="text-right" />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {monthSort.sorted.map((row) => (
-                <TableRow key={row.month}>
-                  <TableCell className="tabular-nums">{row.month}</TableCell>
-                  <TableCell className="text-right tabular-nums">{row.value.n}</TableCell>
-                  <TableCell className="text-right tabular-nums">{pct(positiveRate(row.value))}</TableCell>
-                  <TableCell className="text-right">
-                    <Delta value={averageDelta(row.value)} digits={2} />
-                  </TableCell>
-                  <TableCell className="text-muted-foreground text-right tabular-nums">{pct(positiveRate(row.all))}</TableCell>
-                  <TableCell className="text-right">
-                    <PointDiff value={rateDiff(row.value, row.all)} />
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+        <Section title="按月份" description="首行「整体」是全体老师同月的正向率">
+          <Matrix teachers={order} columns={monthColumns} cells={byMonth} overall={allByMonth} active={{ teacher: null, column: null }} onPick={() => {}} />
         </Section>
       </div>
 
-      <Section title={`${current} 的学生 · ${mine.length} 条`} description="点表头排序，比如按提分从高到低">
+      <Section title={`学生明细 · ${mine.length} 条`} description="点表头排序，比如按提分从高到低">
         <SamplesTable samples={mine} nav={nav} />
       </Section>
     </>
@@ -458,7 +492,7 @@ export function MonthView({ samples, subjects, nav }: { samples: Sample[]; subje
           </TableHeader>
           <TableBody>
             {compareSort.sorted.map((row) => (
-              <TableRow key={row.teacher} className={cn(row.now.n < MIN_SAMPLES && "text-muted-foreground")}>
+              <TableRow key={row.teacher}>
                 <TableCell>
                   <button type="button" className="hover:underline" onClick={() => nav.teacher(row.teacher)}>
                     {row.teacher}

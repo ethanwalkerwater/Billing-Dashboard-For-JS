@@ -5,13 +5,13 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ISSUE_ORDER, SUBJECTS } from "@/domain/progress";
 import type { Issue, Subject } from "@/domain/progress";
 import { cn } from "@/lib/utils";
+import { ALL_TIME, MonthRangePicker, inRange } from "./MonthRangePicker";
+import type { MonthRange } from "./MonthRangePicker";
 import { useProgressData } from "./useProgressData";
 import { MonthView, OverviewView, StudentView, TeacherView, recordUrl } from "./views";
 import type { Nav } from "./views";
@@ -19,30 +19,14 @@ import type { Nav } from "./views";
 const SCORE_TABLE_URL = import.meta.env.VITE_FEISHU_SCORE_TABLE_URL as string | undefined;
 const FORM_URL = import.meta.env.VITE_FEISHU_FORM_URL as string | undefined;
 
-type RangePreset = "all" | "3m" | "6m" | "year" | "custom";
 type Tab = "overview" | "teacher" | "month" | "student";
 
-const RANGE_LABELS: Record<RangePreset, string> = { all: "全部时间", "3m": "近 3 个月", "6m": "近 6 个月", year: "今年", custom: "自定义" };
 const TABS: Array<[Tab, string]> = [
   ["overview", "总览"],
   ["teacher", "老师"],
   ["month", "月度"],
   ["student", "学生"],
 ];
-
-function shanghaiMonth(offset = 0): string {
-  const now = new Date();
-  const base = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + offset, 15));
-  return new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit" }).format(base).slice(0, 7);
-}
-
-function rangeOf(preset: RangePreset, from: string, to: string): [string, string] {
-  if (preset === "3m") return [shanghaiMonth(-2), "9999-12"];
-  if (preset === "6m") return [shanghaiMonth(-5), "9999-12"];
-  if (preset === "year") return [`${shanghaiMonth().slice(0, 4)}-01`, "9999-12"];
-  if (preset === "custom") return [from || "0000-01", to || "9999-12"];
-  return ["0000-01", "9999-12"];
-}
 
 function timeLabel(iso: string | null): string {
   if (!iso) return "尚未同步";
@@ -124,26 +108,22 @@ function IssuesPanel({ issues, unknownTypes }: { issues: Issue[]; unknownTypes: 
 export function Workbench({ onSignOut }: { onSignOut: () => void | Promise<void> }) {
   const { samples, records, issues, unknownTypes, syncedAt, loading, syncing, error, sync } = useProgressData();
   const [tab, setTab] = useState<Tab>("overview");
-  const [teacher, setTeacher] = useState<string | null>(null);
+  const [teachers, setTeachers] = useState<string[]>([]);
   const [student, setStudent] = useState<string | null>(null);
-  const [preset, setPreset] = useState<RangePreset>("all");
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
+  const [range, setRange] = useState<MonthRange>(ALL_TIME);
   const [subjects, setSubjects] = useState<Set<Subject>>(new Set(SUBJECTS));
   const [copied, setCopied] = useState(false);
 
-  const filtered = useMemo(() => {
-    const [start, end] = rangeOf(preset, from, to);
-    return samples.filter((sample) => {
-      const month = sample.date.slice(0, 7);
-      return month >= start && month <= end && subjects.has(sample.subject);
-    });
-  }, [samples, preset, from, to, subjects]);
+  const filtered = useMemo(
+    () => samples.filter((sample) => inRange(sample.date.slice(0, 7), range) && subjects.has(sample.subject)),
+    [samples, range, subjects],
+  );
+  const months = useMemo(() => new Set(samples.map((sample) => sample.date.slice(0, 7))), [samples]);
 
   // 各视图之间跳转：点老师 / 学生名字直接切到对应视图并选中
   const nav: Nav = {
     teacher: (name) => {
-      setTeacher(name);
+      setTeachers([name]);
       setTab("teacher");
       window.scrollTo({ top: 0 });
     },
@@ -190,7 +170,7 @@ export function Workbench({ onSignOut }: { onSignOut: () => void | Promise<void>
                 </a>
               </Button>
             ) : null}
-            <Button size="sm" onClick={sync} disabled={syncing} title="从飞书读取最新成绩和课表，约 20 秒；每天 7:00 也会自动同步">
+            <Button size="sm" onClick={sync} disabled={syncing} title="从飞书读取最新成绩和课表，约 20 秒；每次打开网站也会自动同步">
               {syncing ? <Loader2 className="animate-spin" /> : <RefreshCw />}
               {syncing ? "同步中…" : "同步"}
             </Button>
@@ -226,25 +206,7 @@ export function Workbench({ onSignOut }: { onSignOut: () => void | Promise<void>
             ))}
           </nav>
           <span className="bg-border mx-1 hidden h-6 w-px sm:block" />
-          <Select value={preset} onValueChange={(value) => setPreset(value as RangePreset)}>
-            <SelectTrigger className="w-32" size="sm">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {(Object.keys(RANGE_LABELS) as RangePreset[]).map((key) => (
-                <SelectItem key={key} value={key}>
-                  {RANGE_LABELS[key]}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          {preset === "custom" ? (
-            <span className="flex items-center gap-1.5 text-sm">
-              <Input type="month" value={from} onChange={(event) => setFrom(event.target.value)} className="h-8 w-36" aria-label="起始月份" />
-              至
-              <Input type="month" value={to} onChange={(event) => setTo(event.target.value)} className="h-8 w-36" aria-label="结束月份" />
-            </span>
-          ) : null}
+          <MonthRangePicker value={range} onChange={setRange} available={months} />
           <div className="flex rounded-md border p-0.5" role="group" aria-label="科目">
             {SUBJECTS.map((subject) => (
               <button
@@ -275,7 +237,7 @@ export function Workbench({ onSignOut }: { onSignOut: () => void | Promise<void>
         ) : tab === "overview" ? (
           <OverviewView samples={filtered} subjects={subjects} nav={nav} />
         ) : tab === "teacher" ? (
-          <TeacherView samples={filtered} teacher={teacher} onTeacher={setTeacher} nav={nav} />
+          <TeacherView samples={filtered} teachers={teachers} onTeachers={setTeachers} nav={nav} />
         ) : tab === "month" ? (
           <MonthView samples={filtered} subjects={subjects} nav={nav} />
         ) : (
