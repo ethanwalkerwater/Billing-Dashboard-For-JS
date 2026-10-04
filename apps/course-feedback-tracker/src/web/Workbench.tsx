@@ -1,5 +1,5 @@
 import { Download, ExternalLink, LogOut, RefreshCw, Search } from "lucide-react";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -161,6 +161,22 @@ export function Workbench({ onSignOut }: { onSignOut: () => void | Promise<void>
     }
   }
 
+  async function refreshResponses() {
+    await run("刷新反馈", async () => {
+      const result = await callFeedbackApi<SyncSummary>({ action: "sync-responses", collectionMonth });
+      setSync((current) => ({ ...current, ...result }));
+      await data.reload();
+      return `收到 ${result.monthTotal} 份 · 对上 ${result.matched} · 对不上 ${result.unlinked}${result.removed ? ` · 清理已删除 ${result.removed}` : ""}`;
+    });
+  }
+
+  // 打开工作台 / 切换月份时自动从飞书拉一次最新答卷。不设定时任务：数据只在这里看，打开时新就够了。
+  // 先显示库里已有的数据，刷新完再替换，不让老师干等。
+  useEffect(() => {
+    void refreshResponses();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [collectionMonth]);
+
   const toggleFilter = (status: TaskStatus | "all") =>
     setFilters((current) => ({ ...current, status: current.status === status ? "all" : status }));
 
@@ -206,14 +222,7 @@ export function Workbench({ onSignOut }: { onSignOut: () => void | Promise<void>
             <Button
               variant="outline"
               disabled={busy !== null}
-              onClick={() =>
-                void run("刷新反馈", async () => {
-                  const result = await callFeedbackApi<SyncSummary>({ action: "sync-responses", collectionMonth });
-                  setSync((current) => ({ ...current, ...result }));
-                  await data.reload();
-                  return `收到 ${result.monthTotal} 份 · 对上 ${result.matched} · 对不上 ${result.unlinked}${result.removed ? ` · 清理已删除 ${result.removed}` : ""}`;
-                })
-              }
+              onClick={() => void refreshResponses()}
             >
               <RefreshCw className={cn(busy === "刷新反馈" && "animate-spin")} /> 刷新反馈
             </Button>

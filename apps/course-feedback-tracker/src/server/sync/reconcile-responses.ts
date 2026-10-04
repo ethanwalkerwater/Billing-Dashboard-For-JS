@@ -203,7 +203,7 @@ export async function reconcileResponses(input: {
   ]);
 
   // 库里有、飞书里已经没有（或变成空行）的答卷：删掉引用，并把它占的任务位置腾出来。
-  // Webhook 只看本次推送的那几条；全量对账（定时 / 手动刷新）看整个月。
+  // Webhook 只看本次推送的那几条；全量对账（打开工作台 / 刷新反馈）看整个月。
   const kept = new Set([...responses.map((r) => r.recordId), ...schemaFailures.map((o) => o.responseRecordId)]);
   // 飞书整表读回 0 行更像是权限或接口出了问题，不能据此把整月答卷清空（手动绑定也存在答卷表里）。
   const deleted =
