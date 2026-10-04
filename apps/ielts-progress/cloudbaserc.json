@@ -12,14 +12,7 @@
       "runtime": "Nodejs20.19",
       "handler": "index.main",
       "installDependency": false,
-      "description": "雅思正向率：读飞书雅思成绩表和课表里的雅思课，写一行快照",
-      "triggers": [
-        {
-          "name": "daily",
-          "type": "timer",
-          "config": "0 0 7 * * * *"
-        }
-      ]
+      "description": "雅思正向率：打开网站或点同步时读飞书雅思成绩表和课表里的雅思课，写一行快照"
     }
   ]
 }

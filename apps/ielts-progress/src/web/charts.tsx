@@ -1,5 +1,5 @@
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { MIN_SAMPLES, averageDelta, positiveRate } from "@/domain/progress";
+import { averageDelta, positiveRate } from "@/domain/progress";
 import type { Tally } from "@/domain/progress";
 import { cn } from "@/lib/utils";
 
@@ -62,15 +62,10 @@ export interface OutcomeRow {
   tally: Tally;
 }
 
-/** 正向率排行：样本不足的放最后、灰显、不排名。sortOutcomeRows 负责排序。 */
+/** 按正向率从高到低；同率样本多的在前。 */
 export function sortOutcomeRows(rows: OutcomeRow[]): OutcomeRow[] {
-  const ranked = (row: OutcomeRow) => row.tally.n >= MIN_SAMPLES;
   return [...rows].sort(
-    (a, b) =>
-      Number(ranked(b)) - Number(ranked(a)) ||
-      (ranked(a) ? positiveRate(b.tally)! - positiveRate(a.tally)! : 0) ||
-      b.tally.n - a.tally.n ||
-      a.key.localeCompare(b.key, "zh-CN"),
+    (a, b) => (positiveRate(b.tally) ?? 0) - (positiveRate(a.tally) ?? 0) || b.tally.n - a.tally.n || a.key.localeCompare(b.key, "zh-CN"),
   );
 }
 
@@ -96,9 +91,7 @@ export function OutcomeRows({
         <span className="text-right">样本</span>
         <span className="hidden text-right sm:block">平均提分</span>
       </div>
-      {rows.map(({ key, tally }) => {
-        const few = tally.n < MIN_SAMPLES;
-        return (
+      {rows.map(({ key, tally }) => (
           <Tooltip key={key}>
             <TooltipTrigger asChild>
               <button
@@ -108,23 +101,20 @@ export function OutcomeRows({
                 className={cn(
                   "grid grid-cols-[4.5rem_1fr_3rem_2.5rem] sm:grid-cols-[7rem_1fr_3.5rem_3rem_4rem] items-center gap-3 rounded-md px-2 py-1.5 text-left text-sm transition-colors enabled:hover:bg-accent",
                   focused === key && "bg-accent ring-foreground/20 ring-1",
-                  few && "opacity-50",
                 )}
               >
                 <span className="truncate font-medium">{key}</span>
                 <OutcomeBar value={tally} />
-                <span className="text-right font-medium tabular-nums">{few ? "样本少" : pct(positiveRate(tally))}</span>
+                <span className="text-right font-medium tabular-nums">{pct(positiveRate(tally))}</span>
                 <span className="text-muted-foreground text-right tabular-nums">{tally.n}</span>
                 <span className="text-muted-foreground hidden text-right tabular-nums sm:block">{signed(averageDelta(tally), 2)}</span>
               </button>
             </TooltipTrigger>
             <TooltipContent side="top">
               <TallyTip value={tally} />
-              {few ? `（少于 ${MIN_SAMPLES} 条，不参与排名）` : null}
             </TooltipContent>
           </Tooltip>
-        );
-      })}
+      ))}
     </div>
   );
 }
@@ -135,7 +125,6 @@ const RAMP = ["#cde2fb", "#b7d3f6", "#9ec5f4", "#86b6ef", "#6da7ec", "#5598e7", 
 function Cell({ value, active, onClick }: { value: Tally | undefined; active: boolean; onClick: () => void }) {
   if (!value || value.n === 0) return <td className="text-muted-foreground/50 p-0.5 text-center text-xs">·</td>;
   const rate = positiveRate(value)!;
-  const few = value.n < MIN_SAMPLES;
   const step = Math.min(RAMP.length - 1, Math.floor(rate * RAMP.length));
   return (
     <td className="p-0.5">
@@ -146,11 +135,10 @@ function Cell({ value, active, onClick }: { value: Tally | undefined; active: bo
             onClick={onClick}
             className={cn(
               "flex h-10 w-full min-w-16 flex-col items-center justify-center rounded-[4px] text-xs tabular-nums transition-shadow hover:ring-2 hover:ring-foreground/30",
-              few && "border border-dashed bg-transparent text-muted-foreground",
-              !few && step >= 6 && "text-white",
+              step >= 6 && "text-white",
               active && "ring-2 ring-foreground",
             )}
-            style={few ? undefined : { backgroundColor: RAMP[step] }}
+            style={{ backgroundColor: RAMP[step] }}
           >
             <span className="font-medium">{pct(rate)}</span>
             <span className="opacity-75">n={value.n}</span>

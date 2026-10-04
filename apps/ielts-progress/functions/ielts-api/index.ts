@@ -1,6 +1,6 @@
 /**
  * ielts-api —— 雅思正向率唯一的云函数。
- * 前端 `callFunction({ name: 'ielts-api', data: { action: 'sync' } })`，另有每天 07:00 定时触发。
+ * 前端 `callFunction({ name: 'ielts-api', data: { action: 'sync' } })`：打开网站时自动调一次，「同步」按钮手动调。
  * 读飞书「雅思成绩」表全量 + 课表里课程类型含「雅思」的记录（服务端过滤，约 1700 行 / 20 秒），
  * 压成一行 JSON 快照整行写入 ielts_snapshots。飞书没读全就抛错，旧快照原样保留。
  */
@@ -96,13 +96,8 @@ async function sync() {
   return { scores: snapshot.scores.length, scheduleRows: scheduleRecords.length, lessons: lessons.length, syncedAt };
 }
 
-export async function main(event: { action?: string; Type?: string }) {
+export async function main(event: { action?: string }) {
   try {
-    // 定时触发没有登录用户。伪造这个字段最多换来一次同步，读不到任何数据。
-    if (event.Type === "Timer") {
-      await sync();
-      return { ok: true };
-    }
     await assertAdmin();
     if (event.action === "sync") return { ok: true, ...(await sync()) };
     return { ok: false, error: `未知操作：${event.action ?? "(空)"}` };
