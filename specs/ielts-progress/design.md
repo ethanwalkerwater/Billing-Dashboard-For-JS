@@ -112,7 +112,7 @@ apps/ielts-progress/
 ## 部署
 
 - 云函数 `ielts-api` + 每日定时触发；静态站点 CloudBase `/ielts/`。
-- 门户 `jingshi.vercel.app/ielts` 的 308 跳转在 `菁仕后台主页` 仓库里另行添加。
+- 门户短链接 `jingshi.vercel.app/IELTS_Positive`（308，配置在 `菁仕后台主页` 仓库）。
 
 ## 2026-10-02 变更
 
