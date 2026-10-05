@@ -12,7 +12,7 @@
 | 学生 | 每个学生各科最近一次的提分；点开看完整成绩记录（含阶段模考）和各老师带来的提升 |
 
 - 登录与反馈追踪、薪资预警共用（`jsjy`，白名单表 `feedback_admins`）。
-- 静态站点：CloudBase 托管 `/ielts/`；门户短链接 `jingshi.vercel.app/ielts` 在 `菁仕后台主页` 仓库里配 308。
+- 访问：<https://jingshi.vercel.app/IELTS_Positive>（308 → CloudBase 静态托管 `/ielts/`；跳转在 `菁仕后台主页` 仓库 `src/app/IELTS_Positive/route.ts`，大小写敏感）。
 - 设计与口径：[`specs/ielts-progress/design.md`](../../specs/ielts-progress/design.md)。
 
 ## 飞书
