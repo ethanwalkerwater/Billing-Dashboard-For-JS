@@ -91,3 +91,13 @@
     text-rendering: optimizeLegibility;
   }
 }
+
+/* 同步状态条底部的往返进度条（时长未知，用不确定进度） */
+@keyframes sync-bar {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(300%);
+  }
+}
