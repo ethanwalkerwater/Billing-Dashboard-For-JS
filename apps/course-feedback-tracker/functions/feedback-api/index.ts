@@ -12,7 +12,7 @@
  */
 import cloudbase from "@cloudbase/node-sdk";
 
-import { collectionMonthToCourseMonth } from "../../src/domain/month";
+import { collectionMonthToCourseMonth, shiftMonth } from "../../src/domain/month";
 import { buildPrefilledFormUrl } from "../../src/domain/form-url";
 import { buildFeedbackCsv, buildScheduleCsv } from "../../src/server/export/csv";
 import { FeishuClient } from "../../src/server/feishu/client";
@@ -20,15 +20,9 @@ import { loadFeishuConfig } from "../../src/server/feishu/config";
 import { parseStudentRecord } from "../../src/server/feishu/parsers";
 import { generateMonthlyTasks } from "../../src/server/sync/generate-tasks";
 import { reconcileResponses } from "../../src/server/sync/reconcile-responses";
-import { buildScoreRequest } from "../../src/server/scores/build-request";
-import type { ScoreHistoryRow, SnapshotRow } from "../../src/server/scores/build-request";
-import {
-  EXCLUDED_TEACHERS_TABLE,
-  RdbFeedbackTaskRepository,
-  SCORE_HISTORY_TABLE,
-  SNAPSHOTS_TABLE,
-  TASKS_TABLE,
-} from "../../src/shared/rdb";
+import { LIVE_SCORES_FROM, recomputeMonth } from "../../src/server/scores/recompute";
+import type { ScoreRequest, ScoreResponse, ScoreStore, StoredResult } from "../../src/server/scores/recompute";
+import { RdbFeedbackTaskRepository, SCORE_RESULTS_TABLE, SNAPSHOTS_TABLE, TASKS_TABLE } from "../../src/shared/rdb";
 import type { PostgrestLike } from "../../src/shared/rdb";
 import { verifyFeishuEvent } from "./feishu-event";
 import { createServiceDb } from "./service-db";
@@ -48,11 +42,8 @@ interface HttpEvent {
 interface CallEvent {
   action?: string;
   collectionMonth?: string;
-  /** teacher-report：要看明细/文字评价的课程月份 */
+  /** recompute-scores：手动重算的课程月份 */
   courseMonth?: string;
-  /** teacher-report：累计评分的月份范围（含两端），留空 = 全部 */
-  cumulativeFrom?: string;
-  cumulativeTo?: string;
   dryRun?: boolean;
 }
 
@@ -71,36 +62,59 @@ async function selectAll<T>(table: string, columns: string): Promise<T[]> {
   return result.data ?? [];
 }
 
-/**
- * 老师评分：读快照、历史分数、别名、不统计老师，交给 Python 云函数 feedback-score 计算。
- * 计算本身 0.1 秒级；慢的是从飞书读答卷，那一步由前端先调 sync-responses 完成。
- */
-async function teacherReport(event: CallEvent) {
-  const [snapshots, history, aliases, excluded, teachers] = await Promise.all([
-    selectAll<SnapshotRow & { synced_at: string; row_count: number }>(SNAPSHOTS_TABLE, "kind,month,csv,row_count,synced_at"),
-    selectAll<ScoreHistoryRow>(SCORE_HISTORY_TABLE, "*"),
-    repository().listAliases(),
-    selectAll<{ teacher_name: string }>(EXCLUDED_TEACHERS_TABLE, "teacher_name"),
-    selectAll<{ teacher_canonical_name: string }>(TASKS_TABLE, "teacher_canonical_name"),
-  ]);
-  const request = buildScoreRequest({
-    snapshots,
-    history,
-    aliases,
-    excludedTeachers: excluded.map((row) => row.teacher_name),
-    // 评分脚本会把老师名去空格、去「老师」后缀；用课表写法还原显示名（Valentina Lin、数学杨老师）。
-    teacherNames: [...new Set(teachers.map((row) => row.teacher_canonical_name))],
-    detailMonth: event.courseMonth,
-    cumulativeFrom: event.cumulativeFrom,
-    cumulativeTo: event.cumulativeTo,
-  });
+async function selectRows<T>(table: string, columns: string, filters: Record<string, string> = {}): Promise<T[]> {
+  let query = db().from(table).select<T>(columns);
+  for (const [column, value] of Object.entries(filters)) query = query.eq(column, value);
+  const result = await query;
+  if (result.error) throw new Error(`读取 ${table} 失败：${result.error.message}`);
+  return result.data ?? [];
+}
+
+/** 评分结果的存取都走服务端身份；计算交给 Python 云函数 feedback-score。 */
+const scoreStore: ScoreStore = {
+  snapshot: async (kind, month) =>
+    (await selectRows<{ csv: string }>(SNAPSHOTS_TABLE, "csv", { kind, month }))[0]?.csv,
+  result: async (courseMonth) =>
+    (await selectRows<Pick<StoredResult, "status" | "source" | "inputs_hash">>(SCORE_RESULTS_TABLE, "status,source,inputs_hash", { course_month: courseMonth }))[0],
+  saveResult: async (row) => {
+    const result = await db().from(SCORE_RESULTS_TABLE).upsert([row as unknown as Record<string, unknown>], { onConflict: "course_month" });
+    if (result.error) throw new Error(`保存评分结果失败：${result.error.message}`);
+  },
+  aliases: () => repository().listAliases(),
+  // 评分脚本会把老师名去空格、去「老师」后缀；用课表写法还原显示名（Valentina Lin、数学杨老师）。
+  teacherNames: async () => [...new Set((await selectRows<{ teacher_canonical_name: string }>(TASKS_TABLE, "teacher_canonical_name")).map((row) => row.teacher_canonical_name))],
+};
+
+async function computeScores(request: ScoreRequest): Promise<ScoreResponse> {
   const response = await app.callFunction({ name: "feedback-score", data: request as never });
-  const result = response.result as { ok: boolean; error?: string };
-  if (!result?.ok) throw new Error(result?.error ?? "评分计算失败");
-  return {
-    ...result,
-    syncedAt: snapshots.map(({ kind, month, row_count, synced_at }) => ({ kind, month, rowCount: row_count, syncedAt: synced_at })),
-  };
+  return response.result as ScoreResponse;
+}
+
+function recompute(courseMonth: string, force = false) {
+  return recomputeMonth({ store: scoreStore, compute: computeScores, courseMonth, currentMonth: currentShanghaiMonth(), force });
+}
+
+/**
+ * 刷新某个收集月份的答卷后：重算它对应的课程月份（答卷没变就跳过）。
+ * 如果上一个课程月份还没定稿（它的收集月份刚过完），再把上个月的答卷拉一遍、算一次并定稿——每月只发生一次。
+ */
+async function refreshScoresAfterSync(collectionMonth: string) {
+  const scores: Record<string, string> = {};
+  const courseMonth = collectionMonthToCourseMonth(collectionMonth);
+  scores[courseMonth] = await recompute(courseMonth);
+  const previous = shiftMonth(courseMonth, -1);
+  const stored = await scoreStore.result(previous);
+  if (
+    collectionMonth === currentShanghaiMonth() &&
+    previous >= LIVE_SCORES_FROM &&
+    stored?.status !== "final" &&
+    (await scoreStore.snapshot("schedule", previous))
+  ) {
+    const { client, config } = feishu();
+    await reconcileResponses({ client, config, repository: repository(), collectionMonth: courseMonth });
+    scores[previous] = await recompute(previous);
+  }
+  return scores;
 }
 
 function repository() {
@@ -289,20 +303,20 @@ export async function main(event: HttpEvent & CallEvent) {
           dryRun: event.dryRun,
         });
         const { plan: _plan, ...summary } = result;
-        return { ok: true, actorId: uid, ...summary };
+        const scores = event.dryRun ? {} : { [result.courseMonth]: await recompute(result.courseMonth) };
+        return { ok: true, actorId: uid, ...summary, scores };
       }
       case "sync-responses": {
         const { client, config } = feishu();
-        const result = await reconcileResponses({
-          client,
-          config,
-          repository: repository(),
-          collectionMonth: event.collectionMonth ?? currentShanghaiMonth(),
-        });
-        return { ok: true, actorId: uid, ...summarize(result), outcomes: result.outcomes };
+        const collectionMonth = event.collectionMonth ?? currentShanghaiMonth();
+        const result = await reconcileResponses({ client, config, repository: repository(), collectionMonth });
+        const scores = await refreshScoresAfterSync(collectionMonth);
+        return { ok: true, actorId: uid, ...summarize(result), outcomes: result.outcomes, scores };
       }
-      case "teacher-report": {
-        return teacherReport(event);
+      case "recompute-scores": {
+        // 改了别名等口径后手动重算某月（已定稿的月份也会重算）。
+        if (!event.courseMonth) throw new Error("缺少 courseMonth");
+        return { ok: true, scores: { [event.courseMonth]: await recompute(event.courseMonth, true) } };
       }
       case "export-schedule-csv": {
         if (!event.collectionMonth) throw new Error("缺少 collectionMonth");

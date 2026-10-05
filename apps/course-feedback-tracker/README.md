@@ -21,7 +21,7 @@
 |---|---|
 | 任务列表、筛选、统计、改状态、任务清单导出 | 浏览器用 `@cloudbase/js-sdk` 的 `rdb()`（PostgREST）直连数据库，RLS 只放行 `feedback_admins` 里的管理员 |
 | 飞书课表同步、答卷对账、扫码短链接 302、飞书事件回调、课表/反馈 CSV 导出、老师评分取数 | 云函数 `feedback-api`（Node） |
-| 老师加权评分计算 | 云函数 `feedback-score`（Python 3.10，128MB），**纯计算**：直接复用 `apps/teacher-feedback/scripts` 的月度/累计脚本（打包时复制），不读库、不碰密钥 |
+| 老师加权评分计算 | 云函数 `feedback-score`（Python 3.10，128MB），**纯计算、一次一个月**：直接复用 `apps/teacher-feedback/scripts` 的脚本（打包时复制），不读库、不碰密钥；只在数据变了时由 `feedback-api` 调用，结果存 `feedback_score_results` |
 | 二维码单张 PNG 与批量 ZIP | 浏览器里用 canvas + JSZip 生成，不经过云存储。**二维码直接编码带预填的飞书表单链接**，扫码零中转 |
 | 界面 | shadcn/ui 默认主题（zinc），Tailwind v4；组件按 shadcn 源码手写在 `src/components/ui/`（button/badge/card/input/checkbox/table/sheet/select/alert/separator） |
 | 状态变更审计 | 数据库触发器 `feedback_tasks_status_audit`，前端和云函数都绕不过 |
@@ -84,7 +84,8 @@ tcb db execute --sql "$(cat migrations/202609170003_response_unlinked_status.sql
 tcb db execute --sql "$(cat migrations/202609170004_name_binding.sql)"
 tcb db execute --sql "$(cat migrations/202610020001_excluded_teachers.sql)"
 tcb db execute --sql "$(cat migrations/202610050001_teacher_scores.sql)"
-npx tsx scripts/backfill-teacher-scores.ts   # 一次性：导入历史分数、老看板姓名映射、补 2026-05 起的快照（可重复执行）
+tcb db execute --sql "$(cat migrations/202610050002_score_results.sql)"
+npx tsx scripts/backfill-teacher-scores.ts   # 一次性：历史分数 + 补算分项 + 各月结果入库（可重复执行，需本机 python3）
 ```
 
 > 测试必须用 `npm run test:course-feedback-tracker` 跑（工作区脚本），不能在仓库根目录直接
@@ -173,26 +174,38 @@ npx tsx scripts/backfill-teacher-scores.ts   # 一次性：导入历史分数、
 页面顶部「问卷跟踪 | 老师评分」切换（`#/scores`），同一个登录。老看板 <https://jingshi-feedback-service.vercel.app/> 的功能都搬了过来，
 不用再导出 CSV、再上传。
 
-- **月度评分**：课程月份 M = M 月课表 + M+1 月收到的反馈。排名图（总评分 / 三项指标 × 总 / 学生 / 家长）、明细表、
-  点老师打开抽屉看分项、份数和每一条反馈。导出 Excel、评分表 CSV、完整排名 PNG。
-- **累计评分**：先按月算各项分数，再按老师每月实际课时加权平均，可选月份范围；导出 Excel（含逐月贡献，可复算）和
-  与老看板 `teacher_scores.csv` 同格式的 CSV（家长报告 `sync:cumulative-teacher-scores` 直接可用）。
-- **文字评价**：按老师分组看改进方向和文字建议，默认只看有具体建议的（隐藏「已经很好了」），可搜索、导出。
+- **月度评分**：课程月份 M = M 月课表 + M+1 月收到的反馈。排名图（总评分 / 三项指标 × 总 / 学生 / 家长，前半区绿、后半区蓝，
+  21 人则前 11 名为前半区）、明细表、点老师打开抽屉看分项、份数和每一条反馈。导出 Excel、评分表 CSV、完整排名 PNG。
+- **累计评分**：按老师每月实际课时加权平均，可选月份范围；导出 Excel（含逐月贡献）和与老看板 `teacher_scores.csv`
+  同格式的 CSV（家长报告 `sync:cumulative-teacher-scores` 直接可用）。
+- **文字评价**：按老师分组看改进方向和文字建议，默认只看有具体建议的，可搜索、导出。
+- **排除老师**：和老看板一样勾选即排除、剩下的重新排名，只影响自己的浏览（记在本机）。长期不参与统计的老师在问卷跟踪页
+  「不统计的老师」里设，两边都生效。
 
-数据流：「生成名单」时存课程月份的课表快照，「刷新反馈」（打开页面会自动执行）时存收集月份的答卷快照，都在
-`feedback_source_snapshots`。评分页打开时先用快照算一次（约 1–2 秒），同时从飞书刷新答卷，刷新完再算一次。
-计算本身零点几秒，所以不缓存结果、也没有「重新计算」按钮。顶部显示两份数据各自的同步时间。
+### 存结果，不现算
 
-口径：
+每个课程月份的结果（老师分数含分项、逐条明细）存在 `feedback_score_results`，**页面直接读这张表**：切月份、切标签、
+改累计范围、排除老师都不调云函数（累计和重排名在浏览器里算，`src/web/scoring.ts`，与 Python 脚本逐位一致，有测试锁住）。
 
-- **2026-09 课程月份起实时计算**（`LIVE_SCORES_FROM`），重复反馈只算第一份，和问卷跟踪的占位规则一致；
-  问卷跟踪页会列出重复提交的反馈提醒教务。
-- **之前的月份是定稿**：从老看板累计结果 `monthly_score_contributions.csv` 原样导入 `feedback_score_history`，不再重算。
-  导入后按老看板公式重新累计，46 位老师的排名和总评分与已公布的 `cumulative/teacher_scores.csv` 逐位一致。
-  老看板 `outputs/teacher-feedback/2026-09/` 那份「官方 9 月」与实时计算对不上（每位老师只有 1 个有效分，看起来是早期不完整数据），已由实时计算取代。
-- 定稿月份只有总分（没有学生/家长分项）；2026-05 起有逐条反馈，文字评价可看，02–04 月只有分数。
-- 姓名统一用本系统的别名表；老看板 `name_mapping.csv` 里的老师写法已导入（Valentina林 → Valentina Lin、刘峥 → Kevin Liu、高 → 高志勇），
-  显示名一律用课表写法。「不统计的老师」同样作用于评分和累计。
+| 时机 | 做什么 |
+|---|---|
+| 「刷新反馈」（打开任一页面会自动执行） | 存本月答卷快照；对应课程月份的输入（课表快照 + 答卷快照 + 别名 + 算法版本）做哈希，**变了才**调 `feedback-score` 重算并存库 |
+| 「生成名单」 | 存课程月份课表快照，同上按哈希决定是否重算 |
+| 新的收集月份第一次刷新 | 把上个月的答卷再全量拉一遍、算一次，标为 `final`（定稿），之后不再自动重算 |
+| 手动 | `callFunction({ action: "recompute-scores", courseMonth })`：改了别名等口径后强制重算某月（含已定稿的） |
+
+资源点：平时打开、切换零计算；答卷有变化时一次计算约 0.4 秒（128MB）。
+
+### 口径
+
+- **2026-09 课程月份起按快照计算**（`LIVE_SCORES_FROM`），重复反馈只算第一份，和问卷跟踪的占位规则一致；问卷跟踪页列出重复提交提醒教务。
+- **之前的月份是已公布的定稿**（`source = history`）：分数、课时、份数原样取自老看板 `monthly_score_contributions.csv`，不改。
+  学生/家长分项和逐条明细是按原始反馈**补算**的：2026-05 起用飞书答卷，02–04 月用老看板留下的
+  `outputs/teacher-feedback/<月>/respondent_detail.csv`（飞书里已经没有这些月份的答卷和课表）。
+- 累计评分按老看板公式在浏览器里重算：用同样输入（02–08 月），46 位老师的排名和三位小数与 Python 结果逐位一致。
+  老看板那份「官方 9 月」（每位老师只有 1 个有效分，像是早期不完整数据）已由计算结果取代。
+- 姓名统一用本系统的别名表；老看板 `name_mapping.csv` 的老师写法已导入（Valentina林 → Valentina Lin、刘峥 → Kevin Liu、高 → 高志勇），
+  显示名一律用课表写法。
 - 评分脚本只加了一个参数 `dedupe_keep`（默认 `last`，老看板行为不变），其余算法一行没改。
 
 ## 与老师反馈系统衔接

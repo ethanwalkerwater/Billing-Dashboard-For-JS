@@ -7,6 +7,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { cn } from "@/lib/utils";
 import { METRICS, formatHours, formatPercent, formatScore } from "./report-types";
 import type { MetricId } from "./report-types";
+import { topHalfSize } from "./ScoreChart";
 
 export interface ScoreTableRow {
   teacher: string;
@@ -42,6 +43,8 @@ export function ScoreTable({
   const [asc, setAsc] = useState(true);
   const [showUnscored, setShowUnscored] = useState(false);
   const unscored = rows.filter((row) => row.overall == null).length;
+  // 按总评分名次分前后半区（并列名次跟着名次走），与排名图同一个分界
+  const topSize = topHalfSize(rows.length - unscored);
 
   const sorted = useMemo(() => {
     const value = (row: ScoreTableRow): number | null | undefined => {
@@ -104,14 +107,26 @@ export function ScoreTable({
             {METRICS.map((metric) => head(metric.short, metric.id, "text-right"))}
             <TableHead className="text-right font-semibold">总评分</TableHead>
             {head(showMonths ? "累计课时" : "课时", "hours", "text-right")}
-            {showMonths ? head("月份", "monthCount", "text-right") : head("反馈", "responses", "text-right")}
+            {showMonths ? head("参与月数", "monthCount", "text-right") : head("反馈", "responses", "text-right")}
             {head("覆盖率", "coverage", "text-right")}
           </TableRow>
         </TableHeader>
         <TableBody>
           {visible.map((row) => (
             <TableRow key={row.teacher} className="cursor-pointer" onClick={() => onSelect(row.teacher)}>
-              <TableCell className="text-muted-foreground font-mono tabular-nums">{row.rank ?? "—"}</TableCell>
+              <TableCell className="text-muted-foreground font-mono tabular-nums">
+                <span className="inline-flex items-center gap-2">
+                  {row.rank != null ? (
+                    <span
+                      className={cn("size-2 rounded-full", row.rank <= topSize ? "bg-chart-top" : "bg-chart-bottom")}
+                      title={row.rank <= topSize ? "前半区" : "后半区"}
+                    />
+                  ) : (
+                    <span className="size-2" />
+                  )}
+                  {row.rank ?? "—"}
+                </span>
+              </TableCell>
               <TableCell>
                 <span className="font-medium">{row.teacher}</span>
                 {!showMonths && row.responses < THIN_SAMPLE ? (
