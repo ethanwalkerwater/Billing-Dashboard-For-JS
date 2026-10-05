@@ -13,6 +13,15 @@
       "handler": "index.main",
       "installDependency": false,
       "description": "月度反馈问卷：飞书课表同步、答卷对账、扫码短链接、飞书事件回调"
+    },
+    {
+      "name": "feedback-score",
+      "timeout": 60,
+      "memorySize": 128,
+      "runtime": "Python3.10",
+      "handler": "index.main",
+      "installDependency": false,
+      "description": "老师加权评分：复用 apps/teacher-feedback 的月度/累计脚本，纯计算"
     }
   ],
   "framework": {

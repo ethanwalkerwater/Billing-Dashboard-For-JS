@@ -25,7 +25,8 @@ describe("teacher-feedback CSV compatibility", () => {
         fields: {
           上课时间: Date.parse("2026-08-12T02:00:00.000Z"),
           老师: "应雁心",
-          学生: [{ id: "student-1" }],
+          // 飞书 records 接口的真实形状
+          学生: [{ record_ids: ["student-1"], table_id: "tbl", text: "姚凯榕-", type: "text" }],
           课程时长: 1.5,
           课程类型: "IG数学",
           授课类型: "1v1",

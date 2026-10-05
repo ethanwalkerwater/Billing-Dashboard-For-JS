@@ -36,6 +36,8 @@ export const TASKS_TABLE = "feedback_tasks";
 export const RESPONSES_TABLE = "feedback_responses";
 export const ALIASES_TABLE = "feedback_name_aliases";
 export const EXCLUDED_TEACHERS_TABLE = "feedback_excluded_teachers";
+export const SNAPSHOTS_TABLE = "feedback_source_snapshots";
+export const SCORE_HISTORY_TABLE = "feedback_score_history";
 
 function unwrap<T>(result: PostgrestResult<T>, context: string): T[] {
   if (result.error) throw new Error(`${context}失败：${result.error.message}`);
@@ -124,6 +126,13 @@ export class RdbFeedbackTaskRepository implements FeedbackTaskRepository {
         .eq("task_id", task.taskId);
       if (result.error) throw new Error(`清理任务答卷位置失败：${result.error.message}`);
     }
+  }
+
+  async saveSnapshot(kind: "schedule" | "feedback", month: string, csv: string, rowCount: number): Promise<void> {
+    const result = await this.db
+      .from(SNAPSHOTS_TABLE)
+      .upsert([{ kind, month, csv, row_count: rowCount, synced_at: new Date().toISOString() }], { onConflict: "kind,month" });
+    if (result.error) throw new Error(`保存${kind === "schedule" ? "课表" : "答卷"}快照失败：${result.error.message}`);
   }
 
   async applyResponseOutcomes(outcomes: ResponseOutcome[]): Promise<void> {

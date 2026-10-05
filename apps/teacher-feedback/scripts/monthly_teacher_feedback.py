@@ -906,6 +906,7 @@ def read_feedback_latest(
     feedback_month_offset: int = 1,
     feedback_start_date: Optional[str] = None,
     feedback_end_date: Optional[str] = None,
+    dedupe_keep: str = "last",
 ) -> Tuple[List[Dict[str, object]], Dict[str, object]]:
     feedback_source_month = shift_month(month, feedback_month_offset)
     feedback_window_start = parse_date_boundary(feedback_start_date)
@@ -1006,7 +1007,13 @@ def read_feedback_latest(
                 "submitted_at_raw": row.get("提交时间", ""),
                 "raw_row": row,
             }
-            if current is None or dt > current["submitted_at"]:
+            # 同一老师+学员+身份多次提交：默认保留最后一次（历史口径）；
+            # dedupe_keep="first" 保留第一次，与月度课程反馈系统的任务占位规则一致。
+            if (
+                current is None
+                or (dedupe_keep == "first" and dt < current["submitted_at"])
+                or (dedupe_keep != "first" and dt > current["submitted_at"])
+            ):
                 latest[key] = payload
 
     raise_for_invalid_dates(
@@ -2816,6 +2823,7 @@ def generate_monthly_feedback_report(
     max_duration_hours: float = 8.0,
     exclude_course_type_keywords: Optional[List[str]] = None,
     score_map_csv: Optional[Path] = None,
+    dedupe_keep: str = "last",
 ) -> Dict[str, object]:
     month = parse_month_or_exit(month)
     score_map = load_score_text_map(score_map_csv)
@@ -2865,6 +2873,7 @@ def generate_monthly_feedback_report(
         feedback_month_offset=feedback_month_offset,
         feedback_start_date=feedback_start_date,
         feedback_end_date=feedback_end_date,
+        dedupe_keep=dedupe_keep,
     )
 
     if not teacher_total_hours:
@@ -3081,6 +3090,7 @@ def generate_monthly_feedback_report(
         "input_name_map_csv": str(name_map_csv),
         "identity_filter": sorted(identity_filter) if identity_filter else "all",
         "combine_mode": combine_mode,
+        "dedupe_keep": dedupe_keep,
         "exclude_teachers": sorted(excluded_teachers),
         "feedback_month_offset": feedback_month_offset,
         "feedback_start_date": feedback_start_date,

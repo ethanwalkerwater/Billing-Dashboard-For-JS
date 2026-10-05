@@ -1,4 +1,5 @@
 import { isWithinMonthInShanghai } from "../../domain";
+import { readLinkIds } from "../feishu/parsers";
 import type { FeishuRecord } from "../feishu/types";
 
 /**
@@ -56,16 +57,22 @@ export function buildScheduleCsv(input: {
   courseMonth: string;
   studentNamesByRecordId: ReadonlyMap<string, string>;
 }): string {
+  return buildScheduleCsvWithCount(input).csv;
+}
+
+/** 同上，另外返回行数（快照里记一下，评分页显示「课表 N 节」）。 */
+export function buildScheduleCsvWithCount(input: {
+  records: FeishuRecord[];
+  courseMonth: string;
+  studentNamesByRecordId: ReadonlyMap<string, string>;
+}): { csv: string; rows: number } {
   const rows: Array<Record<string, unknown>> = [];
   for (const record of input.records) {
     const startsAt = record.fields["上课时间"];
     const formatted = formatShanghai(startsAt);
     if (!formatted || !isWithinMonthInShanghai(formatted.replace(" ", "T") + "+08:00", input.courseMonth)) continue;
-    const studentIds = Array.isArray(record.fields["学生"])
-      ? (record.fields["学生"] as unknown[]).map((item) =>
-          typeof item === "string" ? item : cellText((item as { id?: string }).id ?? item),
-        )
-      : [];
+    // 关联字段形状是 [{ record_ids: [...] }]，不是 [{ id }]；只认 id 会让整列学生为空。
+    const studentIds = readLinkIds(record.fields["学生"]);
     rows.push({
       上课时间: formatted,
       老师: cellText(record.fields["老师"]),
@@ -76,7 +83,7 @@ export function buildScheduleCsv(input: {
       临时取消: cellText(record.fields["临时取消"]),
     });
   }
-  return toCsv(SCHEDULE_CSV_HEADERS, rows);
+  return { csv: toCsv(SCHEDULE_CSV_HEADERS, rows), rows: rows.length };
 }
 
 /**
@@ -84,6 +91,10 @@ export function buildScheduleCsv(input: {
  * （提交时间、身份、老师姓名、学生姓名、【学生】/【家长】各维度），不做重命名。
  */
 export function buildFeedbackCsv(input: { records: FeishuRecord[]; collectionMonth: string }): string {
+  return buildFeedbackCsvWithCount(input).csv;
+}
+
+export function buildFeedbackCsvWithCount(input: { records: FeishuRecord[]; collectionMonth: string }): { csv: string; rows: number } {
   const headers = [...new Set(input.records.flatMap((record) => Object.keys(record.fields)))];
   if (!headers.includes("提交时间")) headers.unshift("提交时间");
   const rows: Array<Record<string, unknown>> = [];
@@ -95,5 +106,5 @@ export function buildFeedbackCsv(input: { records: FeishuRecord[]; collectionMon
     row["提交时间"] = submittedAt;
     rows.push(row);
   }
-  return toCsv(headers, rows);
+  return { csv: toCsv(headers, rows), rows: rows.length };
 }

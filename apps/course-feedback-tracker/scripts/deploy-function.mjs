@@ -55,11 +55,11 @@ if (envVariables.PUBLIC_TOKEN_PEPPER.length < 32) {
 }
 
 const config = JSON.parse(readFileSync(resolve(root, "cloudbaserc.json"), "utf8"));
-config.functions = config.functions.map((fn) => ({ ...fn, envVariables }));
+// 只有 feedback-api 需要密钥；feedback-score 是纯计算，不给它任何环境变量。
+config.functions = config.functions.map((fn) => (fn.name === "feedback-api" ? { ...fn, envVariables } : fn));
 delete config.framework;
 writeFileSync(generated, `${JSON.stringify(config, null, 2)}\n`);
 
-execFileSync("tcb", ["fn", "deploy", "feedback-api", "--force", "--config-file", generated], {
-  cwd: root,
-  stdio: "inherit",
-});
+for (const name of process.argv.slice(2).length > 0 ? process.argv.slice(2) : ["feedback-api", "feedback-score"]) {
+  execFileSync("tcb", ["fn", "deploy", name, "--force", "--config-file", generated], { cwd: root, stdio: "inherit" });
+}

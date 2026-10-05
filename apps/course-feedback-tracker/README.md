@@ -20,7 +20,8 @@
 | 部分 | 做法 |
 |---|---|
 | 任务列表、筛选、统计、改状态、任务清单导出 | 浏览器用 `@cloudbase/js-sdk` 的 `rdb()`（PostgREST）直连数据库，RLS 只放行 `feedback_admins` 里的管理员 |
-| 飞书课表同步、答卷对账、扫码短链接 302、飞书事件回调、课表/反馈 CSV 导出 | 单个云函数 `feedback-api` |
+| 飞书课表同步、答卷对账、扫码短链接 302、飞书事件回调、课表/反馈 CSV 导出、老师评分取数 | 云函数 `feedback-api`（Node） |
+| 老师加权评分计算 | 云函数 `feedback-score`（Python 3.10，128MB），**纯计算**：直接复用 `apps/teacher-feedback/scripts` 的月度/累计脚本（打包时复制），不读库、不碰密钥 |
 | 二维码单张 PNG 与批量 ZIP | 浏览器里用 canvas + JSZip 生成，不经过云存储。**二维码直接编码带预填的飞书表单链接**，扫码零中转 |
 | 界面 | shadcn/ui 默认主题（zinc），Tailwind v4；组件按 shadcn 源码手写在 `src/components/ui/`（button/badge/card/input/checkbox/table/sheet/select/alert/separator） |
 | 状态变更审计 | 数据库触发器 `feedback_tasks_status_audit`，前端和云函数都绕不过 |
@@ -62,7 +63,7 @@ npm run dev:course-feedback-tracker
 ## 验证
 
 ```bash
-npm run test:course-feedback-tracker   # 42 个测试
+npm run test:course-feedback-tracker   # 45 个 TS 测试 + 评分函数的 Python 测试
 npm run build:course-feedback-tracker
 ```
 
@@ -82,6 +83,8 @@ tcb db execute --sql "$(cat migrations/202609170002_task_status_audit.sql)"
 tcb db execute --sql "$(cat migrations/202609170003_response_unlinked_status.sql)"
 tcb db execute --sql "$(cat migrations/202609170004_name_binding.sql)"
 tcb db execute --sql "$(cat migrations/202610020001_excluded_teachers.sql)"
+tcb db execute --sql "$(cat migrations/202610050001_teacher_scores.sql)"
+npx tsx scripts/backfill-teacher-scores.ts   # 一次性：导入历史分数、老看板姓名映射、补 2026-05 起的快照（可重复执行）
 ```
 
 > 测试必须用 `npm run test:course-feedback-tracker` 跑（工作区脚本），不能在仓库根目录直接
@@ -165,16 +168,43 @@ tcb db execute --sql "$(cat migrations/202610020001_excluded_teachers.sql)"
   并提供「选中全部筛选结果」。操作包括标记已发 / 拒绝 / 退回未发、二维码 ZIP、导出 CSV。
 - **行抽屉**：二维码预览与下载、复制短链接、打开问卷、谁评了、绑定方式。
 
+## 老师评分（原「老师反馈加权看板」）
+
+页面顶部「问卷跟踪 | 老师评分」切换（`#/scores`），同一个登录。老看板 <https://jingshi-feedback-service.vercel.app/> 的功能都搬了过来，
+不用再导出 CSV、再上传。
+
+- **月度评分**：课程月份 M = M 月课表 + M+1 月收到的反馈。排名图（总评分 / 三项指标 × 总 / 学生 / 家长）、明细表、
+  点老师打开抽屉看分项、份数和每一条反馈。导出 Excel、评分表 CSV、完整排名 PNG。
+- **累计评分**：先按月算各项分数，再按老师每月实际课时加权平均，可选月份范围；导出 Excel（含逐月贡献，可复算）和
+  与老看板 `teacher_scores.csv` 同格式的 CSV（家长报告 `sync:cumulative-teacher-scores` 直接可用）。
+- **文字评价**：按老师分组看改进方向和文字建议，默认只看有具体建议的（隐藏「已经很好了」），可搜索、导出。
+
+数据流：「生成名单」时存课程月份的课表快照，「刷新反馈」（打开页面会自动执行）时存收集月份的答卷快照，都在
+`feedback_source_snapshots`。评分页打开时先用快照算一次（约 1–2 秒），同时从飞书刷新答卷，刷新完再算一次。
+计算本身零点几秒，所以不缓存结果、也没有「重新计算」按钮。顶部显示两份数据各自的同步时间。
+
+口径：
+
+- **2026-09 课程月份起实时计算**（`LIVE_SCORES_FROM`），重复反馈只算第一份，和问卷跟踪的占位规则一致；
+  问卷跟踪页会列出重复提交的反馈提醒教务。
+- **之前的月份是定稿**：从老看板累计结果 `monthly_score_contributions.csv` 原样导入 `feedback_score_history`，不再重算。
+  导入后按老看板公式重新累计，46 位老师的排名和总评分与已公布的 `cumulative/teacher_scores.csv` 逐位一致。
+  老看板 `outputs/teacher-feedback/2026-09/` 那份「官方 9 月」与实时计算对不上（每位老师只有 1 个有效分，看起来是早期不完整数据），已由实时计算取代。
+- 定稿月份只有总分（没有学生/家长分项）；2026-05 起有逐条反馈，文字评价可看，02–04 月只有分数。
+- 姓名统一用本系统的别名表；老看板 `name_mapping.csv` 里的老师写法已导入（Valentina林 → Valentina Lin、刘峥 → Kevin Liu、高 → 高志勇），
+  显示名一律用课表写法。「不统计的老师」同样作用于评分和累计。
+- 评分脚本只加了一个参数 `dedupe_keep`（默认 `last`，老看板行为不变），其余算法一行没改。
+
 ## 与老师反馈系统衔接
 
-工作台底部导出三份 CSV：
+工作台底部的「导出课表」「导出反馈」仍保留（老看板还能用）。导出课表的「学生」列曾经整列为空（关联字段读错了键），已修复。
 
 | 文件 | 范围 | 用途 |
 |---|---|---|
 | 问卷任务 CSV | 当前筛选结果 | 教务自己核对 |
-| 课表 CSV | 课程月份 | 上传到 <https://jingshi-feedback-service.vercel.app/> |
+| 课表 CSV | 课程月份 | 老看板上传用 |
 | 反馈 CSV | 收集月份 | 同上 |
 
-时间一律写成上海时区的墙上时间（`YYYY-MM-DD HH:mm:ss`，不带时区后缀）。那边的 `monthly_teacher_feedback.py` 用 `datetime.strptime` 解析再按 `%Y-%m` 比对月份，带时区后缀或 UTC 时间会让整月数据被判成"不在报表月份"。`tests/export.test.ts` 锁死了这个格式。
+时间一律写成上海时区的墙上时间（`YYYY-MM-DD HH:mm:ss`，不带时区后缀）。评分脚本用 `datetime.strptime` 解析再按 `%Y-%m` 比对月份，带时区后缀或 UTC 时间会让整月数据被判成"不在报表月份"。`tests/export.test.ts` 锁死了这个格式。
 
 完整需求、设计和实施任务见 [`specs/monthly-course-feedback-tracker`](../../specs/monthly-course-feedback-tracker)。

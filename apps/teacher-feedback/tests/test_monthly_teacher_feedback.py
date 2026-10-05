@@ -463,6 +463,28 @@ class MonthlyTeacherFeedbackTests(unittest.TestCase):
             self.assertEqual(2, stats["feedback_rows_in_month"])
             self.assertEqual({"Charlie", "Kelvin"}, {r["student"] for r in records})
 
+    def test_read_feedback_latest_can_keep_first_submission(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            feedback_csv = Path(tmp) / "feedback.csv"
+            rows = [
+                {"提交时间": f"2026/03/0{day} 10:00", "老师姓名": "包天翊", "学生姓名": "Charlie", "身份": "学生本人"}
+                for day in (9, 5, 7)
+            ]
+            self.write_csv(feedback_csv, ["提交时间", "老师姓名", "学生姓名", "身份"], rows)
+            kept = {}
+            for keep in ("first", "last"):
+                records, _ = MODULE.read_feedback_latest(
+                    feedback_csv=feedback_csv,
+                    month="2026-02",
+                    identity_filter=None,
+                    teacher_map={},
+                    student_map={},
+                    dedupe_keep=keep,
+                )
+                self.assertEqual(1, len(records))
+                kept[keep] = records[0]["submitted_at"].day
+            self.assertEqual({"first": 5, "last": 9}, kept)
+
     def test_read_feedback_latest_supports_explicit_feedback_window(self):
         with tempfile.TemporaryDirectory() as tmp:
             feedback_csv = Path(tmp) / "feedback.csv"

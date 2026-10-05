@@ -14,6 +14,8 @@ export interface FeedbackTaskRepository {
   deleteResponses(responseRecordIds: string[]): Promise<void>;
   /** 写回任务的学生/家长位置、状态和提交时间（删除答卷后腾位置用） */
   updateTaskSlots(tasks: StoredFeedbackTask[]): Promise<void>;
+  /** 存评分用的数据源快照：课程月份的课表 CSV / 收集月份的答卷 CSV */
+  saveSnapshot(kind: "schedule" | "feedback", month: string, csv: string, rowCount: number): Promise<void>;
   /** 写答卷引用，并把绑定成功的答卷填进任务的学生/家长位置、推进到"已填写"。 */
   applyResponseOutcomes(outcomes: ResponseOutcome[]): Promise<void>;
 }

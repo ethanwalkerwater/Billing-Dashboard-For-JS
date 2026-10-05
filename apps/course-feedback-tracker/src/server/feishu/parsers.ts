@@ -59,7 +59,7 @@ function readStringList(value: unknown): string[] {
  *   其他模式：{ link_record_ids: [...] }、[{ id }]、[{ record_id }]、["recX"]
  * 只认其中一种会静默得到空数组，整月任务全部变成"缺少学生"。
  */
-function readLinkIds(value: unknown): string[] {
+export function readLinkIds(value: unknown): string[] {
   const ids: string[] = [];
   const collect = (item: unknown): void => {
     if (typeof item === "string") {

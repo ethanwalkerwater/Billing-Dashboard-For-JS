@@ -20,7 +20,15 @@ import { loadFeishuConfig } from "../../src/server/feishu/config";
 import { parseStudentRecord } from "../../src/server/feishu/parsers";
 import { generateMonthlyTasks } from "../../src/server/sync/generate-tasks";
 import { reconcileResponses } from "../../src/server/sync/reconcile-responses";
-import { RdbFeedbackTaskRepository } from "../../src/shared/rdb";
+import { buildScoreRequest } from "../../src/server/scores/build-request";
+import type { ScoreHistoryRow, SnapshotRow } from "../../src/server/scores/build-request";
+import {
+  EXCLUDED_TEACHERS_TABLE,
+  RdbFeedbackTaskRepository,
+  SCORE_HISTORY_TABLE,
+  SNAPSHOTS_TABLE,
+  TASKS_TABLE,
+} from "../../src/shared/rdb";
 import type { PostgrestLike } from "../../src/shared/rdb";
 import { verifyFeishuEvent } from "./feishu-event";
 import { createServiceDb } from "./service-db";
@@ -40,6 +48,11 @@ interface HttpEvent {
 interface CallEvent {
   action?: string;
   collectionMonth?: string;
+  /** teacher-report：要看明细/文字评价的课程月份 */
+  courseMonth?: string;
+  /** teacher-report：累计评分的月份范围（含两端），留空 = 全部 */
+  cumulativeFrom?: string;
+  cumulativeTo?: string;
   dryRun?: boolean;
 }
 
@@ -50,6 +63,44 @@ function db(): PostgrestLike {
     apiKey: requireEnv("CLOUDBASE_API_KEY"),
   });
   return serviceDb;
+}
+
+async function selectAll<T>(table: string, columns: string): Promise<T[]> {
+  const result = await db().from(table).select<T>(columns);
+  if (result.error) throw new Error(`读取 ${table} 失败：${result.error.message}`);
+  return result.data ?? [];
+}
+
+/**
+ * 老师评分：读快照、历史分数、别名、不统计老师，交给 Python 云函数 feedback-score 计算。
+ * 计算本身 0.1 秒级；慢的是从飞书读答卷，那一步由前端先调 sync-responses 完成。
+ */
+async function teacherReport(event: CallEvent) {
+  const [snapshots, history, aliases, excluded, teachers] = await Promise.all([
+    selectAll<SnapshotRow & { synced_at: string; row_count: number }>(SNAPSHOTS_TABLE, "kind,month,csv,row_count,synced_at"),
+    selectAll<ScoreHistoryRow>(SCORE_HISTORY_TABLE, "*"),
+    repository().listAliases(),
+    selectAll<{ teacher_name: string }>(EXCLUDED_TEACHERS_TABLE, "teacher_name"),
+    selectAll<{ teacher_canonical_name: string }>(TASKS_TABLE, "teacher_canonical_name"),
+  ]);
+  const request = buildScoreRequest({
+    snapshots,
+    history,
+    aliases,
+    excludedTeachers: excluded.map((row) => row.teacher_name),
+    // 评分脚本会把老师名去空格、去「老师」后缀；用课表写法还原显示名（Valentina Lin、数学杨老师）。
+    teacherNames: [...new Set(teachers.map((row) => row.teacher_canonical_name))],
+    detailMonth: event.courseMonth,
+    cumulativeFrom: event.cumulativeFrom,
+    cumulativeTo: event.cumulativeTo,
+  });
+  const response = await app.callFunction({ name: "feedback-score", data: request as never });
+  const result = response.result as { ok: boolean; error?: string };
+  if (!result?.ok) throw new Error(result?.error ?? "评分计算失败");
+  return {
+    ...result,
+    syncedAt: snapshots.map(({ kind, month, row_count, synced_at }) => ({ kind, month, rowCount: row_count, syncedAt: synced_at })),
+  };
 }
 
 function repository() {
@@ -249,6 +300,9 @@ export async function main(event: HttpEvent & CallEvent) {
           collectionMonth: event.collectionMonth ?? currentShanghaiMonth(),
         });
         return { ok: true, actorId: uid, ...summarize(result), outcomes: result.outcomes };
+      }
+      case "teacher-report": {
+        return teacherReport(event);
       }
       case "export-schedule-csv": {
         if (!event.collectionMonth) throw new Error("缺少 collectionMonth");
