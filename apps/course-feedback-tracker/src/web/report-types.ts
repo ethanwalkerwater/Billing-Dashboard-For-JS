@@ -1,4 +1,6 @@
-/** feedback-score 云函数的返回形状（见 functions/feedback-score/index.py）。 */
+import { roundScore } from "./scoring";
+
+/** feedback_score_results 里存的形状（由 functions/feedback-score/index.py 算出）。 */
 
 export type MetricId = "learning_effect" | "responsibility" | "charisma";
 export type Dimension = "total" | "student" | "parent";
@@ -41,18 +43,22 @@ export interface DetailRow {
 
 export interface MonthReport {
   month: string;
+  /** draft：收集中，刷新反馈会更新；final：收集月份已结束，定稿 */
+  status?: "draft" | "final";
+  /** live：按快照计算；history：老看板已公布的分数（分项按原始反馈补算） */
   source: "live" | "history";
+  computedAt?: string;
   teachers: TeacherScore[];
   stats?: {
-    feedbackRows: number;
-    dedupedRecords: number;
-    matchedRecords: number;
-    mergedRecords: number;
-    teacherCount: number;
-    totalHours: number;
-    unmappedScoreTexts: Record<string, Record<string, number>>;
+    feedbackRows?: number;
+    dedupedRecords?: number;
+    matchedRecords?: number;
+    mergedRecords?: number;
+    teacherCount?: number;
+    totalHours?: number;
+    unmappedScoreTexts?: Record<string, Record<string, number>>;
+    breakdownFrom?: "feishu" | "legacy-detail";
   };
-  detail?: DetailRow[];
   error?: string;
 }
 
@@ -84,14 +90,8 @@ export interface SyncedAt {
   syncedAt: string;
 }
 
-export interface TeacherReport {
-  monthly: Record<string, MonthReport>;
-  cumulative: { months: string[]; teachers: CumulativeTeacher[]; contributions: Contribution[] };
-  syncedAt: SyncedAt[];
-}
-
 export function formatScore(value: number | null | undefined): string {
-  return value == null ? "无评分" : value.toFixed(3);
+  return value == null ? "无评分" : roundScore(value).toFixed(3);
 }
 
 export function formatPercent(value: number | null | undefined): string {

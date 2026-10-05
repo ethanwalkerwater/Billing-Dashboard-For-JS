@@ -12,6 +12,15 @@ export interface ChartRow {
   hint?: string;
 }
 
+/** 前半区人数：21 人则 11 人（向上取整）。排名图和明细表用同一个分界。 */
+export function topHalfSize(scoredCount: number): number {
+  return Math.ceil(scoredCount / 2);
+}
+
+/** canvas 用的实际颜色，与 styles.css 的 --chart-top / --chart-bottom 一致 */
+const TOP_COLOR = "#16a34a";
+const BOTTOM_COLOR = "#3b82f6";
+
 /**
  * 分数几乎都挤在 4.5–5.0 之间，从 0 画起所有条一样长，看不出差别。
  * 坐标轴从「最低分往下取整到 0.1」开始，并在图上写明起点，避免误读成差距很大。
@@ -23,11 +32,17 @@ export function chartAxis(rows: ChartRow[], scaleMax = 5): { min: number; max: n
   return { min: Math.min(min, scaleMax - 0.1), max: scaleMax };
 }
 
-function sortRows(rows: ChartRow[]): ChartRow[] {
-  return [...rows].sort((a, b) => {
-    if (a.value == null || b.value == null) return a.value == null ? (b.value == null ? 0 : 1) : -1;
-    return b.value - a.value || a.teacher.localeCompare(b.teacher, "zh-CN");
-  });
+export function HalfLegend({ topSize }: { topSize: number }) {
+  return (
+    <span className="text-muted-foreground inline-flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+      <span className="inline-flex items-center gap-1.5">
+        <span className="bg-chart-top size-2.5 rounded-sm" /> 前半区（前 {topSize} 名）
+      </span>
+      <span className="inline-flex items-center gap-1.5">
+        <span className="bg-chart-bottom size-2.5 rounded-sm" /> 后半区
+      </span>
+    </span>
+  );
 }
 
 export function ScoreChart({
@@ -42,20 +57,24 @@ export function ScoreChart({
   onSelect?: (teacher: string) => void;
 }) {
   // 无评分的老师（多是课时很少、已离职或没收到反馈）不画条，只在底部说一句有几位，免得把图拉得很长。
-  const sorted = sortRows(rows).filter((row) => row.value != null);
+  // 同分保持传入顺序（调用方按名次传），和明细表的先后一致
+  const sorted = rows.filter((row) => row.value != null).sort((a, b) => b.value! - a.value!);
   const unscored = rows.length - sorted.length;
   const axis = chartAxis(sorted);
-  const scored = sorted;
-  const average = scored.length ? scored.reduce((sum, row) => sum + row.value!, 0) / scored.length : null;
+  const topSize = topHalfSize(sorted.length);
+  const average = sorted.length ? sorted.reduce((sum, row) => sum + row.value!, 0) / sorted.length : null;
   const position = (value: number) => ((value - axis.min) / (axis.max - axis.min)) * 100;
 
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="text-muted-foreground text-xs">
-          坐标从 {axis.min.toFixed(1)} 起 · 虚线为平均 {average == null ? "—" : average.toFixed(3)} · 点击老师看明细
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+          <HalfLegend topSize={topSize} />
+          <span className="text-muted-foreground text-xs">
+            坐标从 {axis.min.toFixed(1)} 起 · 虚线为平均 {average == null ? "—" : formatScore(average)} · 点击老师看明细
+          </span>
         </div>
-        <Button variant="outline" size="sm" onClick={() => downloadChartPng(sorted, title, axis, fileName)} disabled={sorted.length === 0}>
+        <Button variant="outline" size="sm" onClick={() => downloadChartPng(sorted, title, axis, fileName, topSize)} disabled={sorted.length === 0}>
           <Download /> 下载完整图表 PNG
         </Button>
       </div>
@@ -67,24 +86,20 @@ export function ScoreChart({
             onClick={() => onSelect?.(row.teacher)}
             className="hover:bg-muted/60 grid grid-cols-[2rem_7.5rem_1fr_4rem] items-center gap-3 rounded-md px-2 py-1.5 text-left text-sm sm:grid-cols-[2rem_9rem_1fr_4.5rem_9rem]"
           >
-            <span className="text-muted-foreground text-right font-mono text-xs tabular-nums">{row.value == null ? "—" : index + 1}</span>
+            <span className="text-muted-foreground text-right font-mono text-xs tabular-nums">{index + 1}</span>
             <span className="truncate font-medium" title={row.teacher}>
               {row.teacher}
             </span>
             <span className="bg-muted relative h-5 overflow-hidden rounded-sm">
-              {row.value != null ? (
-                <span
-                  className={cn("absolute inset-y-0 left-0 rounded-sm", index < 3 ? "bg-primary" : "bg-primary/70")}
-                  style={{ width: `${Math.max(1.5, position(row.value))}%` }}
-                />
-              ) : null}
+              <span
+                className={cn("absolute inset-y-0 left-0 rounded-sm", index < topSize ? "bg-chart-top" : "bg-chart-bottom")}
+                style={{ width: `${Math.max(1.5, position(row.value!))}%` }}
+              />
               {average != null ? (
                 <span className="border-foreground/40 absolute inset-y-0 border-l border-dashed" style={{ left: `${position(average)}%` }} />
               ) : null}
             </span>
-            <span className={cn("text-right font-mono tabular-nums", row.value == null && "text-muted-foreground text-xs")}>
-              {formatScore(row.value)}
-            </span>
+            <span className="text-right font-mono tabular-nums">{formatScore(row.value)}</span>
             <span className="text-muted-foreground hidden truncate text-xs sm:block">{row.hint}</span>
           </button>
         ))}
@@ -95,7 +110,7 @@ export function ScoreChart({
 }
 
 /** 画一张包含全部老师的长图（不受页面滚动、宽度限制），直接用 canvas 画，不依赖截图库。 */
-function downloadChartPng(rows: ChartRow[], title: string, axis: { min: number; max: number }, fileName: string) {
+function downloadChartPng(rows: ChartRow[], title: string, axis: { min: number; max: number }, fileName: string, topSize: number) {
   const scale = 2;
   const width = 1200;
   const rowHeight = 36;
@@ -116,7 +131,7 @@ function downloadChartPng(rows: ChartRow[], title: string, axis: { min: number; 
   context.fillText(title, 40, 52);
   context.fillStyle = "#71717a";
   context.font = font(14);
-  context.fillText(`坐标从 ${axis.min.toFixed(1)} 起，满分 ${axis.max}`, 40, 78);
+  context.fillText(`坐标从 ${axis.min.toFixed(1)} 起，满分 ${axis.max} · 绿色为前半区（前 ${topSize} 名），蓝色为后半区`, 40, 78);
 
   const barLeft = 260;
   const barWidth = width - barLeft - 140;
@@ -125,20 +140,17 @@ function downloadChartPng(rows: ChartRow[], title: string, axis: { min: number; 
     context.fillStyle = "#71717a";
     context.font = font(14);
     context.textAlign = "right";
-    context.fillText(row.value == null ? "—" : String(index + 1), 64, y + 22);
+    context.fillText(String(index + 1), 64, y + 22);
     context.textAlign = "left";
     context.fillStyle = "#18181b";
     context.font = font(16, 500);
     context.fillText(row.teacher, 80, y + 23);
     context.fillStyle = "#f4f4f5";
     context.fillRect(barLeft, y + 8, barWidth, 20);
-    if (row.value != null) {
-      context.fillStyle = index < 3 ? "#18181b" : "#52525b";
-      const ratio = Math.max(0.015, (row.value - axis.min) / (axis.max - axis.min));
-      context.fillRect(barLeft, y + 8, barWidth * ratio, 20);
-    }
-    context.fillStyle = row.value == null ? "#a1a1aa" : "#18181b";
-    context.font = row.value == null ? font(14) : font(16, 600);
+    context.fillStyle = index < topSize ? TOP_COLOR : BOTTOM_COLOR;
+    context.fillRect(barLeft, y + 8, barWidth * Math.max(0.015, (row.value! - axis.min) / (axis.max - axis.min)), 20);
+    context.fillStyle = "#18181b";
+    context.font = font(16, 600);
     context.fillText(formatScore(row.value), barLeft + barWidth + 16, y + 23);
   });
 

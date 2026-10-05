@@ -38,6 +38,7 @@ export const ALIASES_TABLE = "feedback_name_aliases";
 export const EXCLUDED_TEACHERS_TABLE = "feedback_excluded_teachers";
 export const SNAPSHOTS_TABLE = "feedback_source_snapshots";
 export const SCORE_HISTORY_TABLE = "feedback_score_history";
+export const SCORE_RESULTS_TABLE = "feedback_score_results";
 
 function unwrap<T>(result: PostgrestResult<T>, context: string): T[] {
   if (result.error) throw new Error(`${context}失败：${result.error.message}`);
