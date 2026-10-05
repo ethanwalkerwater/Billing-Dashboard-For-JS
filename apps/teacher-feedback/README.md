@@ -35,6 +35,9 @@
   - **已移除指标**：教学目标、反馈及时、沟通感受、顾问回复反馈、上课风格/教学节奏/课堂互动（新版问卷已不再收集）。
   - **机构层面单独分析（不计入老师评分）**：`满意度`、`机构优势` 仅做整体分布统计，结果打印在终端并写入 `run_meta.json` 的 `org_analysis`。
 
+> 2026-10 起，月度课程反馈系统（`apps/course-feedback-tracker`，「老师评分」页）直接复用本目录的两个脚本做实时计算，
+> 不再需要下载/上传 CSV。新增参数 `dedupe_keep`（`last` 默认 / `first`），只影响同一老师+学员+身份多次提交时保留哪一份。
+
 ## 2. 脚本位置
 - `apps/teacher-feedback/scripts/monthly_teacher_feedback.py`
 

@@ -174,6 +174,7 @@ describe("responses deleted in Feishu", () => {
       deleteResponses: async (ids: string[]) => void calls.deleted.push(...ids),
       updateTaskSlots: async (tasks: StoredFeedbackTask[]) => void calls.slots.push(...tasks.map((t) => t.status)),
       applyResponseOutcomes: async () => {},
+      saveSnapshot: async () => {},
     } as unknown as FeedbackTaskRepository;
     const at = Date.parse("2026-10-01T06:00:00.000Z");
     const client = {

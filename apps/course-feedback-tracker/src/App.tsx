@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { usePage } from "./web/AppNav";
 import { LoginPage } from "./web/LoginPage";
+import { TeacherScores } from "./web/TeacherScores";
 import { Workbench } from "./web/Workbench";
 import { auth, getSignedInUser } from "./web/cloudbase";
 
 export function App() {
   const [userId, setUserId] = useState<string | null>(null);
   const [checking, setChecking] = useState(true);
+  const [page, setPage] = usePage();
 
   const refresh = useCallback(async () => {
     const user = await getSignedInUser();
@@ -30,5 +33,6 @@ export function App() {
     return <p className="text-muted-foreground p-20 text-center text-sm">正在检查登录状态…</p>;
   }
   if (!userId) return <LoginPage onSignedIn={refresh} />;
-  return <Workbench onSignOut={signOut} />;
+  if (page === "scores") return <TeacherScores page={page} onPageChange={setPage} onSignOut={signOut} />;
+  return <Workbench page={page} onPageChange={setPage} onSignOut={signOut} />;
 }

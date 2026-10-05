@@ -3,6 +3,7 @@ import type { SkippedScheduleRecord } from "../../domain";
 import type { FeishuClient } from "../feishu/client";
 import type { FeishuConfig } from "../feishu/config";
 import { FeishuSchemaError } from "../feishu/errors";
+import { buildScheduleCsvWithCount } from "../export/csv";
 import { parseScheduleRecord, parseStudentRecord } from "../feishu/parsers";
 import { planSelectOptionAppend } from "../feishu/options";
 import { ensureSelectFieldOptions } from "../feishu/sync-options";
@@ -130,7 +131,16 @@ export async function generateMonthlyTasks(input: {
     publicTokenPepper: input.publicTokenPepper,
     now: input.now,
   });
-  if (!input.dryRun) await input.repository.applySyncPlan(plan);
+  if (!input.dryRun) {
+    await input.repository.applySyncPlan(plan);
+    // 顺手存下课程月份的课表快照：评分页靠它算课时权重，不用再读一遍整张飞书课表。
+    const snapshot = buildScheduleCsvWithCount({
+      records: scheduleRaw,
+      courseMonth,
+      studentNamesByRecordId: new Map(students.parsed.map((student) => [student.recordId, student.name])),
+    });
+    await input.repository.saveSnapshot("schedule", courseMonth, snapshot.csv, snapshot.rows);
+  }
 
   return {
     plan,

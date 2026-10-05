@@ -15,6 +15,12 @@ export interface UnlinkedResponse {
   submittedAt: string;
 }
 
+/** 同一学生对同一老师、同一身份的第二份及以后：只算第一份，这里列出来提醒教务。 */
+export interface DuplicateResponse extends UnlinkedResponse {
+  /** 被计入的那一份的提交时间 */
+  countedAt?: string;
+}
+
 export interface Alias {
   kind: "teacher" | "student";
   alias: string;
@@ -91,7 +97,7 @@ export function useWorkbenchData(collectionMonth: string) {
   }, [reload]);
 
   // 不参与统计的老师：任务、答卷都从工作台视图里拿掉，应发、完成率、对不上横幅都不算他们。
-  const { tasks, unlinked, summary } = useMemo(() => {
+  const { tasks, unlinked, duplicates, summary } = useMemo(() => {
     const excludedKeys = new Set(excludedTeachers.map(nameMatchKey));
     const isExcluded = (task: StoredFeedbackTask) => excludedKeys.has(nameMatchKey(task.teacherCanonicalName));
     const tasks = allTasks.filter((task) => !isExcluded(task));
@@ -109,13 +115,31 @@ export function useWorkbenchData(collectionMonth: string) {
         submittedAt: row.submitted_at,
       }))
       .sort((a, b) => a.teacherName.localeCompare(b.teacherName, "zh-CN"));
+    const tasksById = new Map(tasks.map((task) => [task.taskId, task]));
+    const submittedById = new Map(responses.map((row) => [row.response_record_id, row.submitted_at]));
+    const duplicates: DuplicateResponse[] = visible
+      .filter((row) => row.sync_status === "duplicate")
+      .map((row): DuplicateResponse => {
+        const identity = row.identity === "parent" ? "parent" : "student";
+        const task = row.task_id ? tasksById.get(row.task_id) : undefined;
+        const countedId = identity === "parent" ? task?.parentResponseId : task?.studentResponseId;
+        return {
+          responseRecordId: row.response_record_id,
+          studentName: task?.studentName ?? row.student_name ?? "",
+          teacherName: task?.teacherCanonicalName ?? row.teacher_name ?? "",
+          identity,
+          submittedAt: row.submitted_at,
+          countedAt: countedId ? submittedById.get(countedId) : undefined,
+        };
+      })
+      .sort((a, b) => a.submittedAt.localeCompare(b.submittedAt));
     const summary: MonthSummary = {
       total: visible.length,
       matched: visible.filter((row) => row.sync_status === "matched").length,
       duplicate: visible.filter((row) => row.sync_status === "duplicate").length,
       unlinked: unlinked.length,
     };
-    return { tasks, unlinked, summary: loading && allTasks.length === 0 ? null : summary };
+    return { tasks, unlinked, duplicates, summary: loading && allTasks.length === 0 ? null : summary };
   }, [allTasks, responses, excludedTeachers, loading]);
 
   /** 改「不参与统计的老师」名单：多选框给出完整新名单，这里算出增删。 */
@@ -222,6 +246,7 @@ export function useWorkbenchData(collectionMonth: string) {
     tasks,
     allTasks,
     unlinked,
+    duplicates,
     summary,
     excludedTeachers,
     setExcludedTeachers,

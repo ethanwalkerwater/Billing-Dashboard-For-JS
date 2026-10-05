@@ -2,6 +2,7 @@ import { monthOfShanghai, nameMatchKey } from "../../domain";
 import type { FeishuClient } from "../feishu/client";
 import type { FeishuConfig } from "../feishu/config";
 import { FeishuSchemaError } from "../feishu/errors";
+import { buildFeedbackCsvWithCount } from "../export/csv";
 import { parseFeedbackResponse } from "../feishu/parsers";
 import type { FeedbackResponseRecord } from "../feishu/parsers";
 import type { FeedbackTaskRepository } from "../tasks/repository";
@@ -217,6 +218,11 @@ export async function reconcileResponses(input: {
 
   const outcomes = [...matchResponsesToTasks({ responses, tasks, aliases, manualBindings }), ...schemaFailures];
   await input.repository.applyResponseOutcomes(outcomes);
+  // 全量刷新时存下这个收集月份的答卷快照，评分页按它计算；Webhook 只推几条，不覆盖快照。
+  if (!scope && raw.length > 0) {
+    const snapshot = buildFeedbackCsvWithCount({ records: raw, collectionMonth: input.collectionMonth });
+    await input.repository.saveSnapshot("feedback", input.collectionMonth, snapshot.csv, snapshot.rows);
+  }
 
   const count = (status: ResponseOutcome["syncStatus"]) =>
     outcomes.filter((outcome) => outcome.syncStatus === status).length;

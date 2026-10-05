@@ -1,19 +1,22 @@
-import { Download, ExternalLink, LogOut, RefreshCw, Search } from "lucide-react";
+import { Download, RefreshCw, Search } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Separator } from "@/components/ui/separator";
 import { TASK_STATUS_LABELS, collectionMonthToCourseMonth, shiftMonth } from "@/domain";
 import type { TaskStatus } from "@/domain";
 import { cn } from "@/lib/utils";
 import type { StoredFeedbackTask } from "@/server/tasks/types";
+import { PageHeader } from "./AppNav";
+import type { Page } from "./AppNav";
 import { BulkBar } from "./BulkBar";
+import { DuplicateNotice } from "./DuplicateNotice";
 import { MultiSelectFilter } from "./MultiSelectFilter";
 import { QrBatchDialog } from "./QrBatchDialog";
 import { SyncDetails } from "./SyncDetails";
+import { SyncStatus, useSyncTimes } from "./SyncStatus";
 import type { SyncSummary } from "./SyncDetails";
 import { TaskSheet } from "./TaskSheet";
 import { TaskTable } from "./TaskTable";
@@ -26,7 +29,6 @@ import { EMPTY_FILTERS, filterTasks, sortTasks, useTaskCounts, useWorkbenchData 
 import type { SortKey } from "./useWorkbenchData";
 
 const STATUS_ORDER: TaskStatus[] = ["unsent", "sent", "completed", "declined"];
-const REPORT_URL = "https://jingshi-feedback-service.vercel.app/";
 
 function currentCollectionMonth(): string {
   return new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit" }).format(new Date()).slice(0, 7);
@@ -71,7 +73,15 @@ function Stat({
   );
 }
 
-export function Workbench({ onSignOut }: { onSignOut: () => void | Promise<void> }) {
+export function Workbench({
+  page,
+  onPageChange,
+  onSignOut,
+}: {
+  page: Page;
+  onPageChange: (page: Page) => void;
+  onSignOut: () => void | Promise<void>;
+}) {
   const [collectionMonth, setCollectionMonth] = useState(currentCollectionMonth);
   const [filters, setFilters] = useState(EMPTY_FILTERS);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -85,6 +95,7 @@ export function Workbench({ onSignOut }: { onSignOut: () => void | Promise<void>
   const batchAbort = useRef<AbortController | null>(null);
 
   const data = useWorkbenchData(collectionMonth);
+  const syncTimes = useSyncTimes();
   const visible = useMemo(() => sortTasks(filterTasks(data.tasks, filters), sortKey, sortAsc), [data.tasks, filters, sortKey, sortAsc]);
   // 统计永远基于全部任务：卡片是给教务看当前月份整体状况的指标，点击只筛下面的表格，数字不动。
   const { counts, total, studentDone, parentDone, completionRate } = useTaskCounts(data.tasks);
@@ -165,7 +176,7 @@ export function Workbench({ onSignOut }: { onSignOut: () => void | Promise<void>
     await run("刷新反馈", async () => {
       const result = await callFeedbackApi<SyncSummary>({ action: "sync-responses", collectionMonth });
       setSync((current) => ({ ...current, ...result }));
-      await data.reload();
+      await Promise.all([data.reload(), syncTimes.reload()]);
       return `收到 ${result.monthTotal} 份 · 对上 ${result.matched} · 对不上 ${result.unlinked}${result.removed ? ` · 清理已删除 ${result.removed}` : ""}`;
     });
   }
@@ -183,9 +194,12 @@ export function Workbench({ onSignOut }: { onSignOut: () => void | Promise<void>
   return (
     <div className="bg-muted/40 min-h-screen">
       <div className="mx-auto flex max-w-[1400px] flex-col gap-6 p-6 lg:p-8">
-        <header className="flex flex-wrap items-center justify-between gap-4">
-          <h1 className="text-2xl font-semibold tracking-tight">月度课程反馈</h1>
-          <div className="flex flex-wrap items-center gap-2">
+        <PageHeader
+          page={page}
+          onPageChange={onPageChange}
+          onSignOut={onSignOut}
+          actions={
+            <>
             <Select
               value={collectionMonth}
               onValueChange={(value) => {
@@ -212,7 +226,7 @@ export function Workbench({ onSignOut }: { onSignOut: () => void | Promise<void>
                 void run("生成名单", async () => {
                   const result = await callFeedbackApi<SyncSummary>({ action: "sync-tasks", collectionMonth });
                   setSync(result);
-                  await data.reload();
+                  await Promise.all([data.reload(), syncTimes.reload()]);
                   return `名单已更新：新增 ${result.created} · 变更 ${result.updated} · 不变 ${result.unchanged}${result.studentsAddedToForm?.length ? ` · 问卷新增学生 ${result.studentsAddedToForm.length}` : ""}`;
                 })
               }
@@ -226,12 +240,17 @@ export function Workbench({ onSignOut }: { onSignOut: () => void | Promise<void>
             >
               <RefreshCw className={cn(busy === "刷新反馈" && "animate-spin")} /> 刷新反馈
             </Button>
-            <Separator orientation="vertical" className="mx-1 h-5" />
-            <Button variant="ghost" size="icon" onClick={() => void onSignOut()} aria-label="退出登录">
-              <LogOut />
-            </Button>
-          </div>
-        </header>
+            </>
+          }
+          status={
+            <SyncStatus
+              times={syncTimes.times}
+              feedbackMonth={collectionMonth}
+              scheduleMonth={collectionMonthToCourseMonth(collectionMonth)}
+              syncing={busy === "刷新反馈"}
+            />
+          }
+        />
 
         <UnmatchedBanner
           unlinked={data.unlinked}
@@ -245,6 +264,8 @@ export function Workbench({ onSignOut }: { onSignOut: () => void | Promise<void>
             setNotice("已手动绑定，该任务已标记为已填写");
           }}
         />
+
+        <DuplicateNotice duplicates={data.duplicates} />
 
         <section className="grid gap-4 sm:grid-cols-3 xl:grid-cols-6">
           <Stat label="应发" value={total} selected={filters.status === "all"} onClick={() => toggleFilter("all")} />
@@ -373,12 +394,7 @@ export function Workbench({ onSignOut }: { onSignOut: () => void | Promise<void>
             <Button variant="outline" size="sm" disabled={busy !== null} onClick={() => void downloadCsvFromApi("export-feedback-csv", "导出反馈")}>
               <Download /> 导出反馈
             </Button>
-            <Separator orientation="vertical" className="h-5" />
-            <Button variant="link" size="sm" asChild>
-              <a href={REPORT_URL} target="_blank" rel="noreferrer">
-                反馈报表 <ExternalLink />
-              </a>
-            </Button>
+
           </div>
         </section>
 
