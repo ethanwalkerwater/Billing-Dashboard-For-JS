@@ -1,5 +1,5 @@
-import { Check, ChevronDown, Copy, ExternalLink, Loader2, LogOut, RefreshCw } from "lucide-react";
-import { useMemo, useState } from "react";
+import { AlertTriangle, Check, CheckCircle2, ChevronDown, Copy, ExternalLink, Loader2, LogOut, RefreshCw } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -13,6 +13,7 @@ import { cn } from "@/lib/utils";
 import { ALL_TIME, MonthRangePicker, inRange } from "./MonthRangePicker";
 import type { MonthRange } from "./MonthRangePicker";
 import { useProgressData } from "./useProgressData";
+import type { SyncResult } from "./useProgressData";
 import { MonthView, OverviewView, StudentView, TeacherView, recordUrl } from "./views";
 import type { Nav } from "./views";
 
@@ -28,9 +29,101 @@ const TABS: Array<[Tab, string]> = [
   ["student", "学生"],
 ];
 
-function timeLabel(iso: string | null): string {
-  if (!iso) return "尚未同步";
-  return `上次同步 ${new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(iso))}`;
+const clock = (iso: string) =>
+  new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(iso));
+
+function ago(iso: string): string {
+  const minutes = Math.round((Date.now() - new Date(iso).getTime()) / 60_000);
+  if (minutes < 1) return "刚刚";
+  if (minutes < 60) return `${minutes} 分钟前`;
+  const hours = Math.round(minutes / 60);
+  return hours < 24 ? `${hours} 小时前` : `${Math.round(hours / 24)} 天前`;
+}
+
+function changeText({ added, changed, removed }: SyncResult): string {
+  const parts = [added && `新增 ${added} 条`, changed && `修改 ${changed} 条`, removed && `删除 ${removed} 条`].filter(Boolean);
+  return parts.length > 0 ? `飞书成绩表${parts.join("、")}` : "飞书成绩表没有变化";
+}
+
+/**
+ * 同步状态条：同步要 15–25 秒，期间页面显示的是上一次的数据，必须让人一眼看到。
+ * 吸顶，滚到哪都看得见；同步完显示几秒「已是最新」，失败则一直留着直到重试。
+ */
+function SyncBanner({
+  syncing,
+  startedAt,
+  syncedAt,
+  lastSync,
+  syncError,
+  onRetry,
+}: {
+  syncing: boolean;
+  startedAt: number | null;
+  syncedAt: string | null;
+  lastSync: SyncResult | null;
+  syncError: string | null;
+  onRetry: () => void;
+}) {
+  const [now, setNow] = useState(Date.now());
+  const [showDone, setShowDone] = useState(false);
+  useEffect(() => {
+    if (!syncing) return;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [syncing]);
+  useEffect(() => {
+    if (!lastSync) return;
+    setShowDone(true);
+    const timer = setTimeout(() => setShowDone(false), 8000);
+    return () => clearTimeout(timer);
+  }, [lastSync]);
+
+  const stale = syncedAt ? `${clock(syncedAt)}（${ago(syncedAt)}）` : null;
+  if (syncing) {
+    const seconds = Math.max(0, Math.round((now - (startedAt ?? now)) / 1000));
+    return (
+      <div role="status" className="border-viz-up/30 bg-viz-up/8 sticky top-0 z-30 overflow-hidden rounded-lg border px-4 py-3 shadow-sm backdrop-blur">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+          <Loader2 className="text-viz-up size-4 animate-spin" />
+          <span className="font-medium">正在从飞书同步最新数据…</span>
+          <span className="text-muted-foreground tabular-nums">已用 {seconds} 秒，通常 15–25 秒</span>
+          <span className="text-muted-foreground w-full pl-7 text-xs sm:w-auto sm:pl-0">
+            {stale ? `下面暂时是 ${stale} 的数据，同步完自动刷新` : "首次同步，完成后显示数据"}
+          </span>
+        </div>
+        <div className="bg-viz-up/15 absolute inset-x-0 bottom-0 h-0.5 overflow-hidden">
+          <div className="bg-viz-up h-full w-1/3 animate-[sync-bar_1.4s_ease-in-out_infinite]" />
+        </div>
+      </div>
+    );
+  }
+  if (syncError) {
+    return (
+      <div role="alert" className="border-destructive/40 bg-destructive/8 sticky top-0 z-30 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border px-4 py-3 text-sm shadow-sm">
+        <AlertTriangle className="text-destructive size-4" />
+        <span className="font-medium">同步失败，数据可能不是最新</span>
+        <span className="text-muted-foreground text-xs">
+          {syncError}
+          {stale ? ` · 下面是 ${stale} 的数据` : ""}
+        </span>
+        <Button size="sm" variant="outline" className="ml-auto h-7" onClick={onRetry}>
+          <RefreshCw /> 重试
+        </Button>
+      </div>
+    );
+  }
+  if (showDone && lastSync) {
+    return (
+      <div role="status" className="border-success/30 bg-success/8 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border px-4 py-3 text-sm">
+        <CheckCircle2 className="text-success size-4" />
+        <span className="font-medium">已是最新数据</span>
+        <span className="text-muted-foreground tabular-nums">
+          用时 {lastSync.seconds} 秒 · {changeText(lastSync)}
+        </span>
+      </div>
+    );
+  }
+  return null;
 }
 
 /** 待处理：数据不会悄悄丢，所有没计入的原因都列在这里。 */
@@ -106,7 +199,7 @@ function IssuesPanel({ issues, unknownTypes }: { issues: Issue[]; unknownTypes: 
 
 
 export function Workbench({ onSignOut }: { onSignOut: () => void | Promise<void> }) {
-  const { samples, records, issues, unknownTypes, syncedAt, loading, syncing, error, sync } = useProgressData();
+  const { samples, records, issues, unknownTypes, syncedAt, loading, syncing, syncStartedAt, lastSync, syncError, error, sync } = useProgressData();
   const [tab, setTab] = useState<Tab>("overview");
   const [teachers, setTeachers] = useState<string[]>([]);
   const [student, setStudent] = useState<string | null>(null);
@@ -154,7 +247,9 @@ export function Workbench({ onSignOut }: { onSignOut: () => void | Promise<void>
       <div className="mx-auto grid max-w-[1400px] grid-cols-[minmax(0,1fr)] gap-4 px-4 py-6 sm:px-6">
         <header className="flex flex-wrap items-center gap-3">
           <h1 className="text-xl font-semibold tracking-tight">雅思正向率</h1>
-          <span className="text-muted-foreground text-xs">{timeLabel(syncedAt)}</span>
+          <span className="text-muted-foreground text-xs" title={syncedAt ? `上次同步 ${clock(syncedAt)}` : undefined}>
+            {syncedAt ? `数据更新于 ${ago(syncedAt)}` : "尚未同步"}
+          </span>
           <div className="ml-auto flex flex-wrap items-center gap-2">
             {FORM_URL ? (
               <Button variant="outline" size="sm" onClick={copyForm} title="发给老师，老师用它录入基线、阶段模考和实考成绩">
@@ -170,7 +265,7 @@ export function Workbench({ onSignOut }: { onSignOut: () => void | Promise<void>
                 </a>
               </Button>
             ) : null}
-            <Button size="sm" onClick={sync} disabled={syncing} title="从飞书读取最新成绩和课表，约 20 秒；每次打开网站也会自动同步">
+            <Button size="sm" onClick={sync} disabled={syncing} title="从飞书读取最新成绩和课表，15–25 秒；每次打开网站也会自动同步">
               {syncing ? <Loader2 className="animate-spin" /> : <RefreshCw />}
               {syncing ? "同步中…" : "同步"}
             </Button>
@@ -179,6 +274,8 @@ export function Workbench({ onSignOut }: { onSignOut: () => void | Promise<void>
             </Button>
           </div>
         </header>
+
+        <SyncBanner syncing={syncing} startedAt={syncStartedAt} syncedAt={syncedAt} lastSync={lastSync} syncError={syncError} onRetry={sync} />
 
         {error ? (
           <Alert variant="destructive">
@@ -231,7 +328,7 @@ export function Workbench({ onSignOut }: { onSignOut: () => void | Promise<void>
         ) : samples.length === 0 ? (
           <Card>
             <CardContent className="text-muted-foreground py-14 text-center text-sm">
-              还没有可统计的成绩。老师用录入表单提交、教务在飞书核验实考后点「同步」。
+              {syncing ? "正在从飞书读取数据…" : "还没有可统计的成绩。老师用录入表单提交、教务在飞书核验实考后点「同步」。"}
             </CardContent>
           </Card>
         ) : tab === "overview" ? (
