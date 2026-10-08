@@ -12,6 +12,7 @@ function memoryStore(snapshots: Record<string, string>) {
     saveResult: async (row) => void results.set(row.course_month, row),
     aliases: async () => [],
     teacherNames: async () => ["应雁心"],
+    courseTypeOverrides: async () => new Map(),
   };
   return { store, results };
 }

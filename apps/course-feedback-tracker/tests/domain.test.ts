@@ -86,19 +86,36 @@ describe("task grouping", () => {
     assert.equal(result.tasks.length, 1);
   });
 
-  it("still creates a task for an ambiguous course type but flags it for review", async () => {
+  it("only 1v1 / 刷题班 / 1v2班课 / 班课 are courses; consultations, exams, homework are not", async () => {
     const result = await groupScheduleIntoTasks(
-      // 有老师的作业课可能是真辅导，漏发比误发更难补救，所以照常生成任务再让教务复核。
-      [schedule({ recordId: "homework", courseNames: ["作业课"] })],
+      [
+        schedule({ recordId: "consult-1v1", courseNames: ["申请咨询"], teachingTypes: ["1v1"] }),
+        schedule({ recordId: "exam", courseNames: ["P3考试"], teachingTypes: [] }),
+        schedule({ recordId: "homework", courseNames: ["作业刷题"], teachingTypes: ["刷题班"] }),
+        schedule({ recordId: "ta", courseNames: ["数学"], teachingTypes: ["助教"] }),
+        schedule({ recordId: "trial", courseNames: ["数学试听"], teachingTypes: ["1v1"] }),
+        schedule({ recordId: "pair", courseNames: ["雅思写作"], teachingTypes: ["1v2班课"] }),
+        schedule({ recordId: "group", courseNames: ["JCCO化学竞赛班"], teachingTypes: ["班课"] }),
+      ],
       students,
       { collectionMonth: "2026-09" },
     );
+    assert.deepEqual(result.excludedRecords.map((record) => record.recordId).sort(), ["consult-1v1", "exam", "homework", "ta"]);
+    assert.deepEqual(new Set(result.tasks.flatMap((task) => task.scheduleRecordIds)), new Set(["trial", "pair", "group"]));
+  });
 
+  it("creates a task for a course with no 授课类型 but flags it for review; manual setting wins", async () => {
+    const blank = schedule({ recordId: "ielts", courseNames: ["雅思刷题班"], teachingTypes: [] });
+    const result = await groupScheduleIntoTasks([blank], students, { collectionMonth: "2026-09" });
     assert.equal(result.tasks.length, 1);
-    assert.deepEqual(
-      result.reviewRecords.map((record) => record.recordId),
-      ["homework"],
-    );
+    assert.deepEqual(result.reviewRecords.map((record) => record.recordId), ["ielts"]);
+
+    const overridden = await groupScheduleIntoTasks([blank], students, {
+      collectionMonth: "2026-09",
+      courseTypeOverrides: new Map([["雅思刷题班", false]]),
+    });
+    assert.equal(overridden.tasks.length, 0);
+    assert.match(overridden.excludedRecords[0].reason, /教务设定/);
   });
 
   /**

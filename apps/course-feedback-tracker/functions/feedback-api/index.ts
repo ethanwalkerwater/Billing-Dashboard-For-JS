@@ -81,6 +81,7 @@ const scoreStore: ScoreStore = {
     if (result.error) throw new Error(`保存评分结果失败：${result.error.message}`);
   },
   aliases: () => repository().listAliases(),
+  courseTypeOverrides: () => repository().listCourseTypeOverrides(),
   // 评分脚本会把老师名去空格、去「老师」后缀；用课表写法还原显示名（Valentina Lin、数学杨老师）。
   teacherNames: async () => [...new Set((await selectRows<{ teacher_canonical_name: string }>(TASKS_TABLE, "teacher_canonical_name")).map((row) => row.teacher_canonical_name))],
 };

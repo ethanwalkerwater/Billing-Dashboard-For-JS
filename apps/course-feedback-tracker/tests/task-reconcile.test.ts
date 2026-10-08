@@ -57,5 +57,16 @@ describe("task sync reconciliation", () => {
     assert.equal(next.update[0]?.sentAt, "2026-09-03T08:00:00.000Z");
     assert.deepEqual(new Set(next.update[0]?.courseNames), new Set(["IG数学", "数学刷题班"]));
   });
-});
 
+  it("removes unanswered tasks that are no longer courses, keeps answered ones", async () => {
+    const created = await buildTaskSyncPlan({ existing: [], drafts: [draft(), draft({ taskId: "ft_meeting" }), draft({ taskId: "ft_answered" })], publicTokenPepper: pepper });
+    const existing = created.create.map((task) =>
+      task.taskId === "ft_answered" ? { ...task, status: "completed" as const, parentResponseId: "rec-1" } : task,
+    );
+    // 课程类型改判后，这次只生成了第一个任务
+    const plan = await buildTaskSyncPlan({ existing, drafts: [draft()], publicTokenPepper: pepper });
+    assert.deepEqual(plan.remove.map((task) => task.taskId), ["ft_meeting"]);
+    assert.deepEqual(plan.orphaned.map((task) => task.taskId), ["ft_answered"]);
+    assert.equal(plan.unchanged.length, 1);
+  });
+});

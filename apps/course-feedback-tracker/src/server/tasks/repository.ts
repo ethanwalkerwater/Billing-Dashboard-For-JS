@@ -5,6 +5,8 @@ export interface FeedbackTaskRepository {
   findByTaskIds(taskIds: string[]): Promise<StoredFeedbackTask[]>;
   findByPublicToken(publicToken: string): Promise<StoredFeedbackTask | null>;
   applySyncPlan(plan: TaskSyncPlan): Promise<void>;
+  /** 「课程类型」页的手动设定：课程类型 → 是否课程 */
+  listCourseTypeOverrides(): Promise<Map<string, boolean>>;
   /** 问卷写法 → 课表规范名 */
   listAliases(): Promise<NameAlias[]>;
   /** 教务手动绑定过的答卷，重新同步时保留 */

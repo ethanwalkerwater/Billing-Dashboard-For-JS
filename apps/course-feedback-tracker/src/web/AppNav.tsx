@@ -1,14 +1,17 @@
-import { ClipboardList, LogOut, Trophy } from "lucide-react";
+import { ClipboardList, LogOut, Tags, Trophy } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
-export type Page = "tracking" | "scores";
+export type Page = "tracking" | "scores" | "course-types";
+
+const HASH: Record<Page, string> = { tracking: "#/", scores: "#/scores", "course-types": "#/course-types" };
 
 function pageFromHash(): Page {
-  return window.location.hash === "#/scores" ? "scores" : "tracking";
+  const entry = Object.entries(HASH).find(([, hash]) => hash !== "#/" && window.location.hash === hash);
+  return (entry?.[0] as Page | undefined) ?? "tracking";
 }
 
 /** 两个页面用 hash 区分：刷新、收藏、发链接都能停在原页面，不需要路由库。 */
@@ -19,7 +22,7 @@ export function usePage(): [Page, (page: Page) => void] {
     window.addEventListener("hashchange", onChange);
     return () => window.removeEventListener("hashchange", onChange);
   }, []);
-  return [page, (next) => (window.location.hash = next === "scores" ? "#/scores" : "#/")];
+  return [page, (next) => (window.location.hash = HASH[next])];
 }
 
 export function AppNav({ page, onChange }: { page: Page; onChange: (page: Page) => void }) {
@@ -31,6 +34,9 @@ export function AppNav({ page, onChange }: { page: Page; onChange: (page: Page) 
         </TabsTrigger>
         <TabsTrigger value="scores">
           <Trophy /> 老师评分
+        </TabsTrigger>
+        <TabsTrigger value="course-types">
+          <Tags /> 课程类型
         </TabsTrigger>
       </TabsList>
     </Tabs>
