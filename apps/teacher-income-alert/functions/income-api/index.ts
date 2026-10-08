@@ -1,12 +1,13 @@
 /**
  * income-api —— 教师薪资预警唯一的云函数。
  * 前端 `callFunction({ name: 'income-api', data: { action: 'sync', month } })`：
- * 全量拉飞书课表（约 8700 行、70 秒，「上课时间」不支持服务端过滤），按老师汇总当月课时费，写入 income_teacher_months。
+ * 用飞书「查询记录」接口按月过滤、只取 6 列拉课表（约 1500 行、3 页），按老师汇总当月课时费，写入 income_teacher_months。
+ * 以前用 list 接口全量拉整张表（2026-10 已 9800+ 行、全部 30 多列，本地实测 150 秒），会越来越接近超时。
  * 基础薪水、单价、备注、系数由前端经 PostgREST + RLS 直接读写，不经过这里。
  */
 import cloudbase from "@cloudbase/node-sdk";
 
-import { aggregateSchedule, parseScheduleRow } from "../../src/domain/income";
+import { SCHEDULE_FIELDS, aggregateSchedule, monthSearchFilter, parseScheduleRow } from "../../src/domain/income";
 import { FeishuClient } from "../../src/server/feishu/client";
 import { MONTHS_TABLE } from "../../src/shared/postgrest";
 import type { PostgrestLike } from "../../src/shared/postgrest";
@@ -40,14 +41,32 @@ async function assertAdmin(): Promise<void> {
   if (!result.data?.length) throw new Error("当前账号不在管理员白名单");
 }
 
+/**
+ * search 接口的学生关联字段只有记录 ID。学生表约 220 行（1 页），取主列「学生+联系方式」作显示文本——
+ * 和 list 接口里关联字段的 text 是同一个值（如「张海錤 Linda-3777」），后面照旧用 cleanStudentName 去掉编号。
+ */
+async function loadStudentNames(client: FeishuClient, appToken: string): Promise<Map<string, string>> {
+  const records = await client.listAllRecords({ appToken, tableId: requireEnv("FEISHU_STUDENT_TABLE_ID"), fieldNames: [STUDENT_DISPLAY_FIELD] });
+  const names = new Map<string, string>();
+  for (const record of records) {
+    const value = record.fields[STUDENT_DISPLAY_FIELD];
+    const text = Array.isArray(value) ? value.map((item) => (item as { text?: string }).text ?? "").join("") : typeof value === "string" ? value : "";
+    if (text) names.set(record.record_id, text);
+  }
+  return names;
+}
+
+const STUDENT_DISPLAY_FIELD = "学生+联系方式";
+
 async function syncMonth(month: string) {
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) throw new Error(`月份格式无效：${month}`);
   const client = new FeishuClient({ appId: requireEnv("FEISHU_APP_ID"), appSecret: requireEnv("FEISHU_APP_SECRET") });
-  const records = await client.listAllRecords({
-    appToken: requireEnv("FEISHU_SCHEDULE_APP_TOKEN"),
-    tableId: requireEnv("FEISHU_SCHEDULE_TABLE_ID"),
-  });
-  const teachers = aggregateSchedule(records.map((record) => parseScheduleRow(record.fields)), month);
+  const appToken = requireEnv("FEISHU_SCHEDULE_APP_TOKEN");
+  const [records, studentNames] = await Promise.all([
+    client.searchRecords({ appToken, tableId: requireEnv("FEISHU_SCHEDULE_TABLE_ID"), fieldNames: SCHEDULE_FIELDS, filter: monthSearchFilter(month) }),
+    loadStudentNames(client, appToken),
+  ]);
+  const teachers = aggregateSchedule(records.map((record) => parseScheduleRow(record.fields, studentNames)), month);
   const syncedAt = new Date().toISOString();
 
   // 先删这个月的旧汇总再写：老师当月课全被删掉时，不该还留着上次的数字。

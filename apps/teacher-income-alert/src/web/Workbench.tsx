@@ -161,7 +161,7 @@ export function Workbench({ onSignOut }: { onSignOut: () => void | Promise<void>
         <div className="ml-auto flex flex-wrap items-center gap-3">
           <RateInput label="最低系数" value={rates.min} onCommit={(min) => saveRates({ ...rates, min })} />
           <RateInput label="最高系数" value={rates.max} onCommit={(max) => saveRates({ ...rates, max })} />
-          <Button onClick={sync} disabled={syncing} title="从飞书课表重新汇总这个月，约 1 分钟">
+          <Button onClick={sync} disabled={syncing} title="从飞书课表重新汇总这个月，约 10 秒">
             {syncing ? <Loader2 className="animate-spin" /> : <RefreshCw />}
             {syncing ? "同步中…" : "同步课表"}
           </Button>

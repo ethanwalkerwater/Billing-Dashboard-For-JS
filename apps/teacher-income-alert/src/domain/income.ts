@@ -85,23 +85,55 @@ function readNumber(value: unknown): number | null {
   if (Array.isArray(value) && value[0] && typeof value[0] === "object" && "text" in value[0]) {
     return readNumber((value[0] as { text: unknown }).text);
   }
+  // search 接口里公式列（课程时长、课程总价格）返回 {type: 2, value: [359]}
+  if (value && typeof value === "object" && Array.isArray((value as { value?: unknown }).value)) {
+    return readNumber((value as { value: unknown[] }).value[0]);
+  }
   return null;
+}
+
+/** 同步只需要这几列；全表 30 多列（会议信息、日历 ID…）每页都拖慢接口。 */
+export const SCHEDULE_FIELDS = ["老师", "学生", "上课时间", "课程单价", "课程时长", "课程总价格"];
+
+/**
+ * 「查询记录」接口按上课时间过滤当月。飞书的 ExactDate 只精确到天（实测 isGreater 9/1 会带出 8/31 的课），
+ * 所以前后各放宽一天取一个超集，精确到毫秒的月份边界仍由 aggregateSchedule 判断。
+ */
+export function monthSearchFilter(month: string) {
+  const [start, end] = monthRangeMs(month);
+  const day = 24 * 3600_000;
+  return {
+    conjunction: "and" as const,
+    conditions: [
+      { field_name: "上课时间", operator: "isGreater", value: ["ExactDate", String(start - 2 * day)] },
+      { field_name: "上课时间", operator: "isLess", value: ["ExactDate", String(end + day)] },
+    ],
+  };
+}
+
+/**
+ * 学生关联字段两种形状：list 接口带显示文本 [{text: "张海錤 Linda-3777", record_ids}]；
+ * search 接口只有 {link_record_ids: [...]}，要用学生表的 记录 ID → 显示文本 对照补名字。
+ */
+function readStudentNames(value: unknown, studentNames?: ReadonlyMap<string, string>): string[] {
+  if (Array.isArray(value)) return value.map((item) => (item && typeof item === "object" ? String((item as { text?: unknown }).text ?? "") : ""));
+  const ids = value && typeof value === "object" ? (value as { link_record_ids?: unknown }).link_record_ids : undefined;
+  return Array.isArray(ids) ? ids.map((id) => studentNames?.get(String(id)) ?? "") : [];
 }
 
 /**
  * 只保留计费课：没有课程单价的记录是老师日历里的会议、自习、备课之类的占位（实测 9 月 1392 行里 400 多行，
  * 有的长达 23 小时），不算课时、不算学生。另有个别记录下课时间早于上课时间，时长为负，一并丢掉。
  */
-export function parseScheduleRow(fields: Record<string, unknown>): ScheduleRow | null {
+export function parseScheduleRow(fields: Record<string, unknown>, studentNames?: ReadonlyMap<string, string>): ScheduleRow | null {
   const teacher = typeof fields["老师"] === "string" ? fields["老师"].trim() : "";
   const startsAt = fields["上课时间"];
   const unitPrice = readNumber(fields["课程单价"]);
   const hours = readNumber(fields["课程时长"]) ?? 0;
   if (!teacher || typeof startsAt !== "number" || !unitPrice || hours <= 0) return null;
-  const students = Array.isArray(fields["学生"]) ? (fields["学生"] as Array<{ text?: string }>) : [];
   return {
     teacher,
-    studentName: students.map((item) => cleanStudentName(item.text ?? "")).filter(Boolean).join("、"),
+    studentName: readStudentNames(fields["学生"], studentNames).map(cleanStudentName).filter(Boolean).join("、"),
     startsAt,
     unitPrice,
     hours,

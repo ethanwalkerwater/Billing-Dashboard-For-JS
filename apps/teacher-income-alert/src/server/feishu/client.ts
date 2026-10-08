@@ -1,5 +1,5 @@
 import { FeishuApiError } from "./errors";
-import type { FeishuEnvelope, FeishuField, FeishuFieldOption, FeishuPage, FeishuRecord } from "./types";
+import type { FeishuEnvelope, FeishuField, FeishuFieldOption, FeishuPage, FeishuRecord, SearchFilter } from "./types";
 
 const FEISHU_API_ORIGIN = "https://open.feishu.cn";
 
@@ -111,7 +111,8 @@ export class FeishuClient {
       if (pageToken) search.set("page_token", pageToken);
       if (input.viewId) search.set("view_id", input.viewId);
       if (input.filter) search.set("filter", input.filter);
-      for (const fieldName of input.fieldNames ?? []) search.append("field_names", fieldName);
+      // 飞书要求 field_names 是 JSON 数组字符串；逐个 append 会报 1254024 InvalidFieldNames
+      if (input.fieldNames?.length) search.set("field_names", JSON.stringify(input.fieldNames));
       const page = await this.request<FeishuPage<FeishuRecord>>(
         `/open-apis/bitable/v1/apps/${encodeURIComponent(input.appToken)}/tables/${encodeURIComponent(input.tableId)}/records?${search}`,
       );
@@ -120,6 +121,32 @@ export class FeishuClient {
       if (page.has_more && !pageToken) {
         throw new FeishuApiError("飞书分页响应声明还有数据，但没有返回下一页游标");
       }
+    } while (pageToken);
+    return records;
+  }
+
+  /**
+   * 「查询记录」接口（POST /records/search）：支持服务端按日期过滤、只取指定列。
+   * 注意返回形状和 list 接口不同：公式列是 {type, value:[…]}，关联字段只有 {link_record_ids}（没有显示文本）。
+   */
+  async searchRecords(input: {
+    appToken: string;
+    tableId: string;
+    fieldNames: string[];
+    filter: SearchFilter;
+  }): Promise<FeishuRecord[]> {
+    const records: FeishuRecord[] = [];
+    let pageToken: string | undefined;
+    do {
+      const search = new URLSearchParams({ page_size: "500" });
+      if (pageToken) search.set("page_token", pageToken);
+      const page = await this.request<FeishuPage<FeishuRecord>>(
+        `/open-apis/bitable/v1/apps/${encodeURIComponent(input.appToken)}/tables/${encodeURIComponent(input.tableId)}/records/search?${search}`,
+        { method: "POST", body: JSON.stringify({ field_names: input.fieldNames, filter: input.filter, automatic_fields: false }) },
+      );
+      records.push(...(page.items ?? []));
+      pageToken = page.has_more ? page.page_token : undefined;
+      if (page.has_more && !pageToken) throw new FeishuApiError("飞书分页响应声明还有数据，但没有返回下一页游标");
     } while (pageToken);
     return records;
   }

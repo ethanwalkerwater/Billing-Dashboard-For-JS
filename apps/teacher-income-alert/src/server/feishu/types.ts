@@ -35,3 +35,9 @@ export interface FeishuEnvelope<T> {
   data?: T;
 }
 
+
+/** POST /records/search 的过滤条件 */
+export interface SearchFilter {
+  conjunction: "and" | "or";
+  conditions: Array<{ field_name: string; operator: string; value: string[] }>;
+}

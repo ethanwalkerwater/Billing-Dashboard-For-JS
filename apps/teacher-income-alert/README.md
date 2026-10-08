@@ -29,7 +29,7 @@
 ```text
 src/domain/income.ts        全部计算（纯函数，前后端共用）
 src/web/                    Workbench（单表）、EditableCell（点进去就能改）、useIncomeData
-functions/income-api/       云函数：拉课表 → aggregateSchedule → 写 income_teacher_months
+functions/income-api/       云函数：按月查课表（search 接口）+ 学生名对照 → aggregateSchedule → 写 income_teacher_months
 migrations/                 income_teacher_months / income_teachers / income_settings + RLS；基础薪水种子
 tests/income.test.ts        字段解析、当月汇总、三种状态与课时数
 ```
@@ -55,6 +55,12 @@ npm run deploy:web -w @jingshi/teacher-income-alert         # tcb hosting deploy
 
 ## 已知限制
 
-- 飞书「上课时间」不支持服务端按日期过滤，每次同步全量拉约 8700 行，约 70 秒；前端 SDK 超时已调到 240 秒。
+- 同步用飞书「查询记录」接口（`POST /records/search`）按「上课时间」过滤当月、只取 6 列：约 1500 行、3 页，本地实测 6–9 秒。
+  以前用 list 接口全量拉整张表全部列，2026-10 时已 9800+ 行，本地实测 105–150 秒，且随课表增长越来越接近超时（云函数 300 秒、前端 240 秒）。
+  - 日期条件 `ExactDate` 只精确到天，前后各放宽一天取超集，精确的月份边界仍由 `aggregateSchedule` 判断。
+  - search 接口的形状和 list 不同：公式列是 `{type, value:[…]}`，学生关联只有 `link_record_ids`，名字用学生表
+    （`FEISHU_STUDENT_TABLE_ID`，约 220 行 1 页）的主列「学生+联系方式」对照。`tests/income.test.ts` 锁住了两种形状。
+  - 已与旧全量结果逐位对比 2026-08 至 11 四个月：课时费、课数、小时、学生完全一致；唯一差别是 list 接口把公式值
+    截到 15 位有效数字，个别老师的自动均价恰好在 .5 上时差 1 元，search 接口给的是精确值。
 - 同一节课多个学生（刷题班）的「课程总价格」按记录计入，不按学生拆分。
 - 只有一份全局系数；若不同老师系数不同，给 `income_teachers` 加两列即可。
