@@ -13,7 +13,8 @@ const CARD_WIDTH = 810;
 const CARD_HEIGHT = 1013;
 const SANS = '-apple-system, "PingFang SC", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif';
 /** 官网（jsjy.asia）左上角的同一枚 logo，藏青 #0E2848 + 金 #BA8D45，放在 public/ 下同源加载。 */
-export const BRAND_LOGO_URL = "/logo-blue.svg";
+// 跟着 vite 的 base 走（/feedback/），写死 "/logo-blue.svg" 会去根目录找
+export const BRAND_LOGO_URL = `${import.meta.env.BASE_URL}logo-blue.svg`;
 const BRAND_NAVY = "#0E2848";
 /** 卡片底部那句话：匿名 + 善意。短，不说教。 */
 export const FOOTER_LINE = "反馈完全匿名，你的善意会帮助老师变得更好";

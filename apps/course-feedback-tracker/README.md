@@ -2,7 +2,8 @@
 
 面向教务老师的 CloudBase 应用。选择收集月份后，系统读取上一个自然月的完整飞书课表，按「课程月份 + 学生 + 老师」生成一份问卷任务，跟踪未发、已发未填、已填写、拒绝填写四种状态，并导出可直接喂给现有老师反馈报表系统的 CSV。
 
-- 工作台：<https://app.jsjy.asia/>（自有域名，同一个 CloudBase 静态托管；雅思正向率 `/ielts/`、教师薪资预警 `/income/` 也在这个域名下）
+- 工作台：<https://app.jsjy.asia/feedback/>（自有域名，静态托管的 `/feedback/` 子目录，和雅思正向率 `/ielts/`、教师薪资预警 `/income/` 并列）。
+  根目录 `/` 是跳转页（`root-redirect/index.html`），旧链接、默认域名根目录、收藏的 `#/scores` 会原样带过来
 - 工作台短链接：<https://jingshi.vercel.app/feedback>（Vercel 门户 307 跳转到上面的地址）
 - 默认域名（仍可用）：<https://jingshi-test-d5gp401i44a0fa7a7-1300607705.tcloudbaseapp.com>
 - 自有域名配置（2026-10）：腾讯云 SSL 免费证书（`app.jsjy.asia`，90 天，已开自动续费，到期 2027-01-06）；
@@ -63,7 +64,7 @@ npm install
 npm run dev:course-feedback-tracker
 ```
 
-浏览器打开 `http://localhost:4176`。
+浏览器打开 `http://localhost:4176/feedback/`（`vite.config.ts` 的 `base` 是 `/feedback/`）。
 
 ## 验证
 
@@ -77,7 +78,8 @@ npm run build:course-feedback-tracker
 ```bash
 cd apps/course-feedback-tracker
 npm run deploy:functions   # 打包 + 部署 feedback-api（读 server.env 注入环境变量）
-npm run deploy:web         # 构建 + 部署静态站点
+npm run deploy:web         # 构建 + 部署到静态托管 /feedback/
+npm run deploy:root-redirect   # 只在根目录跳转页改动时需要：覆盖根目录 index.html
 ```
 
 数据库变更用 CLI 执行：
