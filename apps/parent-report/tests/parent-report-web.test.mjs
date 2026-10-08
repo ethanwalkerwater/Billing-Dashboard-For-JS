@@ -6,11 +6,14 @@ import path from "node:path";
 import { PDFDocument, StandardFonts } from "pdf-lib";
 
 import {
+  addCourseLine,
   buildConfirmedReport,
   buildRequiredSelectChoices,
   collectInvalidReports,
   prepareReportForEditing,
+  removeCourseLine,
   updateCourseLine,
+  updatePrepay,
   validateReport,
 } from "../web/src/report-model.js";
 import {
@@ -242,4 +245,57 @@ test("temporary PDF cleanup removes only stale owned sessions", async () => {
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }
+});
+
+test("missing teaching type placeholder from billing export is shown as empty and allowed", () => {
+  const rows = parseCompleteBillingCsv(billingCsv.replace(",1v1,", ",未填写授课类型,"));
+  const report = prepareReportForEditing(buildStudentMonthReports(rows, buildRawScheduleLookup(scheduleCsv))[0]);
+  assert.equal(report.courseLines[0].teachingType, "");
+  assert.deepEqual(validateReport(report).filter((issue) => issue.level === "error"), []);
+  const html = renderStudentBillingReportHtml(buildConfirmedReport(report), [], { embedTeacherPhotos: false });
+  assert.match(html, /<span>应雁心<\/span>/);
+  assert.doesNotMatch(html, /未填写授课类型|应雁心 \/ </);
+});
+
+test("added and deleted course lines flow into totals and the PDF without errors", () => {
+  let report = addCourseLine(fixtureReport());
+  assert.deepEqual(validateReport(report), [], "blank added line is allowed");
+  report = updateCourseLine(report, 1, "courseType", "教材费");
+  report = updateCourseLine(report, 1, "payableAmount", "300");
+  assert.equal(report.totals.payableAmount, 2300);
+  assert.deepEqual(validateReport(report), [], "added line needs no reason or calendar match");
+
+  let html = renderStudentBillingReportHtml(buildConfirmedReport(report), [], { embedTeacherPhotos: false });
+  assert.match(html, /教材费/);
+  assert.match(html, /¥2,300/);
+  assert.doesNotMatch(html, /undefined|NaN|null/);
+
+  report = removeCourseLine(report, 0);
+  assert.equal(report.totals.payableAmount, 300);
+  assert.deepEqual(validateReport(report), []);
+  html = renderStudentBillingReportHtml(buildConfirmedReport(report), [], { embedTeacherPhotos: false });
+  assert.doesNotMatch(html, /Alevel数学<\/strong>/);
+});
+
+test("prepay mode shows this month's fee and the remaining prepaid balance", () => {
+  let report = updatePrepay(fixtureReport(), { enabled: true });
+  assert.match(validateReport(report)[0].message, /扣费前预付余额/);
+
+  report = updatePrepay(report, { balanceBefore: "10000" });
+  assert.equal(report.prepay.remaining, 8000);
+  report = updateCourseLine(report, 0, "duration", "3");
+  assert.equal(report.prepay.remaining, 7000);
+  let html = renderStudentBillingReportHtml(buildConfirmedReport(report), [], { embedTeacherPhotos: false });
+  assert.match(html, /预付余额（扣费前）<\/dt><dd>¥10,000/);
+  assert.match(html, /本月费用<\/dt><dd>¥3,000/);
+  assert.match(html, /预付剩余<\/dt><dd>¥7,000/);
+
+  report = updatePrepay(report, { balanceBefore: "1000" });
+  html = renderStudentBillingReportHtml(buildConfirmedReport(report), [], { embedTeacherPhotos: false });
+  assert.match(html, /需补缴<\/dt><dd>¥2,000/);
+
+  report = updatePrepay(report, { enabled: false });
+  html = renderStudentBillingReportHtml(buildConfirmedReport(report), [], { embedTeacherPhotos: false });
+  assert.doesNotMatch(html, /预付/);
+  assert.match(html, /Total Payable/);
 });

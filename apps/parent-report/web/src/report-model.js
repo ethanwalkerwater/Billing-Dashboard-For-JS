@@ -4,7 +4,7 @@ function round(value) {
   return Math.round((Number(value || 0) + Number.EPSILON) * MONEY_PRECISION) / MONEY_PRECISION;
 }
 
-export function buildRequiredSelectChoices(current, values, placeholderLabel) {
+export function buildRequiredSelectChoices(current, values, placeholderLabel, { allowEmpty = false } = {}) {
   const selectedValue = String(current || "").trim();
   const options = [...new Set(
     values.map((value) => String(value || "").trim()).filter(Boolean),
@@ -15,7 +15,7 @@ export function buildRequiredSelectChoices(current, values, placeholderLabel) {
       value: "",
       label: placeholderLabel,
       selected: !selectedValue,
-      placeholder: true,
+      placeholder: !allowEmpty,
     },
     ...options.map((value) => ({
       value,
@@ -31,8 +31,8 @@ function baselineLine(line) {
     teacher: line.teacher,
     courseType: line.courseType,
     teachingType: line.teachingType,
-    duration: Number(line.duration || 0),
-    unitPrice: Number(line.unitPrice || 0),
+    duration: line.duration == null ? null : Number(line.duration),
+    unitPrice: line.unitPrice == null ? null : Number(line.unitPrice),
     cancellationPercent: inferCancellationPercent(line),
     payableAmount: Number(line.payableAmount || 0),
   };
@@ -84,12 +84,62 @@ function recalculateLine(line, { keepPayable = false } = {}) {
     discountAmount,
     discountRate: grossAmount > 0 ? round((payableAmount / grossAmount) * 100) : 100,
     billingNote: isLeave ? `请假 ${Number(line.cancellationPercent || 0)}%` : "—",
-    unitPriceLabel: Number(line.unitPrice || 0).toLocaleString("zh-CN", {
-      maximumFractionDigits: 2,
-    }),
+    unitPriceLabel: line.unitPrice == null
+      ? "—"
+      : Number(line.unitPrice).toLocaleString("zh-CN", { maximumFractionDigits: 2 }),
   };
   next._changedFields = changedFields(next);
   return next;
+}
+
+// 空输入保留为 null（报告中显示「—」），其余按数字处理
+function numericInput(value) {
+  return String(value ?? "").trim() === "" ? null : Number(value);
+}
+
+function isOptionalNonNegative(value) {
+  return value == null || (Number.isFinite(value) && value >= 0);
+}
+
+export function addCourseLine(report) {
+  const next = structuredClone(report);
+  next.courseLines.push(recalculateLine({
+    teacher: "",
+    courseType: "",
+    teachingType: "",
+    status: "正常上课",
+    isLeave: false,
+    duration: null,
+    cancelledDuration: 0,
+    unitPrice: null,
+    discountRate: 100,
+    discountReason: "",
+    cancellationPercent: 0,
+    payableAmount: 0,
+    manualPayable: false,
+    adjustmentReason: "",
+    rawRows: [],
+    _added: true,
+  }));
+  return recomputeReportTotals(next);
+}
+
+export function removeCourseLine(report, index) {
+  const next = structuredClone(report);
+  const [removed] = next.courseLines.splice(index, 1);
+  if (removed && !removed._added) next._deletedLineCount = (next._deletedLineCount || 0) + 1;
+  return recomputeReportTotals(next);
+}
+
+export function updatePrepay(report, patch) {
+  const next = structuredClone(report);
+  next.prepay = { enabled: false, balanceBefore: null, ...next.prepay, ...patch };
+  if ("balanceBefore" in patch) next.prepay.balanceBefore = numericInput(patch.balanceBefore);
+  return recomputeReportTotals(next);
+}
+
+export function hasManualLineEdits(report) {
+  return Boolean(report._deletedLineCount) || report.courseLines.some((line) => line._added);
 }
 
 export function recomputeReportTotals(report) {
@@ -107,12 +157,21 @@ export function recomputeReportTotals(report) {
     cancelledDuration: 0,
   });
 
-  return {
+  const next = {
     ...report,
     totals: Object.fromEntries(
       Object.entries(totals).map(([key, value]) => [key, round(value)]),
     ),
   };
+  if (report.prepay) {
+    next.prepay = {
+      ...report.prepay,
+      remaining: report.prepay.balanceBefore == null
+        ? null
+        : round(report.prepay.balanceBefore - next.totals.payableAmount),
+    };
+  }
+  return next;
 }
 
 export function prepareReportForEditing(report) {
@@ -135,7 +194,10 @@ export function updateCourseLine(report, index, field, value) {
   const next = structuredClone(report);
   const line = { ...next.courseLines[index] };
   const numericFields = new Set(["duration", "unitPrice", "cancellationPercent", "payableAmount"]);
-  line[field] = numericFields.has(field) ? Number(value) : value;
+  const nullableFields = new Set(["duration", "unitPrice"]);
+  line[field] = nullableFields.has(field)
+    ? numericInput(value)
+    : numericFields.has(field) ? Number(value) : value;
 
   if (field === "payableAmount") {
     line.manualPayable = true;
@@ -160,7 +222,7 @@ export function buildConfirmedReport(report) {
   const editedLines = next.courseLines.map((line) => ({ ...line }));
 
   next.lessons = next.lessons.map((lesson) => {
-    const edited = editedLines.find((line) => lessonMatchesLine(lesson, line._baseline));
+    const edited = editedLines.find((line) => line._baseline && lessonMatchesLine(lesson, line._baseline));
     if (!edited) return lesson;
     return {
       ...lesson,
@@ -186,8 +248,11 @@ export function buildConfirmedReport(report) {
     delete clean.cancellationPercent;
     clean.discountReason = clean.adjustmentReason || clean.discountReason;
     delete clean.adjustmentReason;
+    delete clean._added;
     return clean;
   });
+  delete next._deletedLineCount;
+  if (!next.prepay?.enabled) delete next.prepay;
 
   return next;
 }
@@ -196,24 +261,29 @@ export function validateReport(report) {
   const issues = [];
   report.courseLines.forEach((line, index) => {
     const row = index + 1;
-    if (!String(line.teacher || "").trim()) issues.push({ level: "error", row, message: "授课老师不能为空" });
-    if (!String(line.courseType || "").trim()) issues.push({ level: "error", row, message: "课程名称不能为空" });
-    if (!String(line.teachingType || "").trim()) issues.push({ level: "error", row, message: "授课类型不能为空" });
-    if (!Number.isFinite(line.duration) || line.duration < 0) issues.push({ level: "error", row, message: "课时必须是非负数字" });
-    if (!Number.isFinite(line.unitPrice) || line.unitPrice < 0) issues.push({ level: "error", row, message: "课程单价必须是非负数字" });
+    // 手动新增的行允许老师、课程、课时等留空
+    if (!line._added && !String(line.teacher || "").trim()) issues.push({ level: "error", row, message: "授课老师不能为空" });
+    if (!line._added && !String(line.courseType || "").trim()) issues.push({ level: "error", row, message: "课程名称不能为空" });
+    if (!isOptionalNonNegative(line.duration)) issues.push({ level: "error", row, message: "课时必须是非负数字" });
+    if (!isOptionalNonNegative(line.unitPrice)) issues.push({ level: "error", row, message: "课程单价必须是非负数字" });
     if (!Number.isFinite(line.cancellationPercent) || line.cancellationPercent < 0 || line.cancellationPercent > 100) {
       issues.push({ level: "error", row, message: "取消比例必须在 0–100% 之间" });
     }
     if (!Number.isFinite(line.payableAmount) || line.payableAmount < 0) {
       issues.push({ level: "error", row, message: "应付金额必须是非负数字" });
     }
-    if (line.manualPayable && !String(line.adjustmentReason || "").trim()) {
+    if (line.manualPayable && !line._added && !String(line.adjustmentReason || "").trim()) {
       issues.push({ level: "error", row, message: "手动覆盖应付金额时必须填写修改原因" });
     }
   });
 
+  if (report.prepay?.enabled && !isOptionalNonNegative(report.prepay.balanceBefore ?? -1)) {
+    issues.push({ level: "error", row: null, message: "已开启预付，请填写扣费前预付余额" });
+  }
+
+  // 手动增删课程后，汇总课时本来就会与课表不同，不再提示
   const lessonDuration = round(report.lessons.reduce((sum, lesson) => sum + Number(lesson.duration || 0), 0));
-  if (lessonDuration !== round(report.totals.duration)) {
+  if (!hasManualLineEdits(report) && lessonDuration !== round(report.totals.duration)) {
     issues.push({
       level: "warning",
       row: null,
@@ -243,5 +313,5 @@ export function formatMoney(value) {
 }
 
 export function hasChanges(report) {
-  return report.courseLines.some((line) => line._changedFields?.length);
+  return hasManualLineEdits(report) || report.courseLines.some((line) => line._changedFields?.length);
 }
