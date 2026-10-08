@@ -20,6 +20,31 @@ import {
 import { buildIncomeWorkbook } from "./income-workbook.js";
 
 const MASTER_STORAGE_KEY = "jingshi.teacher-income.master.v1";
+// 手填的三类调整（额外收入与扣款 / 实发工资调整 / 公司成本调整）按「月份 + 老师」存在本机浏览器，
+// 重新上传课时费 CSV、刷新页面都不丢；换电脑或换浏览器看不到（导出的 Excel 里有完整记录）。
+const ADJUSTMENT_STORAGE_KEY = "jingshi.teacher-income.adjustments.v1";
+
+/** 三类手填调整：key 是 state 里的字段名，同时也是传给 buildPayrollReport 的参数名 */
+const ADJUSTMENT_KINDS = {
+  extraAdjustments: {
+    title: "额外收入与扣款",
+    hint: "正数计为额外收入，负数计为罚款；合计并入课时反馈奖金，参与 Bonus 计算。",
+    totalLabel: "额外收入与扣款合计",
+    placeholder: "例如：临时代课补贴",
+  },
+  netPayAdjustments: {
+    title: "实发工资调整",
+    hint: "对实发工资的最后调整，不进 Bonus、不影响公司总成本。加钱填正数，扣钱填负数。",
+    totalLabel: "实发工资调整合计",
+    placeholder: "例如：上月多扣返还 / 借支扣回",
+  },
+  companyCostAdjustments: {
+    title: "公司成本调整",
+    hint: "对公司总成本的最后调整，不影响老师实发工资。增加成本填正数，减少填负数。",
+    totalLabel: "公司成本调整合计",
+    placeholder: "例如：团建分摊 / 社保补缴",
+  },
+};
 
 const state = {
   lessonReport: null,
@@ -28,6 +53,8 @@ const state = {
   selectedTeacher: "",
   adjustments: {},
   extraAdjustments: {},
+  netPayAdjustments: {},
+  companyCostAdjustments: {},
   master: {
     baseSalaries: [],
     studentOwnership: [],
@@ -597,7 +624,7 @@ function adjustedLessonReport(feedbackRatesByMonth = {}) {
 }
 
 function payrollInput() {
-  const extraAdjustments = Object.entries(state.extraAdjustments).flatMap(([key, rows]) => {
+  const flatten = (kind) => Object.entries(state[kind]).flatMap(([key, rows]) => {
     const [month, teacher] = JSON.parse(key);
     return rows.map((row) => ({ month, teacher, ...row }));
   });
@@ -609,7 +636,9 @@ function payrollInput() {
     nameAliases: state.master.nameAliases,
     taxSocial: state.monthly.taxSocial,
     reimbursements: state.monthly.reimbursements,
-    extraAdjustments,
+    extraAdjustments: flatten("extraAdjustments"),
+    netPayAdjustments: flatten("netPayAdjustments"),
+    companyCostAdjustments: flatten("companyCostAdjustments"),
   };
 }
 
@@ -643,6 +672,35 @@ async function readCsvFile(file, parser, onDone) {
   const rows = parser(text);
   onDone(rows, file.name);
   render();
+}
+
+function persistAdjustments() {
+  try {
+    const payload = { version: 1 };
+    for (const kind of Object.keys(ADJUSTMENT_KINDS)) {
+      // 只存有内容的行，空白占位行不存
+      payload[kind] = Object.fromEntries(
+        Object.entries(state[kind])
+          .map(([key, rows]) => [key, rows.filter((row) => cleanText(row.description) || cleanText(String(row.amount ?? "")))])
+          .filter(([, rows]) => rows.length > 0),
+      );
+    }
+    localStorage.setItem(ADJUSTMENT_STORAGE_KEY, JSON.stringify(payload));
+  } catch (error) {
+    console.warn("无法把手填调整保存到浏览器", error);
+  }
+}
+
+function restorePersistedAdjustments() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(ADJUSTMENT_STORAGE_KEY) || "null");
+    if (!saved || typeof saved !== "object") return;
+    for (const kind of Object.keys(ADJUSTMENT_KINDS)) {
+      if (saved[kind] && typeof saved[kind] === "object") state[kind] = saved[kind];
+    }
+  } catch (error) {
+    console.warn("读取已保存的手填调整失败", error);
+  }
 }
 
 function persistMasterData(key) {
@@ -753,6 +811,7 @@ async function loadDefaults() {
     console.warn("未加载项目默认主数据", error);
   }
   restorePersistedMasterData();
+  restorePersistedAdjustments();
   render();
 }
 
@@ -1062,48 +1121,81 @@ function lessonMultiplierDetails(adjustment, row) {
   };
 }
 
-function extraAdjustmentKey(month, teacher) {
+function adjustmentKey(month, teacher) {
   return JSON.stringify([month, teacher]);
 }
 
-function extraAdjustmentRows(month, teacher) {
-  const key = extraAdjustmentKey(month, teacher);
-  if (!state.extraAdjustments[key]) state.extraAdjustments[key] = [];
-  return state.extraAdjustments[key];
+function adjustmentRows(kind, month, teacher) {
+  const key = adjustmentKey(month, teacher);
+  if (!state[kind][key]) state[kind][key] = [];
+  return state[kind][key];
 }
 
-function renderExtraAdjustments(row) {
-  const rows = extraAdjustmentRows(state.month, row.teacher);
+/** 额外收入与扣款 / 实发工资调整 / 公司成本调整 共用的编辑区：项目说明 + 调整金额，可增删 */
+function renderAdjustmentEditor(kind, row, total) {
+  const config = ADJUSTMENT_KINDS[kind];
+  const rows = adjustmentRows(kind, state.month, row.teacher);
   return `
-    <section class="extra-adjustment-section">
+    <section class="extra-adjustment-section" data-adjustment-kind="${kind}">
       <div class="lesson-section-head">
         <div>
-          <h3>额外收入与扣款</h3>
-          <p>正数计为额外收入，负数计为罚款；合计并入课时反馈奖金。</p>
+          <h3>${escapeHtml(config.title)}</h3>
+          <p>${escapeHtml(config.hint)} 填写内容会自动保存在本机浏览器。</p>
         </div>
-        <button class="button outline compact" type="button" data-add-extra>添加项目</button>
+        <button class="button outline compact" type="button" data-adjust-add>添加项目</button>
       </div>
       <div class="extra-adjustment-list">
         ${rows.length ? rows.map((entry, index) => `
           <div class="extra-adjustment-row">
             <label>
               <span>项目说明</span>
-              <input type="text" value="${escapeHtml(entry.description)}" placeholder="例如：临时代课补贴" data-extra-description="${index}" />
+              <input type="text" value="${escapeHtml(entry.description)}" placeholder="${escapeHtml(config.placeholder)}" data-adjust-description="${index}" />
             </label>
             <label>
               <span>调整金额（元）</span>
-              <input class="number-input" type="number" step="0.01" value="${escapeHtml(entry.amount)}" placeholder="收入填正数，罚款填负数" data-extra-amount="${index}" />
+              <input class="number-input" type="number" step="0.01" value="${escapeHtml(entry.amount)}" placeholder="增加填正数，减少填负数" data-adjust-amount="${index}" />
             </label>
-            <button class="button danger compact" type="button" data-delete-extra="${index}">删除</button>
+            <button class="button danger compact" type="button" data-adjust-delete="${index}">删除</button>
           </div>
-        `).join("") : '<div class="empty-state small">暂无额外项目</div>'}
+        `).join("") : '<div class="empty-state small">暂无项目</div>'}
       </div>
       <div class="extra-adjustment-total">
-        <span>额外收入与扣款合计</span>
-        <strong>${money(row.extraAdjustmentTotal)}</strong>
+        <span>${escapeHtml(config.totalLabel)}</span>
+        <strong>${money(total)}</strong>
       </div>
     </section>
   `;
+}
+
+function bindAdjustmentEditors(row) {
+  els.ledgerPanel.querySelectorAll("[data-adjustment-kind]").forEach((section) => {
+    const kind = section.dataset.adjustmentKind;
+    const rows = adjustmentRows(kind, state.month, row.teacher);
+    section.querySelector("[data-adjust-add]")?.addEventListener("click", () => {
+      rows.push({ description: "", amount: "" });
+      render();
+    });
+    section.querySelectorAll("[data-adjust-description]").forEach((input) => {
+      input.addEventListener("change", () => {
+        rows[Number(input.dataset.adjustDescription)].description = input.value;
+        persistAdjustments();
+      });
+    });
+    section.querySelectorAll("[data-adjust-amount]").forEach((input) => {
+      input.addEventListener("change", () => {
+        rows[Number(input.dataset.adjustAmount)].amount = input.value;
+        persistAdjustments();
+        render();
+      });
+    });
+    section.querySelectorAll("[data-adjust-delete]").forEach((button) => {
+      button.addEventListener("click", () => {
+        rows.splice(Number(button.dataset.adjustDelete), 1);
+        persistAdjustments();
+        render();
+      });
+    });
+  });
 }
 
 function renderCommissionRows(row) {
@@ -1276,28 +1368,7 @@ function bindLessonInputs(row) {
     bindRowField("[data-row-multiplier-reason]", "rowMultiplierReason", "multiplierReason", false);
   }
 
-  const extraRows = extraAdjustmentRows(state.month, row.teacher);
-  els.ledgerPanel.querySelector("[data-add-extra]")?.addEventListener("click", () => {
-    extraRows.push({ description: "", amount: "" });
-    render();
-  });
-  els.ledgerPanel.querySelectorAll("[data-extra-description]").forEach((input) => {
-    input.addEventListener("change", () => {
-      extraRows[Number(input.dataset.extraDescription)].description = input.value;
-    });
-  });
-  els.ledgerPanel.querySelectorAll("[data-extra-amount]").forEach((input) => {
-    input.addEventListener("change", () => {
-      extraRows[Number(input.dataset.extraAmount)].amount = input.value;
-      render();
-    });
-  });
-  els.ledgerPanel.querySelectorAll("[data-delete-extra]").forEach((button) => {
-    button.addEventListener("click", () => {
-      extraRows.splice(Number(button.dataset.deleteExtra), 1);
-      render();
-    });
-  });
+  bindAdjustmentEditors(row);
 }
 
 function renderLedger() {
@@ -1307,7 +1378,7 @@ function renderLedger() {
     return;
   }
   state.selectedTeacher = row.teacher;
-  const bonusBeforeDeduction = round(row.lessonBonus + row.ownerCommission + row.serviceCommission);
+  const bonusBeforeDeduction = round(row.lessonBonus + row.ownerCommission + row.serviceCommission + row.managementFee);
   els.ledgerPanel.innerHTML = `
     <div class="ledger-head">
       <div>
@@ -1316,47 +1387,52 @@ function renderLedger() {
         <p>${escapeHtml(row.employmentType)} · 课时系数 ${percent(row.feedbackRate)} · ${escapeHtml(feedbackDescription(row))}</p>
       </div>
       <div class="headline-total">
-        <span>个人总收入</span>
+        <span>实发工资</span>
         <strong>${money(row.personalTotalIncome)}</strong>
       </div>
     </div>
 
     ${renderLessonDetails(row)}
 
-    ${renderExtraAdjustments(row)}
+    ${renderAdjustmentEditor("extraAdjustments", row, row.extraAdjustmentTotal)}
 
     <section class="ledger">
       <h3>Bonus 计算</h3>
       ${ledgerItem(row.feedbackMissingScore ? "warning" : "plus", "课时反馈奖金", row.lessonBonus, "课时奖金小计 + 额外收入与扣款", `${money(row.lessonBaseBonus)} + ${money(row.extraAdjustmentTotal)} · 课时系数 ${percent(row.feedbackRate)} 已由每节课乘数体现 · ${feedbackDescription(row)}`)}
       ${ledgerItem("plus", "学员介绍提成", row.ownerCommission, "来源：学生归属服务表 + 学生当月学费", `学生学费 × ${percent(state.master.parameters.ownerCommissionRate)}`)}
       ${ledgerItem("plus", "服务/管理奖金", row.serviceCommission, "来源：学生归属服务表 + 学生当月学费", `学生学费 × ${percent(state.master.parameters.serviceCommissionRate)}`)}
-      ${ledgerItem("subtotal", "Bonus 扣减前小计", bonusBeforeDeduction, "课时反馈奖金 + 介绍提成 + 服务奖金")}
+      ${ledgerItem("plus", "管理费", row.managementFee, "来源：老师基础薪水表", "计入 Bonus，和其他奖金一起抵扣基础薪水")}
+      ${ledgerItem("subtotal", "Bonus 扣减前小计", bonusBeforeDeduction, "课时反馈奖金 + 介绍提成 + 服务奖金 + 管理费")}
       ${ledgerItem("minus", "基础薪水扣减", row.baseSalaryDeduction, "来源：老师基础薪水表 + 参数", `${money(row.baseSalary)} × ${number(state.master.parameters.baseSalaryDeductionMultiplier)}`)}
       ${ledgerItem("total", "Bonus 公式结果", row.bonusSalary, "Bonus 扣减前小计 - 基础薪水扣减")}
     </section>
 
     <section class="ledger">
-      <h3>个人收入</h3>
+      <h3>实发工资</h3>
       ${ledgerItem("plus", "基础薪水", row.baseSalary, "来源：老师基础薪水表")}
-      ${ledgerItem("plus", "管理费", row.managementFee, "来源：老师基础薪水表")}
       ${ledgerItem("minus", "房租扣除", row.rentDeduction, "来源：老师基础薪水表")}
-      ${ledgerItem(row.bonusSalary < 0 ? "warning" : "plus", "实际计入 Bonus", row.appliedBonusSalary, "来源：上方 Bonus 公式结果", row.bonusSalary < 0 ? `${money(row.bonusSalary)} 按 ¥0.00 计入个人收入` : "")}
+      ${ledgerItem(row.bonusSalary < 0 ? "warning" : "plus", "实际计入 Bonus", row.appliedBonusSalary, "来源：上方 Bonus 公式结果", row.bonusSalary < 0 ? `${money(row.bonusSalary)} 按 ¥0.00 计入实发工资` : "")}
       ${ledgerItem("plus", "补贴报销", row.reimbursement, "来源：补贴报销 CSV")}
       ${ledgerItem("minus", "个人五险", row.personalSocialInsurance, "来源：五险 + 个税 CSV")}
       ${ledgerItem("minus", "个税", row.tax, "来源：五险 + 个税 CSV")}
-      ${ledgerItem("total", "个人总收入", row.personalTotalIncome, "基础薪水 + 管理费 - 房租扣除 + 实际计入 Bonus + 报销 - 个人五险 - 个税")}
+      ${ledgerItem(row.netPayAdjustmentTotal < 0 ? "minus" : "plus", "实发工资调整", Math.abs(row.netPayAdjustmentTotal), "来源：下方手填项目")}
+      ${ledgerItem("total", "实发工资", row.personalTotalIncome, "基础薪水 - 房租扣除 + 实际计入 Bonus + 报销 - 个人五险 - 个税 + 实发工资调整")}
     </section>
+
+    ${renderAdjustmentEditor("netPayAdjustments", row, row.netPayAdjustmentTotal)}
 
     <section class="ledger">
       <h3>公司成本</h3>
       ${ledgerItem("plus", "基础薪水", row.baseSalary, "来源：老师基础薪水表")}
-      ${ledgerItem("plus", "管理费", row.managementFee, "来源：老师基础薪水表")}
       ${ledgerItem("minus", "房租扣除", row.rentDeduction, "来源：老师基础薪水表")}
       ${ledgerItem(row.bonusSalary < 0 ? "warning" : "plus", "实际计入 Bonus", row.appliedBonusSalary, "来源：上方 Bonus 公式结果", row.bonusSalary < 0 ? `${money(row.bonusSalary)} 按 ¥0.00 计入公司成本` : "")}
       ${ledgerItem("plus", "补贴报销", row.reimbursement, "来源：补贴报销 CSV")}
       ${ledgerItem("plus", "公司五险", row.companySocialInsurance, "来源：五险 + 个税 CSV")}
-      ${ledgerItem("total", "公司总成本", row.companyTotalCost, "基础薪水 + 管理费 - 房租扣除 + 实际计入 Bonus + 报销 + 公司五险")}
+      ${ledgerItem(row.companyCostAdjustmentTotal < 0 ? "minus" : "plus", "公司成本调整", Math.abs(row.companyCostAdjustmentTotal), "来源：下方手填项目")}
+      ${ledgerItem("total", "公司总成本", row.companyTotalCost, "基础薪水 - 房租扣除 + 实际计入 Bonus + 报销 + 公司五险 + 公司成本调整")}
     </section>
+
+    ${renderAdjustmentEditor("companyCostAdjustments", row, row.companyCostAdjustmentTotal)}
 
     <section class="source-panel">
       <h3>提成来源明细</h3>
@@ -1393,8 +1469,10 @@ function payrollSummaryRow(row) {
     row.reimbursement,
     row.personalSocialInsurance,
     row.tax,
+    row.netPayAdjustmentTotal,
     row.personalTotalIncome,
     row.companySocialInsurance,
+    row.companyCostAdjustmentTotal,
     row.companyTotalCost,
     row.issues.map((issue) => issue.label).join("；"),
   ];
@@ -1421,8 +1499,10 @@ const SUMMARY_HEADERS = [
   "补贴报销",
   "个人五险",
   "个税",
-  "个人总收入",
+  "实发工资调整",
+  "实发工资",
   "公司五险",
+  "公司成本调整",
   "公司总成本",
   "数据提醒",
 ];
@@ -1469,7 +1549,9 @@ function teacherExportModel(row) {
         ];
       });
 
-  const bonusBeforeDeduction = round(row.lessonBonus + row.ownerCommission + row.serviceCommission);
+  const bonusBeforeDeduction = round(row.lessonBonus + row.ownerCommission + row.serviceCommission + row.managementFee);
+  const adjustmentLines = (entries, source) =>
+    entries.map((entry) => [entry.amount < 0 ? "减项" : "加项", entry.description || "未填写说明", source, "", entry.amount]);
   return {
     teacher: row.teacher,
     employmentType: row.employmentType,
@@ -1482,18 +1564,21 @@ function teacherExportModel(row) {
       ["合计", "课时反馈奖金", "课时奖金小计 + 额外收入与扣款", `${row.lessonBaseBonus} + ${row.extraAdjustmentTotal}`, row.lessonBonus],
       ["加项", "学员介绍提成", "学生归属服务表", `学生学费 × ${state.master.parameters.ownerCommissionRate}`, row.ownerCommission],
       ["加项", "服务/管理奖金", "学生归属服务表", `学生学费 × ${state.master.parameters.serviceCommissionRate}`, row.serviceCommission],
-      ["小计", "Bonus 扣减前小计", "", "", bonusBeforeDeduction],
+      ["加项", "管理费", "老师基础薪水表", "计入 Bonus", row.managementFee],
+      ["小计", "Bonus 扣减前小计", "课时反馈奖金 + 介绍提成 + 服务奖金 + 管理费", "", bonusBeforeDeduction],
       ["减项", "基础薪水扣减", "老师基础薪水表 + 参数", `${row.baseSalary} × ${state.master.parameters.baseSalaryDeductionMultiplier}`, row.baseSalaryDeduction],
       ["合计", "Bonus 公式结果", "", "", row.bonusSalary],
       [row.bonusSalary < 0 ? "调整" : "加项", "实际计入 Bonus", "Bonus 公式结果", row.bonusSalary < 0 ? `${row.bonusSalary} 按 0 计入` : "", row.appliedBonusSalary],
       ["加项", "基础薪水", "老师基础薪水表", "", row.baseSalary],
-      ["加项", "管理费", "老师基础薪水表", "", row.managementFee],
       ["减项", "房租扣除", "老师基础薪水表", "", row.rentDeduction],
       ["加项", "补贴报销", "补贴报销 CSV", "", row.reimbursement],
       ["减项", "个人五险", "五险 + 个税 CSV", "", row.personalSocialInsurance],
       ["减项", "个税", "五险 + 个税 CSV", "", row.tax],
-      ["合计", "个人总收入", "固定收入 + 实际计入 Bonus + 报销 - 个人五险 - 个税", "", row.personalTotalIncome],
-      ["合计", "公司总成本", "固定收入 + 实际计入 Bonus + 报销 + 公司五险", "", row.companyTotalCost],
+      ...adjustmentLines(row.netPayAdjustments, "实发工资调整"),
+      ["合计", "实发工资", "基础薪水 - 房租扣除 + 实际计入 Bonus + 报销 - 个人五险 - 个税 + 实发工资调整", "", row.personalTotalIncome],
+      ["加项", "公司五险", "五险 + 个税 CSV", "", row.companySocialInsurance],
+      ...adjustmentLines(row.companyCostAdjustments, "公司成本调整"),
+      ["合计", "公司总成本", "基础薪水 - 房租扣除 + 实际计入 Bonus + 报销 + 公司五险 + 公司成本调整", "", row.companyTotalCost],
     ],
     lessonHeaders: [
       "学生",
@@ -1533,7 +1618,8 @@ async function downloadIncomeWorkbook(rows, filename) {
     month: state.month,
     summaryHeaders: SUMMARY_HEADERS,
     summaryRows: rows.map(payrollSummaryRow),
-    summaryCurrencyColumns: [3, 4, 5, 6, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23],
+    // 第 3–6 列：基础薪水、管理费、房租扣除、月度课时费；第 10–25 列：各项金额（含两列手填调整）
+    summaryCurrencyColumns: [3, 4, 5, 6, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25],
     summaryRateColumns: [7],
     teachers: rows.map(teacherExportModel),
   };
@@ -1709,8 +1795,8 @@ els.lessonFeeInput.addEventListener("change", async (event) => {
   state.sources.lessonFee = file.name;
   els.lessonFeeStatus.textContent = `${file.name} · ${number(lessonRows.length)} 行`;
   state.selectedTeacher = "";
+  // 课时明细里改的单价 / 乘数跟着 CSV 行走，换文件要清掉；三类手填调整按「月份 + 老师」存，保留
   state.adjustments = {};
-  state.extraAdjustments = {};
   render();
 });
 

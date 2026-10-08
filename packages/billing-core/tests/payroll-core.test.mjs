@@ -218,7 +218,7 @@ test("part-time teachers keep the part-time rate without requiring monthly score
   assert.equal(row.issues.some((issue) => issue.code === "missing_feedback_score"), false);
 });
 
-test("negative bonus is retained for review but contributes zero to income and company cost", () => {
+test("management fee counts toward Bonus instead of fixed income", () => {
   const report = buildReportFromCsv(scheduleCsv, "schedule.csv");
   const [baseSalary] = parseBaseSalaryCsv([
     "老师名,雇佣属性,基础薪水,管理费,市场推广,教学顾问,排课,行政前台,房租扣除",
@@ -234,14 +234,61 @@ test("negative bonus is retained for review but contributes zero to income and c
   assert.equal(row.baseSalary, 1000);
   assert.equal(row.managementFee, 300);
   assert.equal(row.rentDeduction, 200);
-  assert.equal(row.fixedIncome, 1100);
+  // 管理费进 Bonus：固定收入 = 基础薪水 - 房租扣除
+  assert.equal(row.fixedIncome, 800);
   assert.equal(row.lessonBonus, 1000);
   assert.equal(row.baseSalaryDeduction, 1200);
-  assert.equal(row.bonusSalary, -200);
+  // 1000 + 管理费 300 - 1200 = 100
+  assert.equal(row.bonusSalary, 100);
+  assert.equal(row.appliedBonusSalary, 100);
+  assert.equal(row.personalTotalIncome, 900);
+  assert.equal(row.companyTotalCost, 900);
+  assert.equal(row.issues.some((issue) => issue.code === "bonus_negative"), false);
+});
+
+test("negative bonus is retained for review but contributes zero to income and company cost", () => {
+  const report = buildReportFromCsv(scheduleCsv, "schedule.csv");
+  const [baseSalary] = parseBaseSalaryCsv([
+    "老师名,雇佣属性,基础薪水,管理费,市场推广,教学顾问,排课,行政前台,房租扣除",
+    "张老师,兼职,2000,300,0,0,0,0,200",
+  ].join("\n"));
+  const row = buildPayrollReport(report, { parameters: { partTimeLessonRate: 0.5 }, baseSalaries: [baseSalary] })
+    .byMonth["2026-05"]["张老师"];
+  // 1000 + 管理费 300 - 2400 = -1100：保留负数供复核，实际计入按 0，管理费也就不再单独发
+  assert.equal(row.bonusSalary, -1100);
   assert.equal(row.appliedBonusSalary, 0);
-  assert.equal(row.personalTotalIncome, 1100);
-  assert.equal(row.companyTotalCost, 1100);
+  assert.equal(row.personalTotalIncome, 1800);
   assert.match(row.issues.find((issue) => issue.code === "bonus_negative").label, /按 0 处理/);
+});
+
+test("net pay and company cost take their own manual adjustments as the last step", () => {
+  const report = buildReportFromCsv(scheduleCsv, "schedule.csv");
+  const [baseSalary] = parseBaseSalaryCsv([
+    "老师名,雇佣属性,基础薪水,管理费,市场推广,教学顾问,排课,行政前台,房租扣除",
+    "张老师,兼职,1000,300,0,0,0,0,200",
+  ].join("\n"));
+  const payroll = buildPayrollReport(report, {
+    parameters: { partTimeLessonRate: 0.5 },
+    baseSalaries: [baseSalary],
+    netPayAdjustments: [
+      { month: "2026-05", teacher: "张老师", description: "上月多扣返还", amount: "150" },
+      { month: "2026-05", teacher: "张老师", description: "借支扣回", amount: -50 },
+      { month: "2026-04", teacher: "张老师", description: "别的月份不算", amount: 999 },
+    ],
+    companyCostAdjustments: [{ month: "2026-05", teacher: "张老师", description: "团建分摊", amount: 80 }],
+  });
+  const row = payroll.byMonth["2026-05"]["张老师"];
+  assert.deepEqual(row.netPayAdjustments, [
+    { description: "上月多扣返还", amount: 150 },
+    { description: "借支扣回", amount: -50 },
+  ]);
+  assert.equal(row.netPayAdjustmentTotal, 100);
+  assert.equal(row.companyCostAdjustmentTotal, 80);
+  // 不调整时都是 900；各自只动自己那一项，互不影响
+  assert.equal(row.personalTotalIncome, 1000);
+  assert.equal(row.companyTotalCost, 980);
+  // 调整不进 Bonus
+  assert.equal(row.bonusSalary, 100);
 });
 
 test("commissions never become negative when student monthly fee is negative", () => {
