@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { aggregateSchedule, cleanStudentName, evaluateTeacher, parseScheduleRow } from "@/domain/income";
+import { aggregateSchedule, cleanStudentName, evaluateTeacher, monthSearchFilter, parseScheduleRow } from "@/domain/income";
 
 // 飞书 v1 records 接口的真实形状：单价是字符串，时长/总价是公式列返回的数字，学生是关联字段
 const feishuFields = {
@@ -29,6 +29,31 @@ test("parseScheduleRow 读飞书真实字段形状", () => {
   assert.equal(parseScheduleRow({ ...feishuFields, 课程时长: -143 }), null);
   assert.equal(cleanStudentName("Charlie-0601"), "Charlie");
   assert.equal(cleanStudentName("顾子言Tina-"), "顾子言Tina");
+});
+
+test("parseScheduleRow 也读「查询记录」接口的形状：公式列 {type,value}、学生只有记录 ID", () => {
+  // POST /records/search 实测返回：公式列包一层，关联字段没有显示文本，要用学生表对照名字
+  const searchFields = {
+    上课时间: 1790769600000,
+    老师: "张劭景",
+    学生: { link_record_ids: ["recv1bIzHDqhfp", "recUnknown"] },
+    课程单价: [{ text: "800", type: "text" }],
+    课程时长: { type: 2, value: [1] },
+    课程总价格: { type: 2, value: [800] },
+  };
+  const studentNames = new Map([["recv1bIzHDqhfp", "张海錤 Linda-3777"]]);
+  // 和 list 接口形状解析出的结果完全一样；学生表里找不到的 ID 直接跳过
+  assert.deepEqual(parseScheduleRow(searchFields, studentNames), parseScheduleRow(feishuFields));
+  assert.equal(parseScheduleRow({ ...searchFields, 学生: {} }, studentNames)?.studentName, "");
+});
+
+test("monthSearchFilter 前后各放宽一天，月份边界交给 aggregateSchedule", () => {
+  const [after, before] = monthSearchFilter("2026-09").conditions;
+  const start = Date.UTC(2026, 8, 1) - 8 * 3600_000;
+  const end = Date.UTC(2026, 9, 1) - 8 * 3600_000;
+  const day = 24 * 3600_000;
+  assert.deepEqual(after, { field_name: "上课时间", operator: "isGreater", value: ["ExactDate", String(start - 2 * day)] });
+  assert.deepEqual(before, { field_name: "上课时间", operator: "isLess", value: ["ExactDate", String(end + day)] });
 });
 
 test("aggregateSchedule 只算当月、按老师汇总、取消课按总价格折后计入", () => {
