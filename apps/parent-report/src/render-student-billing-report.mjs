@@ -36,16 +36,40 @@ function renderCourseRows(report) {
     <tr${line.isLeave ? ` class="is-leave"` : ""}>
       <td>
         <strong>${esc(line.courseType)}</strong>
-        <span>${esc(line.teacher)} / ${esc(line.teachingType)}</span>
+        ${[line.teacher, line.teachingType].some(Boolean) ? `<span>${[line.teacher, line.teachingType].filter(Boolean).map(esc).join(" / ")}</span>` : ""}
         ${line.discountReason ? `<span class="bill-note">${esc(line.discountReason)}</span>` : ""}
       </td>
-      <td>${formatNumber(line.duration)}h</td>
-      <td>${line.unitPriceLabel === "缺失" ? "缺失" : `¥${esc(line.unitPriceLabel)}`}</td>
+      <td>${line.duration == null ? "—" : `${formatNumber(line.duration)}h`}</td>
+      <td>${["缺失", "—"].includes(line.unitPriceLabel) ? esc(line.unitPriceLabel) : `¥${esc(line.unitPriceLabel)}`}</td>
       <td>${formatMoney(line.grossAmount)}</td>
       <td>${esc(discountLabel(line))}</td>
       <td>${formatMoney(line.payableAmount)}</td>
     </tr>
   `).join("");
+}
+
+function renderTotalRow(report) {
+  const prepay = report.prepay;
+  if (!prepay?.enabled || prepay.balanceBefore == null) {
+    return `
+      <div class="total-row">
+        <p>折扣与临时请假已按规则计入应付课时费。</p>
+        <div>
+          <span class="section-label">Total Payable</span>
+          <strong>${formatMoney(report.totals.payableAmount)}</strong>
+        </div>
+      </div>`;
+  }
+  const owed = prepay.remaining < 0;
+  return `
+    <div class="total-row prepay-total">
+      <p>本月课时费已从预付余额中扣除。折扣与临时请假已按规则计入本月费用。</p>
+      <dl class="prepay-summary">
+        <div><dt>预付余额（扣费前）</dt><dd>${formatMoney(prepay.balanceBefore)}</dd></div>
+        <div><dt>本月费用</dt><dd>${formatMoney(report.totals.payableAmount)}</dd></div>
+        <div class="is-final"><dt>${owed ? "需补缴" : "预付剩余"}</dt><dd>${formatMoney(Math.abs(prepay.remaining))}</dd></div>
+      </dl>
+    </div>`;
 }
 
 function renderCalendar(report) {
@@ -214,6 +238,11 @@ export function renderStudentBillingReportHtml(report, teachers, options = {}) {
     .total-row p { margin: 0 0 14px; color: var(--muted); font-size: 12px; }
     .section-label { display: block; margin-bottom: 5px; color: var(--muted); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
     .total-row strong { font-size: 36px; font-weight: 600; }
+    .prepay-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin: 0; }
+    .prepay-summary div { margin: 0; }
+    .prepay-summary dt { margin-bottom: 5px; color: var(--muted); font-size: 12px; }
+    .prepay-summary dd { margin: 0; font-size: 24px; font-weight: 600; }
+    .prepay-summary .is-final dd { color: var(--indigo); font-size: 36px; }
     .calendar-wrap { overflow: visible; }
     .calendar {
       display: grid;
@@ -341,13 +370,7 @@ export function renderStudentBillingReportHtml(report, teachers, options = {}) {
         </thead>
         <tbody>${renderCourseRows(report)}</tbody>
       </table>
-      <div class="total-row">
-        <p>折扣与临时请假已按规则计入应付课时费。</p>
-        <div>
-          <span class="section-label">Total Payable</span>
-          <strong>${formatMoney(report.totals.payableAmount)}</strong>
-        </div>
-      </div>
+      ${renderTotalRow(report)}
     </section>
 
     <section class="page">

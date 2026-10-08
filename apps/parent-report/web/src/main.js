@@ -2,12 +2,15 @@ import JSZip from "jszip";
 
 import teachersData from "../../data/teachers.json";
 import {
+  addCourseLine,
   buildConfirmedReport,
   buildRequiredSelectChoices,
   collectInvalidReports,
   formatMoney,
   hasChanges,
+  removeCourseLine,
   updateCourseLine,
+  updatePrepay,
   validateReport,
 } from "./report-model.js";
 import {
@@ -710,11 +713,11 @@ function teachingTypeOptions(current) {
     "班课",
     "刷题班",
   ].filter(Boolean))];
-  return requiredSelectOptions(current, values, "请选择授课类型");
+  return requiredSelectOptions(current, values, "不填写", { allowEmpty: true });
 }
 
-function requiredSelectOptions(current, values, placeholderLabel) {
-  return buildRequiredSelectChoices(current, values, placeholderLabel).map((option) => (
+function requiredSelectOptions(current, values, placeholderLabel, options) {
+  return buildRequiredSelectChoices(current, values, placeholderLabel, options).map((option) => (
     `<option value="${esc(option.value)}" ${option.selected ? "selected" : ""} ${option.placeholder ? "disabled" : ""}>${esc(option.label)}</option>`
   )).join("");
 }
@@ -763,8 +766,9 @@ function courseRows(report) {
   return report.courseLines.map((line, index) => {
     const changed = line._changedFields?.length > 0;
     return `
-      <div class="course-row" data-course-row="${index}">
+      <div class="course-row${line._added ? " is-added" : ""}" data-course-row="${index}">
         <div class="course-cell">
+          ${line._added ? '<span class="added-badge">新增</span>' : ""}
           <div class="${fieldClass(line, "courseType")}">
             <input
               aria-label="第 ${index + 1} 行课程名称"
@@ -820,13 +824,18 @@ function courseRows(report) {
           <input aria-label="第 ${index + 1} 行应付金额" type="number" min="0" step="1" value="${esc(fieldValue(index, "payableAmount", line.payableAmount))}" data-row="${index}" data-field="payableAmount" />
           ${originalValue(line, "payableAmount", formatMoney)}
         </div>
+        <div class="course-cell delete-cell">
+          <button class="icon-button danger" type="button" data-delete-line="${index}" aria-label="删除第 ${index + 1} 行课程" title="删除这行课程">
+            <i class="ph ph-trash" aria-hidden="true"></i>
+          </button>
+        </div>
         ${changed ? `
           <label class="reason-row">
             <i class="ph ph-note-pencil" aria-hidden="true"></i>
             <input
               aria-label="第 ${index + 1} 行修改原因"
               type="text"
-              placeholder="${line.manualPayable ? "手动覆盖应付金额，请填写原因（必填）" : "填写修改原因（选填）"}"
+              placeholder="${line.manualPayable && !line._added ? "手动覆盖应付金额，请填写原因（必填）" : "填写修改原因（选填）"}"
               value="${esc(fieldValue(index, "adjustmentReason", line.adjustmentReason))}"
               data-row="${index}"
               data-field="adjustmentReason"
@@ -874,7 +883,7 @@ function issueStrip(report) {
         <i class="ph ph-warning-circle" aria-hidden="true"></i>
         <div>
           <strong>还有 ${errors.length} 项需要处理，暂时不能生成报告</strong>
-          <span>${esc(errors.slice(0, 2).map((issue) => `第 ${issue.row} 行：${issue.message}`).join("；"))}</span>
+          <span>${esc(errors.slice(0, 2).map((issue) => `${issue.row ? `第 ${issue.row} 行：` : ""}${issue.message}`).join("；"))}</span>
         </div>
       </div>
     `;
@@ -925,9 +934,9 @@ function previewPages(report) {
         </div>
         ${report.courseLines.map((line) => `
           <div class="mini-bill-row">
-            <strong>${esc(line.courseType)}</strong>
-            <span>${esc(line.duration)}h</span>
-            <span>${esc(formatMoney(line.unitPrice))}</span>
+            <strong>${esc(line.courseType || "—")}</strong>
+            <span>${line.duration == null ? "—" : `${esc(line.duration)}h`}</span>
+            <span>${line.unitPrice == null ? "—" : esc(formatMoney(line.unitPrice))}</span>
             <span>${esc(formatMoney(line.payableAmount))}</span>
           </div>
         `).join("")}
@@ -935,9 +944,85 @@ function previewPages(report) {
           <span>TOTAL PAYABLE</span>
           <strong>${esc(formatMoney(report.totals.payableAmount))}</strong>
         </div>
+        ${report.prepay?.enabled ? `
+          <div class="mini-prepay">
+            <span>预付余额 ${esc(formatMoney(report.prepay.balanceBefore))}</span>
+            <strong>${esc(prepayRemainingLabel(report.prepay))}</strong>
+          </div>
+        ` : ""}
       </article>
     </div>
   `;
+}
+
+function prepayRemainingLabel(prepay) {
+  if (prepay.remaining == null) return "预付剩余 —";
+  return prepay.remaining < 0
+    ? `需补缴 ${formatMoney(-prepay.remaining)}`
+    : `预付剩余 ${formatMoney(prepay.remaining)}`;
+}
+
+function prepayPanel(report) {
+  const prepay = report.prepay || {};
+  return `
+    <section class="prepay-panel">
+      <label class="prepay-toggle">
+        <input id="prepayToggle" type="checkbox" ${prepay.enabled ? "checked" : ""} />
+        <span>
+          <strong>预付学员</strong>
+          <span>本月课时费从预付中扣除，PDF 显示本月费用与预付剩余</span>
+        </span>
+      </label>
+      ${prepay.enabled ? `
+        <div class="prepay-fields">
+          <label>
+            <span>扣费前预付余额</span>
+            <input id="prepayBalance" type="number" min="0" step="1" placeholder="由教务填写" value="${esc(prepay.balanceBefore ?? "")}" />
+          </label>
+          <div><span>本月费用</span><strong>${esc(formatMoney(report.totals.payableAmount))}</strong></div>
+          <div class="${prepay.remaining < 0 ? "is-negative" : ""}"><span>${prepay.remaining < 0 ? "需补缴" : "预付剩余"}</span><strong>${prepay.remaining == null ? "—" : esc(formatMoney(Math.abs(prepay.remaining)))}</strong></div>
+        </div>
+      ` : ""}
+    </section>
+  `;
+}
+
+function confirmDialog({ title, message, confirmLabel }) {
+  return new Promise((resolve) => {
+    const dialog = document.createElement("dialog");
+    dialog.className = "confirm-dialog";
+    dialog.innerHTML = `
+      <form method="dialog">
+        <h3>${esc(title)}</h3>
+        <p>${esc(message)}</p>
+        <div class="confirm-dialog-actions">
+          <button class="button" value="cancel" autofocus>取消</button>
+          <button class="button danger" value="confirm">${esc(confirmLabel)}</button>
+        </div>
+      </form>
+    `;
+    dialog.addEventListener("close", () => {
+      resolve(dialog.returnValue === "confirm");
+      dialog.remove();
+    });
+    document.body.append(dialog);
+    dialog.showModal();
+  });
+}
+
+async function deleteCourseLine(index) {
+  const report = state.reports[state.selectedIndex];
+  const line = report.courseLines[index];
+  const name = [line.courseType, line.teacher].filter(Boolean).join(" · ") || `第 ${index + 1} 行`;
+  const confirmed = await confirmDialog({
+    title: "删除这行课程？",
+    message: `${name}，应付 ${formatMoney(line.payableAmount)}。删除后费用明细、总额和 PDF 都会同步扣除。`,
+    confirmLabel: "确认删除",
+  });
+  if (!confirmed) return;
+  state.reports[state.selectedIndex] = removeCourseLine(state.reports[state.selectedIndex], index);
+  state.courseDrafts = {};
+  render();
 }
 
 function batchValidationPanel(invalidReports) {
@@ -1003,7 +1088,8 @@ function reviewScreen() {
   const courseNames = [...new Set(state.reports.flatMap((item) => (
     item.courseLines.map((line) => line.courseType)
   )))].filter(Boolean);
-  const changedCount = report.courseLines.filter((line) => line._changedFields?.length).length;
+  const changedCount = report.courseLines.filter((line) => line._changedFields?.length || line._added).length
+    + (report._deletedLineCount || 0);
   return `
     <main class="app-shell">
       ${stepRail()}
@@ -1056,14 +1142,21 @@ function reviewScreen() {
               <span>课程单价</span>
               <span>取消比例</span>
               <span style="text-align:right">应付金额</span>
+              <span></span>
             </div>
             ${courseRows(report)}
           </div>
+          <button id="addCourseLine" class="button small add-line-button" type="button">
+            <i class="ph ph-plus" aria-hidden="true"></i>
+            新增课程
+          </button>
 
           <div class="ledger-total">
             <span>应付总额 · ${esc(report.totals.duration)}h</span>
             <strong>${esc(formatMoney(report.totals.payableAmount))}</strong>
           </div>
+
+          ${prepayPanel(report)}
 
           ${batchValidationPanel(invalidReports)}
 
@@ -1232,6 +1325,22 @@ function bindEvents() {
         commitCourseValue(Number(event.currentTarget.dataset.row), field, event.currentTarget.value);
       });
     }
+  });
+  document.querySelectorAll("[data-delete-line]").forEach((button) => {
+    button.addEventListener("click", () => deleteCourseLine(Number(button.dataset.deleteLine)));
+  });
+  document.querySelector("#addCourseLine")?.addEventListener("click", () => {
+    state.reports[state.selectedIndex] = addCourseLine(state.reports[state.selectedIndex]);
+    render();
+    document.querySelector(`[data-course-row="${state.reports[state.selectedIndex].courseLines.length - 1}"] input`)?.focus();
+  });
+  document.querySelector("#prepayToggle")?.addEventListener("change", (event) => {
+    state.reports[state.selectedIndex] = updatePrepay(state.reports[state.selectedIndex], { enabled: event.currentTarget.checked });
+    render();
+  });
+  document.querySelector("#prepayBalance")?.addEventListener("change", (event) => {
+    state.reports[state.selectedIndex] = updatePrepay(state.reports[state.selectedIndex], { balanceBefore: event.currentTarget.value });
+    setTimeout(render, 0);
   });
   document.querySelector("#downloadSingle")?.addEventListener("click", async () => {
     await downloadReport(state.reports[state.selectedIndex]);

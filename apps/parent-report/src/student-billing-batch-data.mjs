@@ -44,7 +44,8 @@ export function parseCompleteBillingCsv(csvText, sourceName = "") {
       month: cleanText(row["月份"]),
       teacher: cleanText(row["老师"]),
       courseType: cleanText(row["课程类型"]),
-      teachingType: cleanText(row["授课类型"]),
+      // 课时账单导出用「未填写授课类型」占位，家长报告里按空值显示
+      teachingType: cleanText(row["授课类型"]).replace(/^未填写授课类型$/u, ""),
       status: cleanText(row["取消/上课状态"]) || "正常上课",
       duration: parseNumber(row["总时长（h）"]) ?? 0,
       cancelledDuration: parseNumber(row["取消时长（h）"]) ?? 0,

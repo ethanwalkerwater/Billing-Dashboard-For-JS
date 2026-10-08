@@ -448,7 +448,8 @@ textarea:focus-visible {
     minmax(60px, 0.55fr)
     minmax(76px, 0.75fr)
     minmax(72px, 0.68fr)
-    minmax(86px, 0.8fr);
+    minmax(86px, 0.8fr)
+    32px;
   gap: 8px;
   align-items: start;
 }
@@ -1771,7 +1772,7 @@ textarea:focus-visible {
 
   .ledger-head,
   .course-row {
-    min-width: 760px;
+    min-width: 800px;
   }
 
   .preview-pane {
@@ -1906,5 +1907,158 @@ textarea:focus-visible {
   *::after {
     scroll-behavior: auto !important;
     transition: none !important;
+  }
+}
+
+/* ============ 课程增删与预付 ============ */
+.course-row.is-added {
+  background: color-mix(in srgb, var(--accent) 60%, transparent);
+}
+
+.added-badge {
+  position: absolute;
+  top: 3px;
+  left: 0;
+  padding: 1px 8px;
+  border-radius: 999px;
+  color: var(--primary-foreground);
+  background: var(--primary);
+  font-size: 11px;
+}
+
+.delete-cell {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--muted-foreground);
+  background: var(--background);
+  cursor: pointer;
+}
+
+.icon-button.danger:hover {
+  color: var(--destructive-foreground);
+  border-color: var(--destructive);
+  background: var(--destructive);
+}
+
+.add-line-button {
+  margin-top: 14px;
+}
+
+.prepay-panel {
+  margin-top: 12px;
+  padding: 16px 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--paper-deep);
+}
+
+.prepay-toggle {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  cursor: pointer;
+}
+
+.prepay-toggle input {
+  width: 18px;
+  height: 18px;
+  margin-top: 2px;
+}
+
+.prepay-toggle > span {
+  display: grid;
+  gap: 2px;
+}
+
+.prepay-toggle > span > span,
+.prepay-fields span {
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+
+.prepay-fields {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 14px;
+}
+
+.prepay-fields > * {
+  display: grid;
+  gap: 6px;
+  align-content: start;
+}
+
+.prepay-fields input {
+  height: 38px;
+  padding: 0 10px;
+  border: 1px solid var(--input);
+  border-radius: var(--radius-md);
+  background: var(--background);
+  font-size: 15px;
+}
+
+.prepay-fields strong {
+  font-size: 20px;
+  font-variant-numeric: tabular-nums;
+}
+
+.prepay-fields .is-negative strong {
+  color: var(--destructive);
+}
+
+.mini-prepay {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 8px;
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+
+.confirm-dialog {
+  width: min(420px, calc(100vw - 32px));
+  padding: 22px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--foreground);
+  background: var(--background);
+  box-shadow: var(--shadow-card);
+}
+
+.confirm-dialog::backdrop {
+  background: rgb(9 9 11 / 0.45);
+}
+
+.confirm-dialog h3 {
+  margin: 0 0 8px;
+  font-size: 16px;
+}
+
+.confirm-dialog p {
+  margin: 0 0 20px;
+  color: var(--muted-foreground);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.confirm-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+@media (max-width: 600px) {
+  .prepay-fields {
+    grid-template-columns: 1fr;
   }
 }
