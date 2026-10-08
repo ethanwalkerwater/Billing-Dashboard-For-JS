@@ -466,7 +466,11 @@ export function buildPayrollReport(reportData, input = {}) {
   const ownershipRows = input.studentOwnership || [];
   const reimbursementRows = input.reimbursements || [];
   const taxSocialRows = input.taxSocial || [];
-  const extraAdjustmentRows = (input.extraAdjustments || [])
+  // 三类手填调整共用同一种行形状：{ month, teacher, description, amount }
+  //   extraAdjustments        额外收入与扣款，并入课时反馈奖金（进 Bonus）
+  //   netPayAdjustments       实发工资的最后调整，只加减实发工资
+  //   companyCostAdjustments  公司总成本的最后调整，只加减公司总成本
+  const normalizeAdjustments = (rows) => (rows || [])
     .map((row) => ({
       month: cleanText(row?.month ?? row?.["月份"]),
       teacher: canonicalName(
@@ -479,6 +483,9 @@ export function buildPayrollReport(reportData, input = {}) {
       amount: round(parseMoney(row?.amount ?? row?.number ?? row?.["调整金额（元）"])),
     }))
     .filter((row) => row.teacher && (row.description || row.amount));
+  const extraAdjustmentRows = normalizeAdjustments(input.extraAdjustments);
+  const netPayAdjustmentRows = normalizeAdjustments(input.netPayAdjustments);
+  const companyCostAdjustmentRows = normalizeAdjustments(input.companyCostAdjustments);
   const baseByTeacher = indexByTeacher(baseRows, aliases);
   const reimbursementsByTeacher = indexReimbursementsByTeacher(reimbursementRows, aliases);
   const taxSocialByTeacher = indexByTeacher(taxSocialRows, aliases);
@@ -487,6 +494,8 @@ export function buildPayrollReport(reportData, input = {}) {
 
   for (const month of months) {
     const monthlyExtraAdjustmentRows = extraAdjustmentRows.filter((row) => row.month === month);
+    const monthlyNetPayAdjustmentRows = netPayAdjustmentRows.filter((row) => row.month === month);
+    const monthlyCompanyCostAdjustmentRows = companyCostAdjustmentRows.filter((row) => row.month === month);
     const scoreRows = input.teacherScoresByMonth?.[month] || [];
     const feedbackRates = buildFeedbackRates(baseRows, scoreRows, params, aliases);
     const commissionsByTeacher = buildCommissions(reportData, month, ownershipRows, params, aliases);
@@ -495,6 +504,8 @@ export function buildPayrollReport(reportData, input = {}) {
       reimbursementRows,
       taxSocialRows,
       monthlyExtraAdjustmentRows,
+      monthlyNetPayAdjustmentRows,
+      monthlyCompanyCostAdjustmentRows,
     ])) {
       const key = normalizeKey(teacher, aliases);
       const base = baseByTeacher.get(key);
@@ -513,27 +524,39 @@ export function buildPayrollReport(reportData, input = {}) {
       const baseSalary = round(base?.baseSalary || 0);
       const managementFee = round(base?.managementFee || 0);
       const rentDeduction = round(base?.rentDeduction || 0);
-      const fixedIncome = round(baseSalary + managementFee - rentDeduction);
+      // 管理费计入 Bonus（和课时反馈奖金、提成一起抵扣 基础薪水 × 1.2），不再算固定收入
+      const fixedIncome = round(baseSalary - rentDeduction);
       const adjustedLessonBonus = reportData.views?.teacher?.[month]?.[teacher]?.totals?.lessonBonus;
       const lessonBaseBonus = adjustedLessonBonus != null && Number.isFinite(Number(adjustedLessonBonus))
         ? round(Number(adjustedLessonBonus))
         : round(lessonFee * feedback.rate);
-      const extraAdjustments = monthlyExtraAdjustmentRows
+      const forTeacher = (rows) => rows
         .filter((row) => normalizeKey(row.teacher, aliases) === key)
         .map(({ description, amount }) => ({ description, amount }));
-      const extraAdjustmentTotal = round(
-        extraAdjustments.reduce((sum, row) => sum + row.amount, 0),
-      );
+      const sumOf = (rows) => round(rows.reduce((sum, row) => sum + row.amount, 0));
+      const extraAdjustments = forTeacher(monthlyExtraAdjustmentRows);
+      const extraAdjustmentTotal = sumOf(extraAdjustments);
+      const netPayAdjustments = forTeacher(monthlyNetPayAdjustmentRows);
+      const netPayAdjustmentTotal = sumOf(netPayAdjustments);
+      const companyCostAdjustments = forTeacher(monthlyCompanyCostAdjustmentRows);
+      const companyCostAdjustmentTotal = sumOf(companyCostAdjustments);
       const lessonBonus = round(lessonBaseBonus + extraAdjustmentTotal);
       const baseSalaryDeduction = round(baseSalary * params.baseSalaryDeductionMultiplier);
-      const bonusSalary = round(lessonBonus + commissions.ownerCommission + commissions.serviceCommission - baseSalaryDeduction);
+      const bonusSalary = round(
+        lessonBonus + commissions.ownerCommission + commissions.serviceCommission + managementFee - baseSalaryDeduction,
+      );
       const appliedBonusSalary = Math.max(0, bonusSalary);
       const reimbursementAmount = round(reimbursement?.reimbursement || 0);
       const tax = round(taxSocial?.tax || 0);
       const personalSocialInsurance = round(taxSocial?.personalSocialInsurance || 0);
       const companySocialInsurance = round(taxSocial?.companySocialInsurance || 0);
-      const personalTotalIncome = round(fixedIncome + appliedBonusSalary + reimbursementAmount - personalSocialInsurance - tax);
-      const companyTotalCost = round(fixedIncome + appliedBonusSalary + reimbursementAmount + companySocialInsurance);
+      // personalTotalIncome 在页面上叫「实发工资」（字段名保留，避免下游改名）
+      const personalTotalIncome = round(
+        fixedIncome + appliedBonusSalary + reimbursementAmount - personalSocialInsurance - tax + netPayAdjustmentTotal,
+      );
+      const companyTotalCost = round(
+        fixedIncome + appliedBonusSalary + reimbursementAmount + companySocialInsurance + companyCostAdjustmentTotal,
+      );
       const issues = [];
       if (!base) issues.push({ code: MISSING.baseSalary, label: "缺少基础薪水" });
       if (!taxSocial) issues.push({ code: MISSING.taxSocial, label: "缺少五险+个税" });
@@ -558,6 +581,10 @@ export function buildPayrollReport(reportData, input = {}) {
         lessonBaseBonus,
         extraAdjustments,
         extraAdjustmentTotal,
+        netPayAdjustments,
+        netPayAdjustmentTotal,
+        companyCostAdjustments,
+        companyCostAdjustmentTotal,
         feedbackRate: feedback.rate,
         feedbackExtraRate: feedback.extraRate,
         feedbackType: feedback.type,
