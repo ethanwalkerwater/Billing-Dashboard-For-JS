@@ -60,14 +60,21 @@ function renderTotalRow(report) {
         </div>
       </div>`;
   }
-  const owed = prepay.remaining < 0;
+  // 报告金额统一向下取整显示；剩余用取整后的两数相减，保证三行金额能对上
+  const balance = Math.floor(Number(prepay.balanceBefore));
+  const fee = Math.floor(Number(report.totals.payableAmount || 0));
+  const remaining = balance - fee;
+  const owed = remaining < 0;
   return `
     <div class="total-row prepay-total">
-      <p>本月课时费已从预付余额中扣除。折扣与临时请假已按规则计入本月费用。</p>
+      <p>${owed ? "预付余额不足以抵扣本月课时费，<br />差额需补缴。" : "本月课时费已从预付余额中扣除，"}<br />折扣与临时请假已按规则计入本月费用。</p>
       <dl class="prepay-summary">
-        <div><dt>预付余额（扣费前）</dt><dd>${formatMoney(prepay.balanceBefore)}</dd></div>
-        <div><dt>本月费用</dt><dd>${formatMoney(report.totals.payableAmount)}</dd></div>
-        <div class="is-final"><dt>${owed ? "需补缴" : "预付剩余"}</dt><dd>${formatMoney(Math.abs(prepay.remaining))}</dd></div>
+        <div><dt>预付余额（扣费前）</dt><dd>${formatMoney(balance)}</dd></div>
+        <div><dt>本月课时费</dt><dd>− ${formatMoney(fee)}</dd></div>
+        <div class="is-final${owed ? " is-owed" : ""}">
+          <dt><span class="section-label">${owed ? "Amount Due" : "Prepaid Balance"}</span>${owed ? "需补缴" : "预付剩余"}</dt>
+          <dd>${formatMoney(Math.abs(remaining))}</dd>
+        </div>
       </dl>
     </div>`;
 }
@@ -238,11 +245,17 @@ export function renderStudentBillingReportHtml(report, teachers, options = {}) {
     .total-row p { margin: 0 0 14px; color: var(--muted); font-size: 12px; }
     .section-label { display: block; margin-bottom: 5px; color: var(--muted); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
     .total-row strong { font-size: 36px; font-weight: 600; }
-    .prepay-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin: 0; }
-    .prepay-summary div { margin: 0; }
-    .prepay-summary dt { margin-bottom: 5px; color: var(--muted); font-size: 12px; }
-    .prepay-summary dd { margin: 0; font-size: 24px; font-weight: 600; }
-    .prepay-summary .is-final dd { color: var(--indigo); font-size: 36px; }
+    .prepay-total { display: flex; justify-content: space-between; align-items: flex-end; gap: 40px; }
+    .prepay-total p { margin: 0; line-height: 1.8; }
+    .prepay-summary { flex: 0 0 360px; margin: 0; }
+    .prepay-summary div { display: flex; justify-content: space-between; align-items: baseline; gap: 24px; padding: 7px 0; }
+    .prepay-summary dt { color: var(--muted); font-size: 13px; }
+    .prepay-summary dd { margin: 0; font-size: 17px; font-variant-numeric: tabular-nums; }
+    .prepay-summary .is-final { margin-top: 8px; padding-top: 16px; border-top: 1px solid var(--hairline); align-items: flex-end; }
+    .prepay-summary .is-final dt { color: var(--ink); font-size: 14px; font-weight: 600; }
+    .prepay-summary .is-final .section-label { margin-bottom: 4px; font-weight: 400; }
+    .prepay-summary .is-final dd { color: var(--indigo); font-size: 36px; font-weight: 600; line-height: 1.1; }
+    .prepay-summary .is-owed dd { color: var(--leave); }
     .calendar-wrap { overflow: visible; }
     .calendar {
       display: grid;

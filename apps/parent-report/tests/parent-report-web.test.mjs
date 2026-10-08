@@ -287,12 +287,19 @@ test("prepay mode shows this month's fee and the remaining prepaid balance", () 
   assert.equal(report.prepay.remaining, 7000);
   let html = renderStudentBillingReportHtml(buildConfirmedReport(report), [], { embedTeacherPhotos: false });
   assert.match(html, /预付余额（扣费前）<\/dt><dd>¥10,000/);
-  assert.match(html, /本月费用<\/dt><dd>¥3,000/);
-  assert.match(html, /预付剩余<\/dt><dd>¥7,000/);
+  assert.match(html, /本月课时费<\/dt><dd>− ¥3,000/);
+  assert.match(html, /预付剩余<\/dt>\s*<dd>¥7,000/);
 
   report = updatePrepay(report, { balanceBefore: "1000" });
   html = renderStudentBillingReportHtml(buildConfirmedReport(report), [], { embedTeacherPhotos: false });
-  assert.match(html, /需补缴<\/dt><dd>¥2,000/);
+  assert.match(html, /需补缴<\/dt>\s*<dd>¥2,000/);
+
+  // 金额向下取整显示时，剩余 = 取整后的余额 − 取整后的本月费用，三行能对上
+  report = updatePrepay(report, { balanceBefore: "100000" });
+  report = updateCourseLine(report, 0, "unitPrice", "1000.25");
+  html = renderStudentBillingReportHtml(buildConfirmedReport(report), [], { embedTeacherPhotos: false });
+  assert.match(html, /− ¥3,000/);
+  assert.match(html, /预付剩余<\/dt>\s*<dd>¥97,000/);
 
   report = updatePrepay(report, { enabled: false });
   html = renderStudentBillingReportHtml(buildConfirmedReport(report), [], { embedTeacherPhotos: false });
