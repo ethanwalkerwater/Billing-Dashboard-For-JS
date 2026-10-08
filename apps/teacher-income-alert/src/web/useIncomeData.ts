@@ -14,6 +14,8 @@ export interface TeacherLine extends Evaluation {
   students: string[];
   unitPriceAuto: number | null;
   settings: TeacherSettings;
+  /** 被排除的老师（兼职、已离职、不需要盯的）：不进统计和导出，页面上可恢复 */
+  excluded: boolean;
 }
 
 const num = (value: unknown): number | null => (value == null || value === "" ? null : Number(value));
@@ -76,6 +78,7 @@ export function useIncomeData(month: string) {
           students: monthRow?.students ?? [],
           unitPriceAuto,
           settings,
+          excluded: row?.is_excluded ?? false,
           ...evaluateTeacher({ lessonFee, unitPriceAuto, settings, rates }),
         };
       })
@@ -97,15 +100,16 @@ export function useIncomeData(month: string) {
     }
   }, [month, reload]);
 
-  /** 底薪 / 单价 / 备注：改一格存一格。 */
+  /** 底薪 / 单价 / 备注 / 排除：改一格存一格。 */
   const saveTeacher = useCallback(
-    async (teacher: string, patch: Partial<Pick<TeacherRow, "base_salary" | "unit_price" | "note">>) => {
+    async (teacher: string, patch: Partial<Pick<TeacherRow, "base_salary" | "unit_price" | "note" | "is_excluded">>) => {
       const current = teachers.find((row) => row.teacher === teacher);
       const next: TeacherRow = {
         teacher,
         base_salary: current?.base_salary ?? null,
         unit_price: current?.unit_price ?? null,
         note: current?.note ?? "",
+        is_excluded: current?.is_excluded ?? false,
         ...patch,
         updated_at: new Date().toISOString(),
       };

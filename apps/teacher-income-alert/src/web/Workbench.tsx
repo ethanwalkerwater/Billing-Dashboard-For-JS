@@ -1,4 +1,4 @@
-import { Download, Loader2, LogOut, RefreshCw, Search } from "lucide-react";
+import { Download, EyeOff, Loader2, LogOut, RefreshCw, Search, Undo2 } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -119,24 +119,29 @@ export function Workbench({ onSignOut }: { onSignOut: () => void | Promise<void>
   const [month, setMonth] = useState(shanghaiMonth());
   const [statusFilter, setStatusFilter] = useState<AlertStatus | "all">("all");
   const [query, setQuery] = useState("");
+  const [showExcluded, setShowExcluded] = useState(false);
   const { lines, rates, syncedAt, loading, syncing, error, sync, saveTeacher, saveRates } = useIncomeData(month);
 
   const monthOptions = useMemo(() => [1, 0, -1, -2, -3, -4, -5].map((offset) => shanghaiMonth(offset)), []);
 
+  // 被排除的老师不进统计卡、不进导出；表格里默认不显示，点「已排除 N 位」才列在最后，可以恢复
+  const active = useMemo(() => lines.filter((line) => !line.excluded), [lines]);
+  const excludedLines = useMemo(() => lines.filter((line) => line.excluded), [lines]);
+
   const counts = useMemo(() => {
     const result: Record<AlertStatus, number> = { alert: 0, between: 0, reached: 0, "no-base": 0 };
-    for (const line of lines) result[line.status] += 1;
+    for (const line of active) result[line.status] += 1;
     return result;
-  }, [lines]);
+  }, [active]);
 
   const visible = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase();
-    return lines.filter((line) => {
-      if (statusFilter !== "all" && line.status !== statusFilter) return false;
-      if (!needle) return true;
-      return [line.teacher, ...line.students, line.settings.note].join(" ").toLocaleLowerCase().includes(needle);
-    });
-  }, [lines, statusFilter, query]);
+    const matches = (line: TeacherLine) =>
+      !needle || [line.teacher, ...line.students, line.settings.note].join(" ").toLocaleLowerCase().includes(needle);
+    const shown = active.filter((line) => (statusFilter === "all" || line.status === statusFilter) && matches(line));
+    return showExcluded ? [...shown, ...excludedLines.filter(matches)] : shown;
+  }, [active, excludedLines, statusFilter, query, showExcluded]);
+  const exportable = visible.filter((line) => !line.excluded);
 
   const toggleFilter = (status: AlertStatus) => setStatusFilter((current) => (current === status ? "all" : status));
   const numberOrNull = (text: string) => (text === "" ? null : Number(text));
@@ -193,14 +198,26 @@ export function Workbench({ onSignOut }: { onSignOut: () => void | Promise<void>
           <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜老师、学生、备注" className="pl-8" />
         </div>
         <span className="text-muted-foreground text-sm">
-          {visible.length} / {lines.length} 位老师
+          {exportable.length} / {active.length} 位老师
         </span>
+        {excludedLines.length > 0 ? (
+          <Button
+            variant="ghost"
+            size="sm"
+            className={cn("text-muted-foreground", showExcluded && "bg-accent text-foreground")}
+            onClick={() => setShowExcluded((value) => !value)}
+            title="被排除的老师不参与统计和导出"
+          >
+            <EyeOff />
+            {showExcluded ? `收起已排除的 ${excludedLines.length} 位` : `已排除 ${excludedLines.length} 位`}
+          </Button>
+        ) : null}
         <Button
           variant="outline"
           className="ml-auto"
-          disabled={visible.length === 0}
-          onClick={() => void downloadExcel(visible, rates, month)}
-          title="导出当前筛选出的老师，列与页面一致"
+          disabled={exportable.length === 0}
+          onClick={() => void downloadExcel(exportable, rates, month)}
+          title="导出当前筛选出的老师（不含已排除的），列与页面一致"
         >
           <Download />
           导出 Excel
@@ -212,7 +229,7 @@ export function Workbench({ onSignOut }: { onSignOut: () => void | Promise<void>
         <Table className="table-fixed text-[13px] [&_td]:px-2 [&_td]:py-1.5 [&_th]:px-2" containerClassName="overflow-visible">
           <TableHeader className="sticky top-0 z-10 [&_tr]:border-0">
             <TableRow className="hover:bg-transparent">
-              <Head className="w-24" tip="课表「老师」字段的写法">老师</Head>
+              <Head className="w-28" tip="课表「老师」字段的写法。鼠标移上去可排除这位老师">老师</Head>
               <Head className="w-16" tip={<>预警：预测最高 &lt; 基础薪水<br />区间内：基础薪水在最低与最高之间<br />已达标：预测最低 &gt; 基础薪水</>}>状态</Head>
               <Head className="w-20 text-right" tip="每月固定薪水，点击修改">基础薪水</Head>
               <Head className="w-24 text-right" tip="当月课表「课程总价格」合计，已含请假折扣；不含没有单价的日历占位（会议、自习）">本月课时费</Head>
@@ -242,10 +259,43 @@ export function Workbench({ onSignOut }: { onSignOut: () => void | Promise<void>
               </TableRow>
             ) : (
               visible.map((line: TeacherLine) => (
-                <TableRow key={line.teacher} className={cn(line.status === "alert" && "bg-destructive/[0.04]")}>
-                  <TableCell className="font-medium">{line.teacher}</TableCell>
+                <TableRow
+                  key={line.teacher}
+                  className={cn("group", line.excluded ? "bg-muted/40 text-muted-foreground" : line.status === "alert" && "bg-destructive/[0.04]")}
+                >
+                  <TableCell className="relative font-medium">
+                    {/* 按钮浮在名字右侧，不占列宽，名字不会被挤成「Jack …」 */}
+                    <div className="flex items-center">
+                      <span className="truncate" title={line.teacher}>
+                        {line.teacher}
+                      </span>
+                      {line.excluded ? (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="bg-background text-foreground absolute top-1/2 right-1 size-6 -translate-y-1/2 shadow-sm"
+                          onClick={() => void saveTeacher(line.teacher, { is_excluded: false })}
+                          title="恢复：重新参与统计"
+                          aria-label={`恢复 ${line.teacher}`}
+                        >
+                          <Undo2 className="size-3.5" />
+                        </Button>
+                      ) : (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="bg-background text-muted-foreground absolute top-1/2 right-1 size-6 -translate-y-1/2 opacity-0 shadow-sm transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+                          onClick={() => void saveTeacher(line.teacher, { is_excluded: true })}
+                          title="排除这位老师：不参与统计和导出，可随时恢复"
+                          aria-label={`排除 ${line.teacher}`}
+                        >
+                          <EyeOff className="size-3.5" />
+                        </Button>
+                      )}
+                    </div>
+                  </TableCell>
                   <TableCell>
-                    <Badge variant={STATUS_VARIANT[line.status]}>{STATUS_LABELS[line.status]}</Badge>
+                    {line.excluded ? <Badge variant="outline">已排除</Badge> : <Badge variant={STATUS_VARIANT[line.status]}>{STATUS_LABELS[line.status]}</Badge>}
                   </TableCell>
                   <TableCell className="!px-1 !py-1">
                     <EditableCell type="number" value={line.settings.baseSalary} onSave={(text) => saveTeacher(line.teacher, { base_salary: numberOrNull(text) })} />
@@ -281,7 +331,9 @@ export function Workbench({ onSignOut }: { onSignOut: () => void | Promise<void>
           </TableBody>
         </Table>
       </div>
-      <p className="text-muted-foreground mt-2 text-xs">悬停表头查看每一列的口径。基础薪水、课程单价、备注点进去直接改，失焦即保存。</p>
+      <p className="text-muted-foreground mt-2 text-xs">
+        悬停表头查看每一列的口径。基础薪水、课程单价、备注点进去直接改，失焦即保存。鼠标移到老师名字上点 <EyeOff className="inline size-3" /> 可排除这位老师。
+      </p>
     </div>
     </TooltipProvider>
   );
