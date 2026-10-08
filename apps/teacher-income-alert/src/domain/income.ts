@@ -33,9 +33,14 @@ export interface TeacherSettings {
 export interface Rates {
   min: number;
   max: number;
+  /**
+   * 预警线 = 基础薪水 × 底薪倍数。和「老师收入详情」的底薪扣减系数一致（Bonus = … − 基础薪水 × 1.2），
+   * 课时费要覆盖底薪的 1.2 倍才算达到公司目标；基础薪水本身按收入详情的原值填，不要把 1.2 乘进去。
+   */
+  baseMultiplier: number;
 }
 
-export const DEFAULT_RATES: Rates = { min: 0.47, max: 0.62 };
+export const DEFAULT_RATES: Rates = { min: 0.47, max: 0.62, baseMultiplier: 1.2 };
 
 export type AlertStatus = "alert" | "between" | "reached" | "no-base";
 
@@ -48,11 +53,13 @@ export const STATUS_LABELS: Record<AlertStatus, string> = {
 
 export interface Evaluation {
   status: AlertStatus;
+  /** 预警线 = 基础薪水 × 底薪倍数；没底薪为 null */
+  alertLine: number | null;
   predictedMin: number;
   predictedMax: number;
-  /** 预测最高 − 基础薪水。正数已越过预警线，负数还差这么多 */
+  /** 预测最高 − 预警线。正数已越过预警线，负数还差这么多 */
   marginToAlert: number | null;
-  /** 预测最低 − 基础薪水。正数已达标，负数还差这么多 */
+  /** 预测最低 − 预警线。正数已达标，负数还差这么多 */
   marginToTarget: number | null;
   unitPrice: number | null;
   /** 脱离预警还要上多少小时课：|marginToAlert| ÷ (单价 × 最高系数)；已越线为 0 */
@@ -178,16 +185,17 @@ export function evaluateTeacher(input: {
   const predictedMin = round2(lessonFee * rates.min);
   const predictedMax = round2(lessonFee * rates.max);
   const unitPrice = settings.unitPrice ?? input.unitPriceAuto;
-  const base = settings.baseSalary;
-  if (base == null) {
-    return { status: "no-base", predictedMin, predictedMax, marginToAlert: null, marginToTarget: null, unitPrice, hoursToAlert: null, hoursToTarget: null };
+  if (settings.baseSalary == null) {
+    return { status: "no-base", alertLine: null, predictedMin, predictedMax, marginToAlert: null, marginToTarget: null, unitPrice, hoursToAlert: null, hoursToTarget: null };
   }
-  const marginToAlert = round2(predictedMax - base);
-  const marginToTarget = round2(predictedMin - base);
+  const line = round2(settings.baseSalary * rates.baseMultiplier);
+  const marginToAlert = round2(predictedMax - line);
+  const marginToTarget = round2(predictedMin - line);
   const hours = (margin: number, rate: number) =>
     margin >= 0 ? 0 : unitPrice ? Math.ceil((-margin / (unitPrice * rate)) * 10) / 10 : null;
   return {
-    status: predictedMax < base ? "alert" : predictedMin > base ? "reached" : "between",
+    status: predictedMax < line ? "alert" : predictedMin > line ? "reached" : "between",
+    alertLine: line,
     predictedMin,
     predictedMax,
     marginToAlert,

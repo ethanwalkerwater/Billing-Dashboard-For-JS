@@ -80,8 +80,8 @@ test("aggregateSchedule 只算当月、按老师汇总、取消课按总价格�
   assert.equal(aggregateSchedule([{ ...parseScheduleRow(feishuFields)!, startsAt: boundary - 1 }], "2026-09").length, 0);
 });
 
-test("evaluateTeacher 三种状态与差距、课时数", () => {
-  const rates = { min: 0.47, max: 0.62 };
+test("evaluateTeacher 三种状态与差距、课时数（倍数 1 时预警线就是底薪）", () => {
+  const rates = { min: 0.47, max: 0.62, baseMultiplier: 1 };
   const settings = { baseSalary: 20000, unitPrice: null, note: "" };
   // 课时费 20000：最高 12400 < 20000 → 预警
   const alert = evaluateTeacher({ lessonFee: 20000, unitPriceAuto: 800, settings, rates });
@@ -106,9 +106,25 @@ test("evaluateTeacher 三种状态与差距、课时数", () => {
   assert.equal(evaluateTeacher({ lessonFee: 20000, unitPriceAuto: null, settings, rates }).hoursToAlert, null);
 });
 
+test("evaluateTeacher 预警线 = 基础薪水 × 1.2，差距和课时都按预警线算", () => {
+  const rates = { min: 0.47, max: 0.62, baseMultiplier: 1.2 };
+  const settings = { baseSalary: 20000, unitPrice: null, note: "" };
+  // 课时费 36000：最高 22320，倍数 1 时已越过底薪（区间内）；按 1.2 预警线 24000 还差 1680 → 预警
+  const result = evaluateTeacher({ lessonFee: 36000, unitPriceAuto: 800, settings, rates });
+  assert.equal(result.alertLine, 24000);
+  assert.equal(result.status, "alert");
+  assert.equal(result.marginToAlert, -1680);
+  assert.equal(result.marginToTarget, -7080);
+  // 1680 ÷ (800 × 0.62) = 3.39 → 向上取到 3.4 小时
+  assert.equal(result.hoursToAlert, 3.4);
+  // 课时费 52000：最低 24440 > 24000 → 已达标
+  assert.equal(evaluateTeacher({ lessonFee: 52000, unitPriceAuto: 800, settings, rates }).status, "reached");
+  assert.equal(evaluateTeacher({ lessonFee: 52000, unitPriceAuto: 800, settings: { ...settings, baseSalary: null }, rates }).alertLine, null);
+});
+
 test("Excel 导出列与页面口径一致，空值留空", async () => {
   const { buildExcelColumns } = await import("@/web/export-excel");
-  const columns = buildExcelColumns({ min: 0.47, max: 0.62 });
+  const columns = buildExcelColumns({ min: 0.47, max: 0.62, baseMultiplier: 1.2 });
   const line = {
     teacher: "汤朔",
     status: "reached" as const,
@@ -119,6 +135,7 @@ test("Excel 导出列与页面口径一致，空值留空", async () => {
     unitPriceAuto: 731,
     settings: { baseSalary: 24000, unitPrice: null, note: "" },
     excluded: false,
+    alertLine: 28800,
     predictedMin: 45167,
     predictedMax: 59582,
     marginToAlert: 35582,
@@ -128,12 +145,13 @@ test("Excel 导出列与页面口径一致，空值留空", async () => {
     hoursToTarget: 0,
   };
   const headers = columns.map((column) => (column.header as { value: string }).value);
-  assert.deepEqual(headers.slice(0, 4), ["老师", "状态", "基础薪水", "本月课时费"]);
+  assert.deepEqual(headers.slice(0, 5), ["老师", "状态", "基础薪水", "预警线 底薪×1.2", "本月课时费"]);
   assert.equal(headers.at(-1), "学生");
   const cells = columns.map((column) => column.cell(line, 0));
   assert.deepEqual(cells[1], { value: "已达标", type: String });
-  assert.deepEqual(cells[3], { value: 96100, type: Number, format: "#,##0" });
-  assert.deepEqual(cells[8], { value: 35582, type: Number, format: "+#,##0;-#,##0;0" });
+  assert.deepEqual(cells[3], { value: 28800, type: Number, format: "#,##0" });
+  assert.deepEqual(cells[4], { value: 96100, type: Number, format: "#,##0" });
+  assert.deepEqual(cells[9], { value: 35582, type: Number, format: "+#,##0;-#,##0;0" });
   assert.deepEqual(cells.at(-1), { value: "顾子言Tina、潘奕恺", type: String });
   // 没底薪的老师基础薪水一格留空，不写 0
   assert.equal(columns[2].cell({ ...line, settings: { ...line.settings, baseSalary: null } }, 0), null);

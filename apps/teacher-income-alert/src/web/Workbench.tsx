@@ -1,5 +1,5 @@
 import { Download, EyeOff, Loader2, LogOut, RefreshCw, Search, Undo2 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -90,21 +90,38 @@ function Stat({ label, value, hint, selected, onClick }: { label: string; value:
   );
 }
 
-function RateInput({ label, value, onCommit }: { label: string; value: number; onCommit: (next: number) => void }) {
+function RateInput({
+  label,
+  value,
+  onCommit,
+  min = 0.01,
+  max = 0.99,
+  step = 0.01,
+  title,
+}: {
+  label: string;
+  value: number;
+  onCommit: (next: number) => void;
+  min?: number;
+  max?: number;
+  step?: number;
+  title?: string;
+}) {
   const [draft, setDraft] = useState(String(value));
+  useEffect(() => setDraft(String(value)), [value]);
   const commit = () => {
     const next = Number(draft);
-    if (Number.isFinite(next) && next > 0 && next < 1 && next !== value) onCommit(next);
+    if (Number.isFinite(next) && next >= min && next <= max && next !== value) onCommit(next);
     else setDraft(String(value));
   };
   return (
-    <label className="text-muted-foreground flex items-center gap-1.5 text-sm">
+    <label className="text-muted-foreground flex items-center gap-1.5 text-sm" title={title}>
       {label}
       <Input
         type="number"
-        step="0.01"
-        min="0.01"
-        max="0.99"
+        step={step}
+        min={min}
+        max={max}
         value={draft}
         onChange={(event) => setDraft(event.target.value)}
         onBlur={commit}
@@ -139,7 +156,8 @@ export function Workbench({ onSignOut }: { onSignOut: () => void | Promise<void>
     const matches = (line: TeacherLine) =>
       !needle || [line.teacher, ...line.students, line.settings.note].join(" ").toLocaleLowerCase().includes(needle);
     const shown = active.filter((line) => (statusFilter === "all" || line.status === statusFilter) && matches(line));
-    return showExcluded ? [...shown, ...excludedLines.filter(matches)] : shown;
+    // 展开已排除时放在最上面，一眼看到排除了谁
+    return showExcluded ? [...excludedLines.filter(matches), ...shown] : shown;
   }, [active, excludedLines, statusFilter, query, showExcluded]);
   const exportable = visible.filter((line) => !line.excluded);
 
@@ -166,6 +184,15 @@ export function Workbench({ onSignOut }: { onSignOut: () => void | Promise<void>
         <div className="ml-auto flex flex-wrap items-center gap-3">
           <RateInput label="最低系数" value={rates.min} onCommit={(min) => saveRates({ ...rates, min })} />
           <RateInput label="最高系数" value={rates.max} onCommit={(max) => saveRates({ ...rates, max })} />
+          <RateInput
+            label="底薪倍数"
+            value={rates.baseMultiplier}
+            min={1}
+            max={3}
+            step={0.05}
+            title="预警线 = 基础薪水 × 底薪倍数，和老师收入详情的底薪扣减系数一致"
+            onCommit={(baseMultiplier) => saveRates({ ...rates, baseMultiplier })}
+          />
           <Button onClick={sync} disabled={syncing} title="从飞书课表重新汇总这个月，约 10 秒">
             {syncing ? <Loader2 className="animate-spin" /> : <RefreshCw />}
             {syncing ? "同步中…" : "同步课表"}
@@ -176,7 +203,7 @@ export function Workbench({ onSignOut }: { onSignOut: () => void | Promise<void>
         </div>
       </header>
       <p className="text-muted-foreground mt-1 text-xs">
-        {timeLabel(syncedAt)} · 预测薪资 = 当月课时费 × 系数，与基础薪水比较
+        {timeLabel(syncedAt)} · 预测薪资 = 当月课时费 × 系数，与预警线（基础薪水 × {rates.baseMultiplier}）比较
       </p>
 
       {error ? (
@@ -186,9 +213,9 @@ export function Workbench({ onSignOut }: { onSignOut: () => void | Promise<void>
       ) : null}
 
       <section className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Stat label="预警" value={counts.alert} hint="最高系数仍低于基础薪水" selected={statusFilter === "alert"} onClick={() => toggleFilter("alert")} />
-        <Stat label="区间内" value={counts.between} hint="基础薪水落在最低与最高之间" selected={statusFilter === "between"} onClick={() => toggleFilter("between")} />
-        <Stat label="已达标" value={counts.reached} hint="最低系数已超过基础薪水" selected={statusFilter === "reached"} onClick={() => toggleFilter("reached")} />
+        <Stat label="预警" value={counts.alert} hint="预测最高仍低于预警线" selected={statusFilter === "alert"} onClick={() => toggleFilter("alert")} />
+        <Stat label="区间内" value={counts.between} hint="预警线落在预测最低与最高之间" selected={statusFilter === "between"} onClick={() => toggleFilter("between")} />
+        <Stat label="已达标" value={counts.reached} hint="预测最低已超过预警线" selected={statusFilter === "reached"} onClick={() => toggleFilter("reached")} />
         <Stat label="无底薪" value={counts["no-base"]} hint="课表里有课但没填基础薪水" selected={statusFilter === "no-base"} onClick={() => toggleFilter("no-base")} />
       </section>
 
@@ -230,13 +257,13 @@ export function Workbench({ onSignOut }: { onSignOut: () => void | Promise<void>
           <TableHeader className="sticky top-0 z-10 [&_tr]:border-0">
             <TableRow className="hover:bg-transparent">
               <Head className="w-28" tip="课表「老师」字段的写法。鼠标移上去可排除这位老师">老师</Head>
-              <Head className="w-16" tip={<>预警：预测最高 &lt; 基础薪水<br />区间内：基础薪水在最低与最高之间<br />已达标：预测最低 &gt; 基础薪水</>}>状态</Head>
-              <Head className="w-20 text-right" tip="每月固定薪水，点击修改">基础薪水</Head>
+              <Head className="w-16" tip={<>预警线 = 基础薪水 × {rates.baseMultiplier}<br />预警：预测最高 &lt; 预警线<br />区间内：预警线在预测最低与最高之间<br />已达标：预测最低 &gt; 预警线</>}>状态</Head>
+              <Head className="w-24 text-right" tip={`每月固定薪水，点击修改；和老师收入详情的基础薪水表一致。下方灰字是预警线 = 基础薪水 × ${rates.baseMultiplier}`}>基础薪水</Head>
               <Head className="w-24 text-right" tip="当月课表「课程总价格」合计，已含请假折扣；不含没有单价的日历占位（会议、自习）">本月课时费</Head>
               <Head className="w-20 text-right" tip={`课时费 × 最低系数 ${rates.min}`}>预测最低</Head>
               <Head className="w-20 text-right" tip={`课时费 × 最高系数 ${rates.max}`}>预测最高</Head>
-              <Head className="w-22 text-right" tip="预测最高 − 基础薪水。负数：即使按最高系数也还差这么多，处于预警">距脱离预警</Head>
-              <Head className="w-22 text-right" tip="预测最低 − 基础薪水。正数：按最低系数也已超过基础薪水，达标">距达标</Head>
+              <Head className="w-22 text-right" tip="预测最高 − 预警线。负数：即使按最高系数也还差这么多，处于预警">距脱离预警</Head>
+              <Head className="w-22 text-right" tip="预测最低 − 预警线。正数：按最低系数也已超过预警线，达标">距达标</Head>
               <Head className="w-20 text-right" tip="每小时课时费。灰字是当月均价 = 课时费 ÷ 小时数，手填后覆盖">课程单价</Head>
               <Head className="w-24 text-right" tip={`还要上多少小时课才能脱离预警 = |距脱离预警| ÷ (单价 × ${rates.max})`}>脱离预警需加</Head>
               <Head className="w-20 text-right" tip={`还要上多少小时课才能达标 = |距达标| ÷ (单价 × ${rates.min})`}>达标需加</Head>
@@ -299,6 +326,11 @@ export function Workbench({ onSignOut }: { onSignOut: () => void | Promise<void>
                   </TableCell>
                   <TableCell className="!px-1 !py-1">
                     <EditableCell type="number" value={line.settings.baseSalary} onSave={(text) => saveTeacher(line.teacher, { base_salary: numberOrNull(text) })} />
+                    {line.alertLine != null ? (
+                      <span className="text-muted-foreground block pr-2 text-right text-xs tabular-nums" title={`预警线 = 基础薪水 × ${rates.baseMultiplier}`}>
+                        线 {money(line.alertLine)}
+                      </span>
+                    ) : null}
                   </TableCell>
                   <TableCell className="text-right tabular-nums">
                     {money(line.lessonFee)}
