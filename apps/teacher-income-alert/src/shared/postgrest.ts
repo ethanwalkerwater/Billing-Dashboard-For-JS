@@ -48,4 +48,6 @@ export interface SettingsRow {
   id: number;
   min_rate: number;
   max_rate: number;
+  /** 预警线 = 基础薪水 × 这个倍数（默认 1.2） */
+  base_multiplier: number;
 }

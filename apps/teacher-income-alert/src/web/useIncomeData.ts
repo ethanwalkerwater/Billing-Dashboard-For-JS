@@ -41,7 +41,7 @@ export function useIncomeData(month: string) {
       setMonths(monthRows.data ?? []);
       setTeachers(teacherRows.data ?? []);
       const settings = settingRows.data?.[0];
-      if (settings) setRates({ min: Number(settings.min_rate), max: Number(settings.max_rate) });
+      if (settings) setRates({ min: Number(settings.min_rate), max: Number(settings.max_rate), baseMultiplier: Number(settings.base_multiplier ?? DEFAULT_RATES.baseMultiplier) });
       setError(null);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -129,7 +129,7 @@ export function useIncomeData(month: string) {
       setRates(next);
       const result = await db
         .from(SETTINGS_TABLE)
-        .upsert([{ id: 1, min_rate: next.min, max_rate: next.max, updated_at: new Date().toISOString() }], { onConflict: "id" });
+        .upsert([{ id: 1, min_rate: next.min, max_rate: next.max, base_multiplier: next.baseMultiplier, updated_at: new Date().toISOString() }], { onConflict: "id" });
       if (result.error) setError(`保存系数失败：${result.error.message}`);
     },
     [],

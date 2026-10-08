@@ -30,6 +30,7 @@ export function buildExcelColumns(rates: Rates): Column<TeacherLine>[] {
     text("老师", 14, (l) => l.teacher),
     text("状态", 8, (l) => STATUS_LABELS[l.status]),
     num("基础薪水", 10, INT, (l) => l.settings.baseSalary),
+    num(`预警线 底薪×${rates.baseMultiplier}`, 16, INT, (l) => l.alertLine),
     num("本月课时费", 12, INT, (l) => l.lessonFee),
     num("节数", 6, "0", (l) => l.lessons),
     num("小时", 8, "0.##", (l) => l.hours),
