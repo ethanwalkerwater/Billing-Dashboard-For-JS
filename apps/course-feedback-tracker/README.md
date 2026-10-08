@@ -2,8 +2,13 @@
 
 面向教务老师的 CloudBase 应用。选择收集月份后，系统读取上一个自然月的完整飞书课表，按「课程月份 + 学生 + 老师」生成一份问卷任务，跟踪未发、已发未填、已填写、拒绝填写四种状态，并导出可直接喂给现有老师反馈报表系统的 CSV。
 
-- 工作台短链接：<https://jingshi.vercel.app/feedback>（Vercel 门户 308 跳转到下面的 CloudBase 地址）
-- 工作台原地址：<https://jingshi-test-d5gp401i44a0fa7a7-1300607705.tcloudbaseapp.com>
+- 工作台：<https://app.jsjy.asia/>（自有域名，同一个 CloudBase 静态托管；雅思正向率 `/ielts/`、教师薪资预警 `/income/` 也在这个域名下）
+- 工作台短链接：<https://jingshi.vercel.app/feedback>（Vercel 门户 307 跳转到上面的地址）
+- 默认域名（仍可用）：<https://jingshi-test-d5gp401i44a0fa7a7-1300607705.tcloudbaseapp.com>
+- 自有域名配置（2026-10）：腾讯云 SSL 免费证书（`app.jsjy.asia`，90 天，已开自动续费，到期 2027-01-06）；
+  CloudBase「HTTP 访问服务」自定义域名 + 路由 `/` → 静态托管（`STATIC_STORE / staticstore`，控制台下拉选不到，用
+  `tcb routes add` 加的）；DNSPod 记录 `app CNAME app.jsjy.asia.tcbaccess.tencentcloudbase.com`；安全域名已加 `app.jsjy.asia`。
+  证书续期后若 CloudBase 没自动换上，到「静态网站托管 → 基础配置」重新选证书。主域名 `jsjy.asia` 是官网（另一台服务器），不要动。
 - 门户入口：<https://jingshi.vercel.app/> 「学生反馈追踪系统」（源码在 `~/Documents/GitHub/菁仕后台主页`）
 - 教务账号：`jsjy`（另有一个以邮箱登录的备用账号）。**密码不写进仓库**，见 CloudBase 控制台的
   「身份认证 → 用户管理」，或问项目负责人。
