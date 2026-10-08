@@ -118,6 +118,7 @@ test("Excel 导出列与页面口径一致，空值留空", async () => {
     students: ["顾子言Tina", "潘奕恺"],
     unitPriceAuto: 731,
     settings: { baseSalary: 24000, unitPrice: null, note: "" },
+    excluded: false,
     predictedMin: 45167,
     predictedMax: 59582,
     marginToAlert: 35582,

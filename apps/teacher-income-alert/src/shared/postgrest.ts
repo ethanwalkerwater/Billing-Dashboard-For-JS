@@ -39,6 +39,8 @@ export interface TeacherRow {
   base_salary: number | null;
   unit_price: number | null;
   note: string;
+  /** 排除：不参与预警统计、默认不显示、不导出 */
+  is_excluded: boolean;
   updated_at: string;
 }
 

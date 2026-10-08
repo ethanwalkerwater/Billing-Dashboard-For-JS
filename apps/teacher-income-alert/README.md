@@ -37,10 +37,16 @@ tests/income.test.ts        字段解析、当月汇总、三种状态与课时�
 数据表（CloudBase PostgreSQL，同反馈追踪系统的库）：
 
 - `income_teacher_months (month, teacher)`：同步结果，每次同步先删该月再写
-- `income_teachers (teacher)`：基础薪水、课程单价、备注——页面里直接改
+- `income_teachers (teacher)`：基础薪水、课程单价、备注、是否排除——页面里直接改
 - `income_settings (id=1)`：最低 / 最高系数
 
-基础薪水初始值见 `migrations/202609180003_base_salaries_2026_09.sql`（教务 2026-09 给出的 22 位老师），后续以页面手填为准。每列表头悬停有口径说明；表头下滑时吸顶。
+基础薪水：2026-10-08 起对齐「老师收入详情」的老师基础薪水表（`apps/teacher-income-report/web/assets/payroll/defaults.json`，
+见 `migrations/202610080001_exclude_and_align_base_salaries.sql`）。之前 2026-09 那批种子恰好都是这张表的 1.2 倍（20000→24000），
+应是把收入详情的「底薪扣减系数 1.2」乘了进去。不在那张表里的老师（Jack Hou、Kevin Liu、包天翊、唐择运、马怡婷、高志勇）没动。
+后续以页面手填为准；收入详情那边改了底薪，这里不会自动跟着变（那边的修改只存在各自浏览器的 localStorage 里）。
+
+**排除老师**：鼠标移到老师名字上点 👁 图标即可排除（兼职、已离职、不需要盯的）。被排除的老师不进统计卡、不导出，表格默认不显示；
+点「已排除 N 位」可以看到并恢复。之前为了不算某位老师手动把底薪改成 0 的 7 位，已改为排除并填回正确底薪。每列表头悬停有口径说明；表头下滑时吸顶。
 
 ## 命令
 
