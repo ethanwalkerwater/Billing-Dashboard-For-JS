@@ -227,7 +227,7 @@ export function Workbench({
                   const result = await callFeedbackApi<SyncSummary>({ action: "sync-tasks", collectionMonth });
                   setSync(result);
                   await Promise.all([data.reload(), syncTimes.reload()]);
-                  return `名单已更新：新增 ${result.created} · 变更 ${result.updated} · 不变 ${result.unchanged}${result.studentsAddedToForm?.length ? ` · 问卷新增学生 ${result.studentsAddedToForm.length}` : ""}`;
+                  return `名单已更新：新增 ${result.created} · 变更 ${result.updated} · 不变 ${result.unchanged}${result.removed ? ` · 移除 ${result.removed}` : ""}${result.studentsAddedToForm?.length ? ` · 问卷新增学生 ${result.studentsAddedToForm.length}` : ""}`;
                 })
               }
             >

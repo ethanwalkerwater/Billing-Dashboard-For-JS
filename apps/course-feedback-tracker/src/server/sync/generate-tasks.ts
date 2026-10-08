@@ -18,6 +18,10 @@ export interface GenerateTasksResult {
   created: number;
   updated: number;
   unchanged: number;
+  /** 不再是课程、没人填过而删掉的任务数 */
+  removed: number;
+  /** 不再是课程但已经有人填了、保留着的任务 */
+  orphanedTasks: Array<{ studentName: string; teacherName: string }>;
   excludedRecords: SkippedScheduleRecord[];
   reviewRecords: SkippedScheduleRecord[];
   invalidRecords: Array<{ recordId: string; reasons: string[] }>;
@@ -84,6 +88,7 @@ export async function generateMonthlyTasks(input: {
 
   const grouped = await groupScheduleIntoTasks(schedule.parsed, students.parsed, {
     collectionMonth: input.collectionMonth,
+    courseTypeOverrides: await input.repository.listCourseTypeOverrides(),
   });
 
   const invalidRecords = [...grouped.invalidRecords, ...schedule.failures, ...students.failures];
@@ -150,6 +155,8 @@ export async function generateMonthlyTasks(input: {
     created: plan.create.length,
     updated: plan.update.length,
     unchanged: plan.unchanged.length,
+    removed: plan.remove.length,
+    orphanedTasks: plan.orphaned.map((task) => ({ studentName: task.studentName, teacherName: task.teacherCanonicalName })),
     excludedRecords: grouped.excludedRecords,
     reviewRecords: grouped.reviewRecords,
     invalidRecords,

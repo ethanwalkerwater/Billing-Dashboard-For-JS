@@ -1,4 +1,4 @@
-import { isWithinMonthInShanghai } from "../../domain";
+import { classifyLesson, isWithinMonthInShanghai } from "../../domain";
 import { readLinkIds } from "../feishu/parsers";
 import type { FeishuRecord } from "../feishu/types";
 
@@ -107,4 +107,65 @@ export function buildFeedbackCsvWithCount(input: { records: FeishuRecord[]; coll
     rows.push(row);
   }
   return { csv: toCsv(headers, rows), rows: rows.length };
+}
+
+/** 解析 toCsv 写出的 CSV（RFC 4180：引号包裹、"" 转义、字段里可有逗号和换行）。 */
+export function parseCsv(text: string): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let field = "";
+  let quoted = false;
+  const input = text.replace(/^\uFEFF/, "");
+  for (let index = 0; index < input.length; index += 1) {
+    const char = input[index];
+    if (quoted) {
+      if (char === '"' && input[index + 1] === '"') {
+        field += '"';
+        index += 1;
+      } else if (char === '"') quoted = false;
+      else field += char;
+    } else if (char === '"') quoted = true;
+    else if (char === ",") {
+      row.push(field);
+      field = "";
+    } else if (char === "\n" || char === "\r") {
+      if (char === "\r" && input[index + 1] === "\n") index += 1;
+      row.push(field);
+      rows.push(row);
+      row = [];
+      field = "";
+    } else field += char;
+  }
+  if (field !== "" || row.length > 0) {
+    row.push(field);
+    rows.push(row);
+  }
+  return rows;
+}
+
+/**
+ * 老师评分只算「课程」：把课表快照里不是课程的行（咨询、考试、会议、自习、作业…）先去掉再交给评分脚本，
+ * 判断和问卷名单共用 classifyLesson，评分脚本本身一行不改。返回过滤后的 CSV 和被去掉的课时。
+ */
+export function keepCourseLessons(
+  scheduleCsv: string,
+  overrides?: ReadonlyMap<string, boolean>,
+): { csv: string; removedRows: number; removedHours: number } {
+  const [header, ...rows] = parseCsv(scheduleCsv);
+  if (!header) return { csv: scheduleCsv, removedRows: 0, removedHours: 0 };
+  const column = (name: string) => header.indexOf(name);
+  const [courseIndex, modeIndex, hoursIndex] = [column("课程类型"), column("授课类型"), column("课程时长")];
+  const kept: Array<Record<string, string>> = [];
+  let removedRows = 0;
+  let removedHours = 0;
+  for (const cells of rows) {
+    const split = (index: number) => (index < 0 ? [] : (cells[index] ?? "").split("、").filter(Boolean));
+    if (classifyLesson({ courseTypes: split(courseIndex), teachingTypes: split(modeIndex) }, overrides).isCourse) {
+      kept.push(Object.fromEntries(header.map((name, index) => [name, cells[index] ?? ""])));
+    } else {
+      removedRows += 1;
+      removedHours += Number(cells[hoursIndex]) || 0;
+    }
+  }
+  return { csv: toCsv(header, kept), removedRows, removedHours };
 }

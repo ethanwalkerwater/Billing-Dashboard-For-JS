@@ -39,6 +39,7 @@ export const EXCLUDED_TEACHERS_TABLE = "feedback_excluded_teachers";
 export const SNAPSHOTS_TABLE = "feedback_source_snapshots";
 export const SCORE_HISTORY_TABLE = "feedback_score_history";
 export const SCORE_RESULTS_TABLE = "feedback_score_results";
+export const COURSE_TYPE_RULES_TABLE = "feedback_course_type_rules";
 
 function unwrap<T>(result: PostgrestResult<T>, context: string): T[] {
   if (result.error) throw new Error(`${context}失败：${result.error.message}`);
@@ -72,7 +73,16 @@ export class RdbFeedbackTaskRepository implements FeedbackTaskRepository {
     return unwrap(result, "按短链接读取任务").map(rowToTask)[0] ?? null;
   }
 
+  async listCourseTypeOverrides(): Promise<Map<string, boolean>> {
+    const result = await this.db.from(COURSE_TYPE_RULES_TABLE).select<{ course_type: string; is_course: boolean }>("course_type,is_course");
+    return new Map(unwrap(result, "读取课程类型设定").map((row) => [row.course_type, row.is_course]));
+  }
+
   async applySyncPlan(plan: TaskSyncPlan): Promise<void> {
+    for (const chunk of chunked(plan.remove.map((task) => task.taskId), 200)) {
+      const result = await this.db.from(TASKS_TABLE).delete().in("task_id", chunk);
+      if (result.error) throw new Error(`删除已不是课程的任务失败：${result.error.message}`);
+    }
     const rows = [...plan.create, ...plan.update].map(taskToRow) as unknown as Record<string, unknown>[];
     if (rows.length === 0) return;
     // task_id 唯一，upsert 保证重复同步幂等；状态字段由 buildTaskSyncPlan 保留教务的手动修改。

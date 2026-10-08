@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { buildFeedbackCsv, buildScheduleCsv, formatShanghai } from "../src/server/export/csv";
+import { buildFeedbackCsv, buildScheduleCsv, keepCourseLessons, parseCsv, toCsv, formatShanghai } from "../src/server/export/csv";
 import type { FeishuRecord } from "../src/server/feishu/types";
 
 /**
@@ -95,5 +95,32 @@ describe("teacher-feedback CSV compatibility", () => {
       studentNamesByRecordId: new Map([["student-1", "姚凯榕"]]),
     });
     assert.ok(csv.includes('"Alevel数学 P3,S1 ""强化"""'));
+  });
+});
+
+describe("course-only schedule for scoring", () => {
+  it("parses what toCsv writes, including quoted commas and quotes", () => {
+    const csv = toCsv(["a", "b"], [{ a: '张三, "李四"', b: "x" }, { a: "", b: "多行\n内容" }]);
+    assert.deepEqual(parseCsv(csv), [["a", "b"], ['张三, "李四"', "x"], ["", "多行\n内容"]]);
+  });
+
+  it("drops consultations, exams and meetings but keeps 1v1, 刷题班, 班课 and 试听", () => {
+    const header = ["上课时间", "老师", "学生", "课程时长", "课程类型", "授课类型", "临时取消"];
+    const row = (课程类型: string, 授课类型: string, 课程时长 = "2") => ({ 上课时间: "2026-09-02 10:00:00", 老师: "黄钢", 学生: "Tiffany", 课程时长, 课程类型, 授课类型, 临时取消: "" });
+    const csv = toCsv(header, [
+      row("SAT刷题课", "刷题班"),
+      row("申请咨询", "学生规划", "1"),
+      row("咨询", "1v1", "1"),
+      row("P3考试", "", "8"),
+      row("JCCO化学竞赛班", "班课"),
+      row("数学试听", "1v1"),
+      row("作业刷题", "刷题班", "1.5"),
+    ]);
+    const result = keepCourseLessons(csv);
+    assert.deepEqual(parseCsv(result.csv).slice(1).map((cells) => cells[4]), ["SAT刷题课", "JCCO化学竞赛班", "数学试听"]);
+    assert.equal(result.removedRows, 4);
+    assert.equal(result.removedHours, 11.5);
+    // 教务手动把某个类型改判为课程，评分就会算上
+    assert.equal(parseCsv(keepCourseLessons(csv, new Map([["咨询", true]])).csv).length, 1 + 4);
   });
 });

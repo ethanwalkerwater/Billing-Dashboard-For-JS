@@ -1,4 +1,5 @@
 import { canonicalizeName, createStableTaskId } from "./identity";
+import { classifyLesson } from "./lesson-kind";
 import { collectionMonthToCourseMonth, isWithinMonthInShanghai } from "./month";
 import type {
   FeedbackTaskDraft,
@@ -7,35 +8,6 @@ import type {
   ScheduleRecord,
   StudentRecord,
 } from "./types";
-
-/**
- * 明确的非授课项目，直接排除，不生成问卷任务。
- * 关键词来自课表「课程类型」和「授课类型」两个单选字段的真实选项。
- */
-export const DEFAULT_EXCLUDED_COURSE_PATTERNS = [
-  /会议/u,
-  /例会/u,
-  /咨询/u,
-  /请假/u,
-  /空出/u,
-  /团建/u,
-  /聚餐/u,
-  /运动/u,
-  /体检/u,
-  /陪考/u,
-  /考试/u,
-  /模测/u,
-  /面试/u,
-  /入职测试/u,
-  /自习/u,
-  /文书/u,
-  /前台/u,
-];
-
-/**
- * 归属不明的项目：照常生成任务（漏发比误发更难补救），但进复核清单让教务确认。
- */
-export const DEFAULT_REVIEW_COURSE_PATTERNS = [/规划/u, /作业/u, /助教/u, /试听/u];
 
 interface TaskAccumulator {
   courseMonth: string;
@@ -66,14 +38,6 @@ function getRecordProblems(
   return problems;
 }
 
-/** 第一个命中的标签，用来把排除或复核原因显示给教务。 */
-function firstMatch(labels: string[], patterns: RegExp[]): string | null {
-  for (const label of labels) {
-    if (patterns.some((pattern) => pattern.test(label))) return label;
-  }
-  return null;
-}
-
 export async function groupScheduleIntoTasks(
   records: ScheduleRecord[],
   studentRecords: StudentRecord[],
@@ -81,8 +45,6 @@ export async function groupScheduleIntoTasks(
 ): Promise<GroupingResult> {
   const courseMonth = collectionMonthToCourseMonth(options.collectionMonth);
   const students = new Map(studentRecords.map((student) => [student.recordId, student]));
-  const excludedPatterns = options.excludedCoursePatterns ?? DEFAULT_EXCLUDED_COURSE_PATTERNS;
-  const reviewPatterns = options.reviewCoursePatterns ?? DEFAULT_REVIEW_COURSE_PATTERNS;
   const teacherAliases = options.teacherAliases ?? {};
   const grouped = new Map<string, TaskAccumulator>();
   const excludedRecords: GroupingResult["excludedRecords"] = [];
@@ -98,7 +60,6 @@ export async function groupScheduleIntoTasks(
     if (!isWithinMonthInShanghai(record.startsAt, courseMonth)) continue;
 
     const courses = uniqueCanonical(record.courseNames);
-    const labels = [...courses, ...uniqueCanonical(record.teachingTypes)];
 
     // 排除判断必须排在缺字段判断前面：请假、考试、自习这类记录本来就没有老师或学生，
     // 先查缺字段会把它们全报成"课表数据有问题"，异常清单就没法用了。
@@ -107,25 +68,25 @@ export async function groupScheduleIntoTasks(
       excludedRecords.push({ recordId: record.recordId, reason: `临时取消：${cancellationTag}` });
       continue;
     }
-    const excludedLabel = firstMatch(labels, excludedPatterns);
-    if (excludedLabel) {
-      excludedRecords.push({ recordId: record.recordId, reason: `非授课项目：${excludedLabel}` });
+    // 不是课程（咨询、考试、会议、自习、作业…）的不发问卷，判断和老师评分共用 classifyLesson。
+    const kind = classifyLesson({ courseTypes: record.courseNames, teachingTypes: record.teachingTypes }, options.courseTypeOverrides);
+    if (!kind.isCourse) {
+      excludedRecords.push({ recordId: record.recordId, reason: `非课程：${kind.reason}` });
       continue;
     }
 
-    const reviewLabel = firstMatch(labels, reviewPatterns);
     const problems = getRecordProblems(record, students);
     if (problems.length > 0) {
-      // 归属不明的类型又缺老师或学生，说明它根本不是一节课，归到排除而不是"要去飞书修数据"。
-      if (reviewLabel) {
-        excludedRecords.push({ recordId: record.recordId, reason: `非授课项目：${reviewLabel}（${problems[0]}）` });
+      // 没标授课类型、又缺老师或学生，说明它根本不是一节课，归到排除而不是"要去飞书修数据"。
+      if (kind.source === "default") {
+        excludedRecords.push({ recordId: record.recordId, reason: `非课程：未标注授课类型且${problems[0]}` });
       } else {
         invalidRecords.push({ recordId: record.recordId, reasons: [...new Set(problems)] });
       }
       continue;
     }
-    if (reviewLabel) {
-      reviewRecords.push({ recordId: record.recordId, reason: `课程类型待确认：${reviewLabel}` });
+    if (kind.source === "default") {
+      reviewRecords.push({ recordId: record.recordId, reason: kind.reason });
     }
 
     for (const studentId of record.studentRecordIds) {

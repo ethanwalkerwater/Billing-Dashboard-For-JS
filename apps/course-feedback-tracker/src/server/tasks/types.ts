@@ -22,6 +22,10 @@ export interface TaskSyncPlan {
   create: StoredFeedbackTask[];
   update: StoredFeedbackTask[];
   unchanged: StoredFeedbackTask[];
+  /** 课表里已经不是课程（或课被删了）、且还没人填过的任务：删掉 */
+  remove: StoredFeedbackTask[];
+  /** 同上但已经有人填了：保留不删，列出来给教务看 */
+  orphaned: StoredFeedbackTask[];
 }
 
 export type ResponseIdentity = "student" | "parent";

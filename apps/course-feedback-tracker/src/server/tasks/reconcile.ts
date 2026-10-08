@@ -18,7 +18,7 @@ export async function buildTaskSyncPlan(input: {
 }): Promise<TaskSyncPlan> {
   const now = input.now ?? new Date().toISOString();
   const existingById = new Map(input.existing.map((task) => [task.taskId, task]));
-  const plan: TaskSyncPlan = { create: [], update: [], unchanged: [] };
+  const plan: TaskSyncPlan = { create: [], update: [], unchanged: [], remove: [], orphaned: [] };
 
   for (const draft of input.drafts) {
     const existing = existingById.get(draft.taskId);
@@ -57,6 +57,15 @@ export async function buildTaskSyncPlan(input: {
       scheduleRecordIds,
       updatedAt: now,
     });
+  }
+
+  // 这次没再生成的旧任务（课程类型改判为非课程、或课表里的课被删了）：
+  // 没人填过的直接删，免得继续催学生评一场会议；已经有答卷的保留，反馈不能丢。
+  const draftIds = new Set(input.drafts.map((draft) => draft.taskId));
+  for (const existing of input.existing) {
+    if (draftIds.has(existing.taskId)) continue;
+    if (existing.studentResponseId || existing.parentResponseId) plan.orphaned.push(existing);
+    else plan.remove.push(existing);
   }
   return plan;
 }
