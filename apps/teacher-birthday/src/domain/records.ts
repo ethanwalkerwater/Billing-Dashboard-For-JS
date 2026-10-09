@@ -21,7 +21,11 @@ export function readText(value: unknown): string {
   return "";
 }
 
-const readNumber = (value: unknown) => (typeof value === "number" && Number.isFinite(value) ? value : null);
+/** 数字和日期字段：list 接口给 number，单条 GET 实测给字符串（"267"），两种都认 */
+function readNumber(value: unknown): number | null {
+  if (typeof value === "string" && value.trim()) value = Number(value);
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
 const readFiles = (value: unknown) =>
   Array.isArray(value)
     ? value

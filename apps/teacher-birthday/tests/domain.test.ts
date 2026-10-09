@@ -86,3 +86,15 @@ test("问卷链接预填并隐藏老师与年份；卡片带链接与 @", () => 
   assert.match(JSON.stringify(celebrateCard({ teacherName: "汤朔", openId: "ou_x", pageUrl: "https://p", wishCount: 5 })), /<at id=ou_x><\/at>/);
   assert.doesNotMatch(JSON.stringify(celebrateCard({ teacherName: "汤朔", openId: null, pageUrl: "https://p", wishCount: 0 })), /<at/);
 });
+
+test("parseTeacher: 飞书数字字段返回字符串（实测单条 GET 为 \"267\"）也要读成数字，否则已发年份失效会每天重复发送", () => {
+  const row = parseTeacher({
+    record_id: "recS",
+    fields: { 姓名: "汤朔", 在职: true, 问卷已发年份: "2026", 祝福已发年份: "2026", 今年课节: "267", 今年学生: "30", 今年课时: "515.5", 生日: "1791216000000" },
+  });
+  assert.equal(row.askedYear, 2026);
+  assert.equal(row.celebratedYear, 2026);
+  assert.deepEqual(row.stats, { lessons: 267, students: 30, hours: 515.5 });
+  assert.equal(row.birthMs, 1791216000000);
+  assert.equal(parseTeacher({ record_id: "r", fields: { 姓名: "x", 问卷已发年份: "" } }).askedYear, null);
+});
