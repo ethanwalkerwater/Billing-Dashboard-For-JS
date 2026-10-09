@@ -189,6 +189,20 @@ export class FeishuClient {
     });
   }
 
+  /** 多维表格附件的临时下载链接（24 小时有效，无需鉴权即可访问），一次最多 5 个 token。 */
+  async tmpDownloadUrls(fileTokens: string[]): Promise<Map<string, string>> {
+    const urls = new Map<string, string>();
+    for (let i = 0; i < fileTokens.length; i += 5) {
+      const search = new URLSearchParams();
+      for (const token of fileTokens.slice(i, i + 5)) search.append("file_tokens", token);
+      const data = await this.request<{ tmp_download_urls?: Array<{ file_token: string; tmp_download_url: string }> }>(
+        `/open-apis/drive/v1/medias/batch_get_tmp_download_url?${search}`,
+      );
+      for (const item of data.tmp_download_urls ?? []) urls.set(item.file_token, item.tmp_download_url);
+    }
+    return urls;
+  }
+
   async listAllFields(input: { appToken: string; tableId: string }): Promise<FeishuField[]> {
     const fields: FeishuField[] = [];
     let pageToken: string | undefined;

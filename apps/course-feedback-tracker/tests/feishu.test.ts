@@ -160,3 +160,20 @@ describe("Feishu pagination", () => {
     assert.equal(calls.filter((url) => url.includes("tenant_access_token")).length, 1);
   });
 });
+
+describe("FeishuClient.tmpDownloadUrls", () => {
+  it("batches file tokens five at a time and maps token → temporary URL", async () => {
+    const calls: string[] = [];
+    const fetchImpl = (async (url: string) => {
+      if (url.includes("tenant_access_token")) return new Response(JSON.stringify({ code: 0, msg: "ok", tenant_access_token: "t", expire: 7200 }));
+      calls.push(url);
+      const tokens = new URL(url).searchParams.getAll("file_tokens");
+      return new Response(JSON.stringify({ code: 0, msg: "ok", data: { tmp_download_urls: tokens.map((token) => ({ file_token: token, tmp_download_url: `https://tmp/${token}` })) } }));
+    }) as typeof fetch;
+    const client = new FeishuClient({ appId: "a", appSecret: "s", fetchImpl });
+    const urls = await client.tmpDownloadUrls(["t1", "t2", "t3", "t4", "t5", "t6"]);
+    assert.equal(calls.length, 2);
+    assert.equal(urls.get("t6"), "https://tmp/t6");
+    assert.equal(urls.size, 6);
+  });
+});
