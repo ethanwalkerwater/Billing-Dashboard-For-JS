@@ -1,0 +1,26 @@
+{
+  "name": "@jingshi/teacher-birthday",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "菁仕老师生日祝福：飞书老师档案、生日前问卷、生日当天群卡片和 3D 祝福网站。",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0 --port 4179",
+    "build": "tsc --noEmit && vite build",
+    "test": "tsx --test tests/*.test.ts",
+    "deploy:functions": "node scripts/deploy-function.mjs",
+    "deploy:web": "npm run build && tcb hosting deploy dist /birthday -e jingshi-test-d5gp401i44a0fa7a7",
+    "rehearse": "node scripts/rehearse.mjs"
+  },
+  "dependencies": {
+    "three": "^0.186.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.0",
+    "@types/three": "^0.186.0",
+    "esbuild": "^0.28.2",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2",
+    "vite": "^7.1.4"
+  }
+}
