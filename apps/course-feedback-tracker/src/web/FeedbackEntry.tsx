@@ -6,10 +6,20 @@ import { identityLabel, improvementOptions, isNothingToImprove, suggestionText }
 import { METRICS } from "./report-types";
 import type { DetailRow } from "./report-types";
 
-/** 一份反馈里某项指标的分数：学生、家长各一份时都列出来。 */
+/** 评分时把 4 分按 5 分算的两条规则，见 functions/feedback-score/index.py */
+const ADJUST_RULES = {
+  streak: { label: "连续 4 分", hint: "连续 3 个月给这位老师这一项打 4 分、每月都有课，本月的 4 分按 5 分算" },
+  "strict-rater": { label: "评分标准高", hint: "本月给 2 位及以上老师打分、从没打过 5 分，4 分都按 5 分算" },
+} as const;
+
+/** 一份反馈里某项指标的分数：学生、家长各一份时都列出来；按规则改算的写成 4→5。 */
 function metricScores(row: DetailRow, metricId: string): string {
-  const student = row.scores[`${metricId}_student`];
-  const parent = row.scores[`${metricId}_parent`];
+  const shown = (field: string) => {
+    const value = row.scores[field];
+    return value != null && row.adjusted?.[field] ? `${value}→5` : value;
+  };
+  const student = shown(`${metricId}_student`);
+  const parent = shown(`${metricId}_parent`);
   if (student != null && parent != null) return `学 ${student} · 家 ${parent}`;
   const value = student ?? parent;
   return value == null ? "—" : String(value);
@@ -30,6 +40,11 @@ export function FeedbackEntry({ row, showTeacher }: { row: DetailRow; showTeache
             未匹配课时
           </Badge>
         ) : null}
+        {[...new Set(Object.values(row.adjusted ?? {}))].map((rule) => (
+          <Badge key={rule} variant="secondary" title={ADJUST_RULES[rule].hint}>
+            {ADJUST_RULES[rule].label} · 4 分按 5 分
+          </Badge>
+        ))}
         <span className="text-muted-foreground ml-auto font-mono text-xs">{row.submittedAt.slice(5, 16)}</span>
       </div>
       <div className="text-muted-foreground flex flex-wrap gap-x-4 gap-y-1 text-xs">

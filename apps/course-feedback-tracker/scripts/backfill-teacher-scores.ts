@@ -25,7 +25,7 @@ import { FeishuClient } from "../src/server/feishu/client";
 import { loadFeishuConfig } from "../src/server/feishu/config";
 import { parseStudentRecord } from "../src/server/feishu/parsers";
 import { LIVE_SCORES_FROM, recomputeMonth } from "../src/server/scores/recompute";
-import type { ScoreResponse, ScoreStore, StoredResult } from "../src/server/scores/recompute";
+import type { PriorDetailRow, ScoreResponse, ScoreStore, StoredResult } from "../src/server/scores/recompute";
 import { ALIASES_TABLE, RdbFeedbackTaskRepository, SCORE_HISTORY_TABLE, SCORE_RESULTS_TABLE, SNAPSHOTS_TABLE, TASKS_TABLE } from "../src/shared/rdb";
 
 const APP = resolve(import.meta.dirname, "..");
@@ -205,6 +205,11 @@ const store: ScoreStore = {
   saveResult,
   aliases: async () => aliases,
   teacherNames: async () => teacherNames,
+  courseTypeOverrides: () => repository.listCourseTypeOverrides(),
+  detail: async (courseMonth) => {
+    const result = await db.from(SCORE_RESULTS_TABLE).select<{ detail: PriorDetailRow[] }>("detail").eq("course_month", courseMonth);
+    return result.data?.[0]?.detail;
+  },
 };
 for (let courseMonth = LIVE_SCORES_FROM; courseMonth < currentMonth; courseMonth = shiftMonth(courseMonth, 1)) {
   const outcome = await recomputeMonth({ store, compute: async (request) => computeLocally({ ...request }), courseMonth, currentMonth, force: true });

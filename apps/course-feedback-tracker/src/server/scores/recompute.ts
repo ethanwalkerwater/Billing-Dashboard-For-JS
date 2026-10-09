@@ -1,4 +1,4 @@
-import { courseMonthToCollectionMonth } from "../../domain";
+import { courseMonthToCollectionMonth, shiftMonth } from "../../domain";
 import { keepCourseLessons } from "../export/csv";
 import type { NameAlias } from "../tasks/types";
 
@@ -10,7 +10,18 @@ export const LIVE_SCORES_FROM = "2026-09";
 
 /** 评分脚本或入参口径变了就加一，所有未定稿月份下次刷新时会重算。 */
 // 2：只按「课程」算课时和权重（咨询、考试、会议、自习、作业等不算），见 domain/lesson-kind.ts
-export const SCORE_ENGINE_VERSION = "2";
+// 3：4 分算 5 分的两条规则（连续打 4 分、评分标准高），见 functions/feedback-score/index.py
+export const SCORE_ENGINE_VERSION = "3";
+
+/** 规则「连续 3 个月打 4 分」要看前几个月的逐条明细（存的是原始分） */
+export const STREAK_MONTHS = 3;
+
+export interface PriorDetailRow {
+  student: string;
+  teacher: string;
+  matched: boolean;
+  scores: Record<string, number | null>;
+}
 
 export interface ScoreRequest {
   courseMonth: string;
@@ -19,6 +30,8 @@ export interface ScoreRequest {
   dedupeKeep: "first" | "last";
   aliases: NameAlias[];
   teacherNames: string[];
+  /** 前 STREAK_MONTHS 个月（由远到近）的明细，只留有 4 分的行 */
+  priorDetails: PriorDetailRow[][];
 }
 
 export interface ScoreResponse {
@@ -49,6 +62,8 @@ export interface ScoreStore {
   teacherNames(): Promise<string[]>;
   /** 「课程类型」页的手动设定 */
   courseTypeOverrides(): Promise<Map<string, boolean>>;
+  /** 某个课程月份存下的逐条明细 */
+  detail(courseMonth: string): Promise<PriorDetailRow[] | undefined>;
 }
 
 /** 课程月份 M 的反馈在 M+1 月收集；M+1 月过完，M 就定稿。 */
@@ -80,19 +95,24 @@ export async function recomputeMonth(input: {
   const existing = await store.result(courseMonth);
   if (existing?.status === "final" && !input.force) return "final";
 
-  const [rawScheduleCsv, feedbackCsv, aliases, teacherNames, overrides] = await Promise.all([
+  const priorMonths = Array.from({ length: STREAK_MONTHS }, (_, index) => shiftMonth(courseMonth, index - STREAK_MONTHS));
+  const [rawScheduleCsv, feedbackCsv, aliases, teacherNames, overrides, ...priorRows] = await Promise.all([
     store.snapshot("schedule", courseMonth),
     store.snapshot("feedback", courseMonthToCollectionMonth(courseMonth)),
     store.aliases(),
     store.teacherNames(),
     store.courseTypeOverrides(),
+    ...priorMonths.map((month) => store.detail(month)),
   ]);
   if (!rawScheduleCsv || !feedbackCsv) return "missing-input";
 
   // 只把「课程」交给评分：咨询、考试、会议这类课表占位不算老师总课时，也不参与学生权重。
   // 课程类型设定一改，过滤后的课表就变，下面的哈希跟着变，未定稿月份会自动重算。
   const scheduleCsv = keepCourseLessons(rawScheduleCsv, overrides).csv;
-  const request: ScoreRequest = { courseMonth, scheduleCsv, feedbackCsv, dedupeKeep: "first", aliases, teacherNames };
+  const priorDetails = priorRows.map((rows) =>
+    (rows ?? []).filter((row) => Object.values(row.scores).includes(4)).map(({ student, teacher, matched, scores }) => ({ student, teacher, matched, scores })),
+  );
+  const request: ScoreRequest = { courseMonth, scheduleCsv, feedbackCsv, dedupeKeep: "first", aliases, teacherNames, priorDetails };
   const status = isFinalMonth(courseMonth, input.currentMonth) ? "final" : "draft";
   const hash = await sha256(JSON.stringify({ v: SCORE_ENGINE_VERSION, request }));
   if (!input.force && existing?.inputs_hash === hash && existing.status === status) return "unchanged";
