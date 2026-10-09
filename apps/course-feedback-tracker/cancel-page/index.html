@@ -171,11 +171,12 @@
           top.appendChild(
             available
               ? el("span", "tag " + (info.free ? "free" : "charge"), info.tag)
-              : el("span", "tag muted", lesson.status === "cancelled" ? "已取消" : "多人课程，请联系教务"),
+              : el("span", "tag muted", lesson.status === "cancelled" ? "已取消" : "多人课程"),
           );
           item.appendChild(top);
           item.appendChild(el("div", "lesson-course", lesson.courseName || "未命名课程"));
-          item.appendChild(el("div", "lesson-teacher", (lesson.teacherName || "") + (available ? " · " + leadText(lesson) : "")));
+          var hint = available ? " · " + leadText(lesson) : lesson.status === "group" ? " · 多人同上的课请联系教务取消" : "";
+          item.appendChild(el("div", "lesson-teacher", (lesson.teacherName || "") + hint));
           list.appendChild(item);
         });
       }
