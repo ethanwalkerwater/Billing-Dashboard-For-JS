@@ -53,6 +53,36 @@ class FeedbackScoreTest(unittest.TestCase):
         self.assertEqual(5.0, row["variants"]["learning_effect"]["student"])
         self.assertEqual(1, row["rank"])
 
+    def test_four_counts_as_five_rules(self):
+        fours = "帮助较大，有一定提升,大部分时候能做到，整体良好,较好，能够调动我的学习兴趣"
+        feedback = FEEDBACK.split("\n")[0] + "\n" + "\n".join(
+            [
+                # 姚凯榕给两位老师都只打 4 分 → 评分标准高
+                f"2026-10-01 10:00:00,Valentina 林,姚凯榕,学生本人,{fours}",
+                f"2026-10-01 11:00:00,数学杨,姚凯榕,学生本人,{fours}",
+                # Mia 只评了一位老师，不算评分标准高；学习提升效果连续 3 个月打 4 分 → 连续 4 分
+                f"2026-10-01 12:00:00,邓老师(地理),Mia,学生本人,{fours}",
+            ]
+        )
+        streak = [{"student": "Mia", "teacher": "邓老师(地理)", "matched": True, "scores": {"learning_effect_student": 4}}]
+        result = index.main({**BASE, "feedbackCsv": feedback, "priorDetails": [streak, streak, streak]})
+        self.assertTrue(result["ok"], result.get("error"))
+        scores = {row["teacher"]: row["scores"] for row in result["teachers"]}
+        self.assertEqual(5.0, scores["Valentina Lin"]["charisma"])
+        self.assertEqual(5.0, scores["数学杨老师"]["responsibility"])
+        self.assertEqual(5.0, scores["邓老师(地理)"]["learning_effect"])
+        self.assertEqual(4.0, scores["邓老师(地理)"]["charisma"])
+        self.assertEqual({"streak": 1, "strict-rater": 6}, result["stats"]["adjustedScores"])
+        mia = next(row for row in result["detail"] if row["student"] == "Mia")
+        # 明细保留原始分，另记被改的字段
+        self.assertEqual(4.0, mia["scores"]["learning_effect_student"])
+        self.assertEqual({"learning_effect_student": "streak"}, mia["adjusted"])
+
+        # 中间有一个月没排课：不算连续
+        broken = [{**streak[0], "matched": False}]
+        result = index.main({**BASE, "feedbackCsv": feedback, "priorDetails": [streak, broken, streak]})
+        self.assertEqual(4.0, {row["teacher"]: row["scores"] for row in result["teachers"]}["邓老师(地理)"]["learning_effect"])
+
     def test_month_without_feedback_reports_error(self):
         result = index.main({**BASE, "feedbackCsv": "提交时间,老师姓名,学生姓名,身份\n"})
         self.assertFalse(result["ok"])

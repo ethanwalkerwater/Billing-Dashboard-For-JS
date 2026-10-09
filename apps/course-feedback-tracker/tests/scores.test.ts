@@ -13,6 +13,7 @@ function memoryStore(snapshots: Record<string, string>) {
     aliases: async () => [],
     teacherNames: async () => ["应雁心"],
     courseTypeOverrides: async () => new Map(),
+    detail: async () => undefined,
   };
   return { store, results };
 }

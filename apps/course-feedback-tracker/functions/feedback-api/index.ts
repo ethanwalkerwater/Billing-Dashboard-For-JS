@@ -21,7 +21,7 @@ import { parseStudentRecord } from "../../src/server/feishu/parsers";
 import { generateMonthlyTasks } from "../../src/server/sync/generate-tasks";
 import { reconcileResponses } from "../../src/server/sync/reconcile-responses";
 import { LIVE_SCORES_FROM, recomputeMonth } from "../../src/server/scores/recompute";
-import type { ScoreRequest, ScoreResponse, ScoreStore, StoredResult } from "../../src/server/scores/recompute";
+import type { PriorDetailRow, ScoreRequest, ScoreResponse, ScoreStore, StoredResult } from "../../src/server/scores/recompute";
 import { RdbFeedbackTaskRepository, SCORE_RESULTS_TABLE, SNAPSHOTS_TABLE, TASKS_TABLE } from "../../src/shared/rdb";
 import type { PostgrestLike } from "../../src/shared/rdb";
 import { verifyFeishuEvent } from "./feishu-event";
@@ -82,6 +82,7 @@ const scoreStore: ScoreStore = {
   },
   aliases: () => repository().listAliases(),
   courseTypeOverrides: () => repository().listCourseTypeOverrides(),
+  detail: async (courseMonth) => (await selectRows<{ detail: PriorDetailRow[] }>(SCORE_RESULTS_TABLE, "detail", { course_month: courseMonth }))[0]?.detail,
   // 评分脚本会把老师名去空格、去「老师」后缀；用课表写法还原显示名（Valentina Lin、数学杨老师）。
   teacherNames: async () => [...new Set((await selectRows<{ teacher_canonical_name: string }>(TASKS_TABLE, "teacher_canonical_name")).map((row) => row.teacher_canonical_name))],
 };

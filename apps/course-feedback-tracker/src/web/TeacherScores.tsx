@@ -68,6 +68,18 @@ function averageOverall(rows: Array<{ overall: number | null }>): number | null 
   return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
 }
 
+/** 4 分按 5 分算的两条规则，算法在 functions/feedback-score/index.py */
+function AdjustNote({ report }: { report: MonthReport }) {
+  const counts = report.stats?.adjustedScores;
+  const total = counts ? counts.streak + counts["strict-rater"] : 0;
+  return (
+    <span title="连续 4 分：连续 3 个月给同一老师同一项打 4 分、每月都有课，本月的 4 分按 5 分算。评分标准高：本月给 2 位及以上老师打分、从没打过 5 分，4 分都按 5 分算。明细里显示为 4→5。">
+      {" "}
+      4 分按 5 分算的规则{total ? `本月改算 ${total} 项（连续 4 分 ${counts?.streak ?? 0}、评分标准高 ${counts?.["strict-rater"] ?? 0}）` : "本月没有命中"}，悬停看说明。
+    </span>
+  );
+}
+
 function StatusBadge({ report }: { report: MonthReport }) {
   if (report.source === "history") {
     return (
@@ -82,13 +94,17 @@ function StatusBadge({ report }: { report: MonthReport }) {
   return report.status === "final" ? (
     <>
       <Badge variant="success">已定稿</Badge>
-      <span className="text-muted-foreground text-xs">收集月份已结束，分数不再变化。同一学生对同一老师重复提交只算第一份；没评到的学生按当月平均分补齐。</span>
+      <span className="text-muted-foreground text-xs">
+        收集月份已结束，分数不再变化。同一学生对同一老师重复提交只算第一份；没评到的学生按当月平均分补齐。
+        <AdjustNote report={report} />
+      </span>
     </>
   ) : (
     <>
       <Badge variant="warning">收集中</Badge>
       <span className="text-muted-foreground text-xs">
         反馈还在陆续提交，每次刷新反馈后自动更新（{report.computedAt ? `本次计算于 ${report.computedAt.slice(5, 16).replace("T", " ")}` : ""}）。下月初自动定稿。
+        <AdjustNote report={report} />
       </span>
     </>
   );

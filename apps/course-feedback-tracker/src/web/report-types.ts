@@ -38,6 +38,8 @@ export interface DetailRow {
   matched: boolean;
   weight: number;
   scores: Record<string, number | null>;
+  /** 按规则把 4 分算作 5 分的字段（scores 里仍是原始分） */
+  adjusted?: Record<string, "streak" | "strict-rater">;
   texts: { improvement_student?: string; improvement_parent?: string; suggestion?: string };
 }
 
@@ -58,6 +60,7 @@ export interface MonthReport {
     totalHours?: number;
     unmappedScoreTexts?: Record<string, Record<string, number>>;
     breakdownFrom?: "feishu" | "legacy-detail";
+    adjustedScores?: { streak: number; "strict-rater": number };
   };
   error?: string;
 }
