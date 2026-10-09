@@ -35,3 +35,13 @@ HTTP 访问服务路由：`app.jsjy.asia/cancel-api → 云函数 cancel-api`（
 ## 切换到主课表
 
 只改 `cancel.env` 的 `CANCEL_SCHEDULE_*` / `CANCEL_REQUEST_*` / `CANCEL_FORM_URL` 后重新部署；主课表需同样有「提前取消-0%」选项和带请假前缀的「老师课程ID」公式。
+
+## 课表字段改动（测试课表已改，主课表切换时照做）
+
+- 「临时取消」单选新增 `提前取消-0%`、`学生病假-0%`。
+- 「课程总价格」公式：这两个选项算 0。
+- 「学员课程ID」「老师课程ID」公式：前面统一加请假前缀（`请假 70%｜`…`请假 0%｜`、病假为 `病假｜`），老师日历标题因此也能看到取消。
+- 新建「取消申请」表（取消编号 / 取消原因 / 补充说明 / 病假证明 / 处理结果 / 提交时间）和表单视图「学生取消课程问卷」，任何人可填，「处理结果」在表单中隐藏。
+- 改之前的字段定义备份在本地 `outputs/lesson-cancellation/test-base-schedule-fields-before.json`。
+
+飞书应用需要的权限：`bitable:app`（读写多维表格）、`im:message:send_as_bot`（发消息）、`docs:event:subscribe`（订阅多维表格记录变更事件）；应用「可用范围」要包含所有老师，否则私聊发不出去。

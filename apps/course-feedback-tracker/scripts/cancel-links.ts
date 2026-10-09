@@ -5,7 +5,7 @@
  *   npm run cancel-links -- --students 张三,李四  # 只生成这几位（按学生名匹配）
  *   npm run cancel-links -- --revoke 张三        # 停用张三的旧链接并重新生成
  *
- * 读 cancel.env（课表、飞书应用）和 server.env（数据库），结果写到仓库根目录
+ * 读 cancel.env（课表、学员信息表、飞书应用）和 server.env（数据库），结果写到仓库根目录
  * outputs/lesson-cancellation/cancel-links.csv，由教务发给学生或家长。
  */
 import { randomBytes } from "node:crypto";
@@ -37,34 +37,26 @@ function argList(flag: string): string[] {
   return index > 0 && process.argv[index + 1] ? process.argv[index + 1].split(/[,，]/).map((s) => s.trim()).filter(Boolean) : [];
 }
 
-/** 学生关联字段（list 接口）：[{ record_ids, text_arr }]；文本字段则直接是名字 */
-function studentsOf(value: unknown): Array<{ key: string; name: string }> {
-  if (Array.isArray(value)) {
-    return value.flatMap((item) => {
-      if (item && typeof item === "object" && Array.isArray((item as { record_ids?: unknown }).record_ids)) {
-        const link = item as { record_ids: string[]; text_arr?: string[]; text?: string };
-        return link.record_ids.map((key, index) => ({ key, name: link.text_arr?.[index] ?? link.text ?? key }));
-      }
-      const text = item && typeof item === "object" ? (item as { text?: string }).text : String(item ?? "");
-      return (text ?? "").split(/[,，、]/).map((name) => name.trim()).filter(Boolean).map((name) => ({ key: name, name }));
-    });
-  }
-  if (typeof value === "string") return value.split(/[,，、]/).map((name) => name.trim()).filter(Boolean).map((name) => ({ key: name, name }));
-  return [];
-}
-
 const cancel = readEnv("cancel.env");
 const server = readEnv("server.env");
 const client = new FeishuClient({ appId: cancel.FEISHU_APP_ID, appSecret: cancel.FEISHU_APP_SECRET });
 const db = createServiceDb({ envId: server.CLOUDBASE_ENV_ID, apiKey: server.CLOUDBASE_API_KEY });
 
-const records = await client.listAllRecords({
+// 学生直接取学员信息表：记录 ID 就是课表「学生」关联里的 ID
+const studentRecords = await client.searchRecords({
   appToken: cancel.CANCEL_SCHEDULE_APP_TOKEN,
-  tableId: cancel.CANCEL_SCHEDULE_TABLE_ID,
-  fieldNames: ["学生"],
+  tableId: cancel.CANCEL_STUDENT_TABLE_ID,
+  fieldNames: ["学生姓名", "在读"],
+  filter: { conjunction: "and", conditions: [] },
 });
+const plain = (value: unknown): string =>
+  Array.isArray(value) ? value.map(plain).join("") : value && typeof value === "object" ? String((value as { text?: string }).text ?? "") : String(value ?? "");
 const students = new Map<string, string>();
-for (const record of records) for (const student of studentsOf(record.fields["学生"])) students.set(student.key, student.name);
+for (const record of studentRecords) {
+  const name = plain(record.fields["学生姓名"]).trim();
+  // 默认只给在读学生生成；指定 --students 时不看在读状态
+  if (name && (plain(record.fields["在读"]) !== "毕业" || argList("--students").length)) students.set(record.record_id, name);
+}
 
 const only = argList("--students");
 const revoke = new Set(argList("--revoke"));
