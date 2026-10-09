@@ -12,7 +12,10 @@
     "build:functions": "node scripts/build-functions.mjs",
     "deploy:functions": "npm run build:functions && node scripts/deploy-function.mjs",
     "deploy:web": "npm run build && tcb hosting deploy dist /feedback -e jingshi-test-d5gp401i44a0fa7a7",
-    "deploy:root-redirect": "tcb hosting deploy root-redirect/index.html index.html -e jingshi-test-d5gp401i44a0fa7a7"
+    "deploy:root-redirect": "tcb hosting deploy root-redirect/index.html index.html -e jingshi-test-d5gp401i44a0fa7a7",
+    "deploy:cancel-api": "node scripts/deploy-cancel-api.mjs",
+    "deploy:cancel-page": "tcb hosting deploy cancel-page /cancel -e jingshi-test-d5gp401i44a0fa7a7",
+    "cancel-links": "tsx scripts/cancel-links.ts"
   },
   "dependencies": {
     "@cloudbase/js-sdk": "^3.9.4",
