@@ -41,12 +41,13 @@ export function askCard(input: { teacherName: string; date: Ymd; daysLeft: numbe
   };
 }
 
-export function celebrateCard(input: { teacherName: string; openId: string | null; pageUrl: string; wishCount: number }): FeishuCard {
+/** date 只在补发（生日已过）时传，标题写明日期而不是「今天」 */
+export function celebrateCard(input: { teacherName: string; openId: string | null; pageUrl: string; wishCount: number; lateDate?: Ymd }): FeishuCard {
   const who = input.openId ? `<at id=${input.openId}></at>` : `**${input.teacherName}** 老师`;
   const gift = input.wishCount > 0 ? `同学和同事们写了 **${input.wishCount}** 条祝福，装进了一份小礼物里。` : "我们给你准备了一份小礼物。";
   return {
     config: { wide_screen_mode: true },
-    header: { template: "carmine", title: { tag: "plain_text", content: `🎂 今天是 ${input.teacherName} 老师的生日` } },
+    header: { template: "carmine", title: { tag: "plain_text", content: input.lateDate ? `🎂 ${input.lateDate.m}/${input.lateDate.d} 是 ${input.teacherName} 老师的生日` : `🎂 今天是 ${input.teacherName} 老师的生日` } },
     elements: [
       { tag: "div", text: { tag: "lark_md", content: `${who} 生日快乐！\n${gift}点开它，记得对着蛋糕吹一口气。` } },
       button("打开生日礼物 🎁", input.pageUrl),
