@@ -71,7 +71,7 @@
 | 图片 / 表情包 | 附件，选填 | 图片、GIF、短视频 |
 | 隐藏 | 复选框 | 仅教务使用；勾上后该条不在网站上显示 |
 
-表单设为「获得链接的人可填写」。问卷链接和现有反馈问卷、取消课程问卷一样，用预填参数拼接。
+表单设为「获得链接的人可填写」。匿名可填的链接是 `/share/base/form/shrcn…`；接口返回的 `/share/base/shrcn…` 会要求登录。问卷链接和现有反馈问卷、取消课程问卷一样，用预填参数拼接。
 
 ## 系统组成
 
@@ -98,7 +98,7 @@
 
 生日当天的任务里生成一次：输入老师的姓名、学科、教学特点、个人介绍、这一年的数据，以及最多 20 条祝福原文；输出 80–150 字的中文寄语。要求：不提年龄，不编造成绩，语气温暖而不过分煽情，每位老师的寄语都不一样。生成结果写回「AI 寄语」字段。调用失败时使用内置模板寄语，09:00 的群消息照常发出。
 
-接口：任意 OpenAI 兼容的 `chat/completions`，用 `AI_BASE_URL` / `AI_API_KEY` / `AI_MODEL` 三个环境变量配置。默认使用 CloudBase 自带的大模型网关（`https://<envId>.api.tcloudbasegateway.com/v1/ai/deepseek`，鉴权方式和其他函数用的 API Key 相同）。2026-10-09 实测：网关可以连通，但本环境返回 `EXCEED_TOKEN_QUOTA_LIMIT`，需要在 CloudBase 控制台购买大模型 token 资源包；也可以改填 DeepSeek 官方接口的密钥。在额度到位之前，系统使用模板寄语。
+接口：任意 OpenAI 兼容的 `chat/completions`，用 `AI_BASE_URL` / `AI_API_KEY` / `AI_MODEL` 三个环境变量配置。实际使用 DeepSeek 官方接口（`https://api.deepseek.com`，`deepseek-chat`）。CloudBase 自带的大模型网关在 2026-10-09 实测可以连通，但返回 `EXCEED_TOKEN_QUOTA_LIMIT`：套餐资源点不能抵扣大模型，Token 点产品已经下线。
 
 ## 测试模式与演练
 
