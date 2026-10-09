@@ -55,3 +55,13 @@ test("tenure: 第 N 天与蜡烛数（至少 1 根，最多 12 根）", () => {
   assert.deepEqual(tenure(ymdToMs({ y: 2000, m: 1, d: 1 }), at(2026, 10, 12))?.candles, 12);
   assert.equal(tenure(ymdToMs({ y: 2027, m: 1, d: 1 }), at(2026, 10, 12)), null);
 });
+
+test("dueActions: 生日卡片没发成功，生日后 2 天内补发（年份记生日那年），第 3 天起放弃", () => {
+  const t = teacher({ askedYear: 2026 });
+  assert.deepEqual(dueActions([t], at(2026, 10, 13)).map((a) => [a.kind, a.daysLeft, a.date.d]), [["celebrate", -1, 12]]);
+  assert.deepEqual(dueActions([t], at(2026, 10, 14)).map((a) => [a.kind, a.daysLeft]), [["celebrate", -2]]);
+  assert.deepEqual(dueActions([t], at(2026, 10, 15)), []);
+  assert.deepEqual(dueActions([teacher({ askedYear: 2026, celebratedYear: 2026 })], at(2026, 10, 13)), []);
+  const dec = teacher({ birthMs: ymdToMs({ y: 1990, m: 12, d: 31 }), askedYear: 2026 });
+  assert.deepEqual(dueActions([dec], at(2027, 1, 1)).map((a) => [a.kind, a.date.y]), [["celebrate", 2026]]);
+});

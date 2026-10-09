@@ -7,7 +7,7 @@
   "functions": [
     {
       "name": "birthday-api",
-      "timeout": 120,
+      "timeout": 300,
       "memorySize": 256,
       "runtime": "Nodejs20.19",
       "handler": "index.main",

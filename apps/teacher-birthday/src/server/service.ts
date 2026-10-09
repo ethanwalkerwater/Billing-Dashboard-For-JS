@@ -3,7 +3,7 @@ import { blessingMessages, chooseBlessing } from "../domain/blessing";
 import { askCard, celebrateCard, wishFormUrl } from "../domain/cards";
 import type { FeishuCard } from "../domain/cards";
 import { dueActions, nextBirthday, shanghaiYmd, tenure } from "../domain/dates";
-import type { DueAction, TeacherRow, Ymd } from "../domain/dates";
+import type { DueAction, LessonStats, TeacherRow, Ymd } from "../domain/dates";
 import type { PageData } from "../domain/page-data";
 import { TEACHER_FIELDS as T, parseTeacher, parseWish } from "../domain/records";
 import type { Wish } from "../domain/records";
@@ -60,11 +60,17 @@ async function sendAsk(deps: BirthdayDeps, teacher: TeacherRow, date: Ymd, daysL
 }
 
 /** 统计 + 寄语写回老师表（AI 失败只记日志，用模板兜底），然后发群卡片。 */
-async function sendCelebrate(deps: BirthdayDeps, teacher: TeacherRow, year: number): Promise<string> {
+async function sendCelebrate(deps: BirthdayDeps, teacher: TeacherRow, year: number, lateDate?: Ymd): Promise<string> {
   const todayMs = deps.now();
   const wishes = await wishesOf(deps, teacher.name, year);
-  const stats = scheduleStats(await deps.feishu.listLessons(teacher.scheduleName, todayMs), todayMs);
-  const fields: Record<string, unknown> = { [T.lessons]: stats.lessons, [T.students]: stats.students, [T.hours]: stats.hours };
+  // 统计只是锦上添花：课表名对不上、权限变了都不该挡住群卡片，失败就不写，网页隐藏那一行
+  let stats: LessonStats | null = null;
+  try {
+    stats = scheduleStats(await deps.feishu.listLessons(teacher.scheduleName, todayMs), todayMs);
+  } catch (error) {
+    console.error(`课表统计失败，跳过：${teacher.name}`, error);
+  }
+  const fields: Record<string, unknown> = stats ? { [T.lessons]: stats.lessons, [T.students]: stats.students, [T.hours]: stats.hours } : {};
   if (!teacher.handwritten) {
     try {
       const text = (
@@ -80,9 +86,9 @@ async function sendCelebrate(deps: BirthdayDeps, teacher: TeacherRow, year: numb
       console.error(`AI 寄语失败，使用模板：${teacher.name}`, error);
     }
   }
-  await deps.feishu.updateTeacher(teacher.recordId, fields);
+  if (Object.keys(fields).length > 0) await deps.feishu.updateTeacher(teacher.recordId, fields);
   const url = pageUrl(deps, teacher.recordId, year);
-  await deps.feishu.send(`chat_id:${deps.config.groupChatId}`, celebrateCard({ teacherName: teacher.name, openId: teacher.openId, pageUrl: url, wishCount: wishes.length }));
+  await deps.feishu.send(`chat_id:${deps.config.groupChatId}`, celebrateCard({ teacherName: teacher.name, openId: teacher.openId, pageUrl: url, wishCount: wishes.length, lateDate }));
   return url;
 }
 
@@ -99,7 +105,7 @@ export async function runDaily(deps: BirthdayDeps, todayMs = deps.now()) {
         await sendAsk(deps, action.teacher, action.date, action.daysLeft);
         await deps.feishu.updateTeacher(action.teacher.recordId, { [T.asked]: action.date.y });
       } else {
-        await sendCelebrate(deps, action.teacher, action.date.y);
+        await sendCelebrate(deps, action.teacher, action.date.y, action.daysLeft < 0 ? action.date : undefined);
         await deps.feishu.updateTeacher(action.teacher.recordId, { [T.celebrated]: action.date.y });
       }
       results.push({ teacher: action.teacher.name, kind: action.kind, ok: true });

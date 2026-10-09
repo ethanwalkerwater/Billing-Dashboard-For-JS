@@ -6,7 +6,7 @@ export function createGenerate(env: { baseUrl?: string; apiKey?: string; model?:
       method: "POST",
       headers: { authorization: `Bearer ${env.apiKey}`, "content-type": "application/json" },
       body: JSON.stringify({ model: env.model, messages, temperature: 0.9, max_tokens: 400 }),
-      signal: AbortSignal.timeout(45_000),
+      signal: AbortSignal.timeout(20_000),
     });
     const body = (await response.json()) as { choices?: Array<{ message?: { content?: string } }>; code?: string; message?: string };
     const text = body.choices?.[0]?.message?.content?.trim();

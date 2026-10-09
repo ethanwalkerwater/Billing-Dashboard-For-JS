@@ -2,6 +2,8 @@
 const DAY = 86_400_000;
 const SHANGHAI = 8 * 3600_000;
 export const ASK_DAYS_BEFORE = 3;
+/** 生日当天群卡片没发成功（飞书报错、函数超时）时，之后几天内补发 */
+export const CELEBRATE_CATCH_UP_DAYS = 2;
 
 export type Ymd = { y: number; m: number; d: number };
 export interface LessonStats { lessons: number; students: number; hours: number }
@@ -50,15 +52,26 @@ export function nextBirthday(today: Ymd, birth: Ymd): { date: Ymd; daysLeft: num
   return { date, daysLeft: dayIndex(date) - dayIndex(today) };
 }
 
-/** 今天该做的事。已发年份 = 生日所在年份，所以重跑、跨年都不会重复。 */
+/** 今天或之前最近的一次生日，以及过去了几天 */
+function lastBirthday(today: Ymd, birth: Ymd): { date: Ymd; daysSince: number } {
+  let date = birthdayIn(today.y, birth);
+  if (dayIndex(date) > dayIndex(today)) date = birthdayIn(today.y - 1, birth);
+  return { date, daysSince: dayIndex(today) - dayIndex(date) };
+}
+
+/** 今天该做的事。已发年份 = 生日所在年份，所以重跑、跨年都不会重复；群卡片失败的话之后 2 天内补发。 */
 export function dueActions(teachers: TeacherRow[], todayMs: number): DueAction[] {
   const today = shanghaiYmd(todayMs);
   const actions: DueAction[] = [];
   for (const teacher of teachers) {
     if (!teacher.active || teacher.birthMs === null) continue;
-    const { date, daysLeft } = nextBirthday(today, shanghaiYmd(teacher.birthMs));
+    const birth = shanghaiYmd(teacher.birthMs);
+    const { date, daysLeft } = nextBirthday(today, birth);
     if (daysLeft <= ASK_DAYS_BEFORE && teacher.askedYear !== date.y) actions.push({ teacher, kind: "ask", date, daysLeft });
-    if (daysLeft === 0 && teacher.celebratedYear !== date.y) actions.push({ teacher, kind: "celebrate", date, daysLeft });
+    const last = lastBirthday(today, birth);
+    if (last.daysSince <= CELEBRATE_CATCH_UP_DAYS && teacher.celebratedYear !== last.date.y) {
+      actions.push({ teacher, kind: "celebrate", date: last.date, daysLeft: -last.daysSince });
+    }
   }
   return actions;
 }
