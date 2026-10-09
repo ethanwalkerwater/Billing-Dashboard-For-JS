@@ -1,0 +1,37 @@
+# 学生自助取消课程
+
+和月度反馈共用这个 CloudBase 环境和飞书适配代码，但业务独立：独立云函数 `cancel-api`、独立飞书应用（机器人「课表分析」）、独立页面 `/cancel/`。
+
+## 流程
+
+1. 教务用 `npm run cancel-links` 给学生生成专属链接 `https://app.jsjy.asia/cancel/?t=<token>`（存 `cancel_links`，可停用重发）。
+2. 学生打开选课页，只看到自己**正在上和接下来 14 天**的课，点课时实时提示收费档位。多人共用一条课表记录的课不能自助取消。
+3. 确认后 `POST /cancel-api/intent` 生成**一次性取消编号**（30 分钟有效，存 `cancel_intents`），跳转飞书问卷，编号预填并隐藏。
+4. 学生在问卷里选原因（个人原因 / 病假，可传证明）提交。飞书「多维表格记录变更」事件推到 `POST /cancel-api/webhooks/feishu`。
+5. 云函数回读申请记录和课表，核验编号未用、未过期、课属于该学生、未下课、未取消，按**提交时间**定档写课表「临时取消」，在申请表「处理结果」留痕，机器人私聊老师（「老师-日历」人员字段）并发教务群。任何一步不通过都不写课表，只在教务群报异常。
+
+| 提交时距上课 | 写入「临时取消」 |
+|---|---|
+| 已开课、未下课 | 0h-70% |
+| 2 小时以内 | 2h-50% |
+| 2–6 小时 | 6h-30% |
+| 6 小时以上 | 提前取消-0% |
+| 病假 | 学生病假-0%（默认不收费，进入问题检查） |
+
+规则代码：`src/cancellation/rules.ts`；流程：`src/cancellation/service.ts`；飞书字段名：`src/server/cancellation/feishu.ts`。
+
+## 部署
+
+```bash
+cp cancel.env.example cancel.env   # 填飞书应用密钥、课表/申请表、表单链接、教务群
+tcb db execute --sql "$(cat migrations/202610090002_lesson_cancellation.sql)"
+npm run deploy:cancel-api          # 打包 + 部署 cancel-api（CLOUDBASE_* 复用 server.env）
+npm run deploy:cancel-page         # 选课页 → 静态托管 /cancel/
+```
+
+HTTP 访问服务路由：`app.jsjy.asia/cancel-api → 云函数 cancel-api`（`tcb routes add` 已加）。
+运维补处理某条申请：`tcb fn invoke cancel-api --params '{"action":"process","recordId":"rec..."}'`。
+
+## 切换到主课表
+
+只改 `cancel.env` 的 `CANCEL_SCHEDULE_*` / `CANCEL_REQUEST_*` / `CANCEL_FORM_URL` 后重新部署；主课表需同样有「提前取消-0%」选项和带请假前缀的「老师课程ID」公式。

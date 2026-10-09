@@ -2,6 +2,8 @@ export const CANCELLATION_RATES = {
   "0h-70%": 0.7,
   "2h-50%": 0.5,
   "6h-30%": 0.3,
+  // 学生提前 6 小时以上自助取消：保留课表记录但不收费，也不进入问题检查
+  "提前取消-0%": 0,
 };
 
 export const NORMAL_STATUS = "正常上课";

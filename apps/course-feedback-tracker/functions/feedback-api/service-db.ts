@@ -108,7 +108,8 @@ export function createServiceDb(options: ServiceDbOptions): PostgrestLike {
           send("POST", path, upsertOptions?.onConflict ? `on_conflict=${encodeURIComponent(upsertOptions.onConflict)}` : "", rows, {
             prefer: "resolution=merge-duplicates,return=minimal",
           }),
-        update: (values) => new Query((search) => send("PATCH", path, search, values)) as never,
+        // 返回被改动的行，调用方可据此判断条件更新（如 status=pending）是否命中
+        update: (values) => new Query((search) => send("PATCH", path, search, values, { prefer: "return=representation" })) as never,
         delete: () => new Query((search) => send("DELETE", path, search)) as never,
       };
     },
