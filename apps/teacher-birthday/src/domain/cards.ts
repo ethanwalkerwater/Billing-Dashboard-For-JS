@@ -49,7 +49,7 @@ export function celebrateCard(input: { teacherName: string; openId: string | nul
     config: { wide_screen_mode: true },
     header: { template: "carmine", title: { tag: "plain_text", content: input.lateDate ? `🎂 ${input.lateDate.m}/${input.lateDate.d} 是 ${input.teacherName} 老师的生日` : `🎂 今天是 ${input.teacherName} 老师的生日` } },
     elements: [
-      { tag: "div", text: { tag: "lark_md", content: `${who} 生日快乐！\n${gift}点开它，记得对着蛋糕吹一口气。` } },
+      { tag: "div", text: { tag: "lark_md", content: `${who} 生日快乐！\n${gift}点开看看大家写了什么。` } },
       button("打开生日礼物 🎁", input.pageUrl),
     ],
   };

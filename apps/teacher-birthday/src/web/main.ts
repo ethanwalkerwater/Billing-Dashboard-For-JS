@@ -1,6 +1,8 @@
-/** 生日网页：取数 → 信封 → 吹蜡烛 → 星座 → 卡片墙 → 寄语。所有文字都用 textContent 写入。 */
+/**
+ * 生日网页：取数 → 信封 → 派对场景（镜头俯冲 + 彩纸礼炮）→ 卡片墙 → 寄语（再一次礼炮）。
+ * 3D 场景铺满整页背景，镜头随滚动连续移动，各段内容浮在场景上，不做硬切换。所有文字都用 textContent 写入。
+ */
 import type { PageData } from "../domain/page-data";
-import { listenForBlow } from "./blow";
 import { renderCards } from "./cards";
 import { demoData } from "./demo";
 import type { SceneHandle } from "./scene";
@@ -12,6 +14,7 @@ scenePromise.catch(() => {}); // 失败时在 startStage 里降级，这里只�
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const REDUCED = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 async function load(): Promise<PageData> {
   const params = new URLSearchParams(location.search);
@@ -34,11 +37,25 @@ function fillText(data: PageData) {
   const title = `${data.name}老师，生日快乐`;
   document.title = title;
   $("letter-to").textContent = `致 ${data.name} 老师`;
-  $("stage-title").textContent = title;
+  // 标题两行，逐字弹出
+  let index = 0;
+  $("hero-title").replaceChildren(
+    ...[`${data.name}老师`, "生日快乐"].map((line) => {
+      const row = document.createElement("span");
+      row.className = "line";
+      for (const ch of line) {
+        const span = document.createElement("span");
+        span.className = "ch";
+        span.textContent = ch;
+        span.style.setProperty("--i", String(index++));
+        row.append(span);
+      }
+      return row;
+    }),
+  );
   const n = data.wishes.length;
-  $("sky-line").textContent = n > 0 ? `${n} 颗星星，是 ${n} 份想对你说的话` : "祝福还在路上，星星先替大家亮着";
-  $("sky-sub").textContent = n > 0 ? "点一颗星星，看看是谁写的" : "";
-  $("to-wall").textContent = n > 0 ? "读祝福" : "往下看";
+  $("hero-sub").textContent = n > 0 ? `${n} 位同学和同事给你写了祝福` : "大家的祝福正在路上";
+  $("to-wall").textContent = n > 0 ? "看看大家说了什么" : "往下看";
 
   if (data.photoUrl) {
     $<HTMLImageElement>("portrait-img").src = data.photoUrl;
@@ -65,13 +82,14 @@ function fillText(data: PageData) {
 }
 
 /** 元素进入视口时加 .seen 触发入场动画。卡片逐张观察：整面墙很高时按整段算比例永远到不了阈值。 */
-function reveal(targets: Element[]) {
+function reveal(targets: Element[], onSeen?: () => void) {
   const observer = new IntersectionObserver(
     (entries) => {
       for (const entry of entries) {
         if (entry.isIntersecting) {
           entry.target.classList.add("seen");
           observer.unobserve(entry.target);
+          onSeen?.();
         }
       }
     },
@@ -80,54 +98,46 @@ function reveal(targets: Element[]) {
   for (const target of targets) observer.observe(target);
 }
 
-async function startStage(data: PageData) {
-  const stage = $("stage");
-  stage.hidden = false;
+/** 数据一到就把场景建在信封后面（镜头停在高处），拆信时着色器已经编译好，过渡不卡。 */
+async function prepareScene(data: PageData): Promise<SceneHandle | null> {
   const candles = data.tenure?.candles ?? 1;
-  const cards = renderCards($("cards"), data.wishes);
-  cards.forEach((card, i) => card.style.setProperty("--k", String(i % 6)));
-
-  // WebGL 不可用时降级成 CSS 蛋糕，后面流程不变
-  let scene: SceneHandle | null = null;
   try {
     const { createScene } = await scenePromise;
-    scene = createScene($<HTMLCanvasElement>("scene"), {
-      candles,
-      stars: data.wishes.length,
-      name: data.name,
-      onStar: (index) => {
-        const card = cards[index];
-        if (!card) return;
-        $("wall").scrollIntoView({ behavior: "smooth" });
-        card.scrollIntoView({ behavior: "smooth", block: "center" });
-        setTimeout(() => card.classList.add("flipped"), 600);
-      },
-    });
+    const scene = createScene($<HTMLCanvasElement>("scene"), { candles, name: data.name });
+    window.addEventListener("pagehide", () => scene.dispose(), { once: true });
+    return scene;
   } catch (error) {
     console.warn("WebGL 不可用，改用静态蛋糕", error);
     document.body.classList.add("no-webgl");
     $("css-candles").replaceChildren(...Array.from({ length: candles }, () => document.createElement("i")));
+    return null;
   }
-  window.addEventListener("pagehide", () => scene?.dispose(), { once: true });
+}
 
-  requestAnimationFrame(() => stage.classList.add("ready"));
-  listenForBlow(stage, async () => {
-    stage.classList.add("blown");
-    if (scene) await scene.extinguish();
-    else await wait(1200);
-    $("sky-caption").hidden = false;
-    requestAnimationFrame(() => stage.classList.add("sky"));
-    document.body.classList.remove("locked");
-    if (data.wishes.length > 0) {
-      $("wall").hidden = false;
-      reveal(cards);
-    }
-    $("finale").hidden = false;
-    reveal([$("finale")]);
-  });
+function openParty(data: PageData, scene: SceneHandle | null) {
+  scene?.intro();
+  document.body.classList.add("party");
+  const hero = $("hero");
+  hero.hidden = false;
+  // 镜头俯冲快落定时，标题逐字弹出
+  setTimeout(() => hero.classList.add("play"), REDUCED ? 0 : 900);
+  document.body.classList.remove("locked");
+
+  const cards = renderCards($("cards"), data.wishes);
+  cards.forEach((card, i) => card.style.setProperty("--k", String(i % 3)));
+  if (cards.length > 0) {
+    $("wall").hidden = false;
+    reveal(cards);
+  }
+  $("finale").hidden = false;
+  // 读到寄语时再放一次礼炮
+  reveal([$("finale")], () => scene?.burst());
 }
 
 async function main() {
+  // 每次打开都从信封开始，不恢复上次的滚动位置
+  history.scrollRestoration = "manual";
+  window.scrollTo(0, 0);
   $("retry").addEventListener("click", () => location.reload());
   $("to-wall").addEventListener("click", () => ($("wall").hidden ? $("finale") : $("wall")).scrollIntoView({ behavior: "smooth" }));
   let data: PageData;
@@ -138,6 +148,7 @@ async function main() {
     return;
   }
   fillText(data);
+  const scene = await prepareScene(data);
   $("loading").hidden = true;
   const letter = $("letter");
   letter.hidden = false;
@@ -147,8 +158,8 @@ async function main() {
     async () => {
       $("envelope").classList.add("opening");
       $("tap-hint").hidden = true;
-      await startStage(data);
-      await wait(window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 1100);
+      openParty(data, scene);
+      await wait(REDUCED ? 0 : 1300);
       $("envelope").hidden = true;
     },
     { once: true },
