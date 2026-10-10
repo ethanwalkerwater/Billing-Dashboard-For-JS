@@ -6,6 +6,8 @@ export interface PageData {
   subject: string;
   photoUrl: string | null;
   year: number;
+  /** 信末落款日期（今年生日那天，如「10 月 12 日」）；没填生日为 null。不含出生年份 */
+  dateLabel: string | null;
   tenure: { days: number; candles: number } | null;
   stats: LessonStats | null;
   blessing: string;

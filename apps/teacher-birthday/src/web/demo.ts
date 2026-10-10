@@ -13,6 +13,7 @@ export function demoData(count: number): PageData {
     subject: "物理",
     photoUrl: "https://picsum.photos/seed/jsjy-teacher-portrait/480/640",
     year: new Date().getFullYear(),
+    dateLabel: "10 月 12 日",
     tenure: { days: 732, candles: 2 },
     stats: { lessons: 318, students: 27, hours: 596.5 },
     blessing: "汤朔老师，生日快乐。谢谢你把耐心和热爱放进每一节课里，让很多个普通的下午变得闪闪发光。愿新的一岁，你也被温柔地照顾，被认真地爱着。",

@@ -77,6 +77,7 @@ test("pageData: 校验 token，过滤隐藏祝福，只返回展示字段", asyn
   assert.deepEqual(data.wishes.map((w) => w.name), ["小王"]);
   assert.deepEqual(data.wishes[0].media, [{ url: "https://tmp/boxW", kind: "image" }]);
   assert.equal(JSON.stringify(data).includes("1995"), false);
+  assert.equal(data.dateLabel, "10 月 12 日");
 });
 
 test("runDaily: 课表统计失败不挡群卡片，只是不写统计字段", async () => {

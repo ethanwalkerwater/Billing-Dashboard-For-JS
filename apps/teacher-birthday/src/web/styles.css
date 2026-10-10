@@ -344,46 +344,90 @@ body.no-webgl .css-cake {
   padding: 22px 20px 18px;
   transform: rotateY(180deg);
 }
-.back p { margin: 0; font-family: var(--letter); font-size: 16px; line-height: 1.85; white-space: pre-wrap; overflow-wrap: anywhere; }
+.back p { margin: 0; font-family: "LXGW WenKai", var(--letter); font-size: 17px; line-height: 1.85; white-space: pre-wrap; overflow-wrap: anywhere; }
 .back .sign { font-family: var(--sans); font-size: 13px; color: var(--ink-muted); text-align: right; }
 .back .sign::before { content: ""; display: inline-block; width: 18px; height: 1px; margin-right: 8px; vertical-align: middle; background: currentColor; }
 .flipped .front { transform: rotateY(-180deg); }
 .flipped .back { transform: rotateY(0deg); }
+@media (hover: hover) and (pointer: fine) {
+  .polaroid:hover .front { transform: rotateY(-180deg); }
+  .polaroid:hover .back { transform: rotateY(0deg); }
+}
+.polaroid:focus-visible .front { transform: rotateY(-180deg); }
+.polaroid:focus-visible .back { transform: rotateY(0deg); }
 
-/* ---------- 结尾 ---------- */
+/* ---------- 结尾：一封手写的信 ---------- */
 #finale {
-  max-width: 560px;
+  max-width: 660px;
   margin: 0 auto;
-  padding: 96px 16px calc(env(safe-area-inset-bottom) + 38svh);
+  padding: 110px 16px calc(env(safe-area-inset-bottom) + 34svh);
+}
+.paper {
+  --ink-color: #2b3049;
+  --rule: rgb(186 72 72 / 0.26);
+  --lh: 2.3em;
+  position: relative;
+  padding: clamp(26px, 6vw, 52px) clamp(20px, 6vw, 52px) clamp(28px, 6vw, 44px);
+  border-radius: 4px;
+  color: var(--ink-color);
+  font-family: "LXGW WenKai", var(--letter);
+  font-size: clamp(17px, 4.4vw, 20px);
+  background:
+    radial-gradient(120% 80% at 0% 0%, rgb(255 255 255 / 0.55), transparent 60%),
+    radial-gradient(90% 70% at 100% 100%, rgb(214 196 170 / 0.35), transparent 70%),
+    #f6f1e7;
+  box-shadow: 0 2px 0 rgb(0 0 0 / 0.04), 0 30px 70px rgb(6 4 22 / 0.55);
+  opacity: 0;
+  transform: translateY(60px) rotate(-3deg);
+  transition: opacity 1s var(--ease), transform 1.2s var(--ease);
+}
+#finale.seen .paper { opacity: 1; transform: rotate(-0.8deg); }
+.letterhead {
+  margin: 0 0 calc(var(--lh) * 0.5);
+  padding-bottom: 10px;
+  border-bottom: 3px double rgb(186 72 72 / 0.5);
   text-align: center;
+  font-size: 13px;
+  letter-spacing: 0.6em;
+  color: #b14a48;
 }
+/* 信纸的横格：行高和格线对齐，字落在线上 */
+.lines {
+  line-height: var(--lh);
+  background-image: repeating-linear-gradient(to bottom, transparent 0, transparent calc(var(--lh) - 1px), var(--rule) calc(var(--lh) - 1px), var(--rule) var(--lh));
+}
+.lines::after { content: ""; display: block; clear: both; }
+.ink-line { margin: 0; overflow-wrap: anywhere; }
+.ink-line.para, .ink-line.wish { text-indent: 2em; }
+.signoff { margin-top: var(--lh); text-align: right; }
+.signoff .ink-line { padding-right: 0.5em; }
+/* 每个字依次显现，像一笔笔写出来 */
+.ink-line span { opacity: 0; } /* 保持行内元素，中文标点的换行规则才不会乱 */
+#finale.seen .ink-line span { animation: ink 0.45s ease-out forwards; animation-delay: calc(var(--c) * 28ms + 0.9s); }
+@keyframes ink { to { opacity: 1; } }
+/* 照片用胶带贴在信纸右上角，正文绕着照片排 */
 .portrait {
-  width: 168px;
-  margin: 0 auto 44px;
-  padding: 10px 10px 30px;
-  border-radius: 6px;
-  background: var(--paper);
-  box-shadow: var(--shadow);
-  transform: rotate(-3deg);
+  float: right;
+  width: clamp(86px, 22vw, 124px);
+  margin: calc(var(--lh) * -1.2) -6px 10px 16px;
+  padding: 6px 6px 20px;
+  background: #fff;
+  box-shadow: 0 10px 24px rgb(40 30 60 / 0.28);
+  transform: rotate(5deg);
+  position: relative;
 }
-.portrait img { display: block; width: 100%; aspect-ratio: 3 / 4; object-fit: cover; object-position: top; border-radius: 2px; }
-.tenure { margin: 0; font-size: 14px; letter-spacing: 0.12em; color: var(--flame); }
-.stats { margin: 12px 0 0; font-size: 17px; line-height: 1.75; color: var(--on-night); }
-.blessing {
-  margin: 44px 0 0;
-  text-align: left;
-  font-family: var(--letter);
-  font-size: clamp(17px, 4.6vw, 19px);
-  line-height: 2.05;
-  color: #f4f0ea;
+.portrait::before {
+  content: "";
+  position: absolute;
+  top: -11px;
+  left: calc(50% - 32px);
+  width: 64px;
+  height: 22px;
+  background: rgb(255 248 230 / 0.7);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.12);
+  transform: rotate(-5deg);
 }
-.blessing span { opacity: 0; transition: opacity 1.2s var(--ease) calc(var(--i) * 0.55s + 0.3s); }
-.signature { margin: 36px 0 0; text-align: right; font-size: 14px; color: var(--on-night-muted); letter-spacing: 0.08em; }
-#finale > :not(.blessing) { opacity: 0; transform: translateY(16px); transition: opacity 1s var(--ease), transform 1s var(--ease); }
-#finale.seen > :not(.blessing) { opacity: 1; transform: none; }
-#finale.seen .portrait { transform: rotate(-3deg); }
-#finale.seen .blessing span { opacity: 1; }
-#finale .signature { transition-delay: 2.4s; }
+.portrait img { display: block; width: 100%; aspect-ratio: 3 / 4; object-fit: cover; object-position: top; }
 
 @keyframes breathe { 50% { opacity: 0.45; } }
 @keyframes pop { to { opacity: 1; transform: none; } }
@@ -394,4 +438,6 @@ body.no-webgl .css-cake {
   .polaroid, .polaroid.seen { transform: none; }
   .hero-title .ch, .hero-photo { opacity: 1; transform: rotate(-6deg); }
   .hero-title .ch { transform: none; }
+  .ink-line span { opacity: 1; }
+  .paper { opacity: 1; transform: rotate(-0.8deg); }
 }

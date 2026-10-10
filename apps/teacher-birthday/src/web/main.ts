@@ -6,6 +6,7 @@ import type { PageData } from "../domain/page-data";
 import { renderCards } from "./cards";
 import { demoData } from "./demo";
 import type { SceneHandle } from "./scene";
+import "lxgw-wenkai-webfont/lxgwwenkai-regular.css";
 import "./styles.css";
 
 // three.js 块和取数并行下载，拆信时通常已经到了
@@ -63,24 +64,7 @@ function fillText(data: PageData) {
     $<HTMLImageElement>("hero-photo-img").src = data.photoUrl;
     $("hero-photo").hidden = false;
   }
-  if (data.tenure) {
-    $("tenure").textContent = `今天是你在菁仕的第 ${data.tenure.days} 天`;
-    $("tenure").hidden = false;
-  }
-  if (data.stats && data.stats.lessons > 0) {
-    $("stats").textContent = `这一年，你上了 ${data.stats.lessons} 节课，陪 ${data.stats.students} 位同学走过 ${data.stats.hours} 个小时。`;
-    $("stats").hidden = false;
-  }
-  const blessing = $("blessing");
-  blessing.replaceChildren(
-    ...(data.blessing.match(/[^。！？!?]+[。！？!?]*/g) ?? [data.blessing]).map((sentence, i) => {
-      const span = document.createElement("span");
-      span.textContent = sentence;
-      span.style.setProperty("--i", String(i));
-      return span;
-    }),
-  );
-  $("signature").textContent = `菁仕教育全体 · ${data.year}`;
+  writeLetter(data);
 }
 
 /** 元素进入视口时加 .seen 触发入场动画。卡片逐张观察：整面墙很高时按整段算比例永远到不了阈值。 */
@@ -114,6 +98,43 @@ async function prepareScene(data: PageData): Promise<SceneHandle | null> {
     $("css-candles").replaceChildren(...Array.from({ length: candles }, () => document.createElement("i")));
     return null;
   }
+}
+
+/**
+ * 结尾的信：称呼 → 这一年的数字 → 寄语 → 祝语，右下落款。每个字一个 span，进入视口后按顺序显现，像一笔笔写出来。
+ * 寄语开头如果又写了「×× 老师，」就去掉，免得和称呼重复。
+ */
+function writeLetter(data: PageData) {
+  const paragraphs: Array<{ text: string; kind: "salutation" | "para" | "wish" | "wish-end" }> = [{ text: `亲爱的${data.name}老师：`, kind: "salutation" }];
+  const numbers: string[] = [];
+  if (data.tenure) numbers.push(`今天是你来到菁仕的第 ${data.tenure.days} 天。`);
+  if (data.stats && data.stats.lessons > 0) numbers.push(`这一年，你上了 ${data.stats.lessons} 节课，陪 ${data.stats.students} 位同学走过 ${data.stats.hours} 个小时。`);
+  if (numbers.length) paragraphs.push({ text: numbers.join(""), kind: "para" });
+  paragraphs.push({ text: data.blessing.replace(/^[^，,。！!]{1,16}老师[，,]\s*/, ""), kind: "para" });
+  paragraphs.push({ text: "祝你", kind: "wish" }, { text: "岁岁平安，天天开心！", kind: "wish-end" });
+
+  let index = 0;
+  const write = (el: HTMLElement, text: string) => {
+    for (const ch of text) {
+      const span = document.createElement("span");
+      span.textContent = ch;
+      span.style.setProperty("--c", String(index++));
+      el.append(span);
+    }
+  };
+  $("ink").replaceChildren(
+    ...paragraphs.map(({ text, kind }) => {
+      const p = document.createElement("p");
+      p.className = `ink-line ${kind}`;
+      write(p, text);
+      return p;
+    }),
+  );
+  $("sign-name").replaceChildren();
+  $("sign-date").replaceChildren();
+  write($("sign-name"), "菁仕教育全体");
+  write($("sign-date"), data.dateLabel ? `${data.year} 年 ${data.dateLabel}` : `${data.year} 年`);
+  document.documentElement.style.setProperty("--ink-total", String(index));
 }
 
 /**
