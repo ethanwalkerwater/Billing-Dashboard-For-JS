@@ -10,6 +10,7 @@
   </head>
   <body class="locked">
     <canvas id="scene" aria-hidden="true"></canvas>
+    <div id="dim" aria-hidden="true"></div>
     <div class="css-cake" aria-hidden="true"><div class="css-candles" id="css-candles"></div><div class="tier top"></div><div class="tier bottom"></div></div>
     <main id="app">
       <section id="envelope" aria-live="polite">
@@ -33,7 +34,10 @@
       </section>
 
       <section id="hero" hidden>
-        <h1 class="hero-title" id="hero-title"></h1>
+        <div class="hero-head">
+          <figure class="hero-photo" id="hero-photo" hidden><img id="hero-photo-img" alt="" /></figure>
+          <h1 class="hero-title" id="hero-title"></h1>
+        </div>
         <div class="hero-foot">
           <p class="hero-sub" id="hero-sub"></p>
           <button type="button" class="pill" id="to-wall"></button>

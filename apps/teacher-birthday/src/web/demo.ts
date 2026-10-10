@@ -11,7 +11,7 @@ export function demoData(count: number): PageData {
   return {
     name: "汤朔",
     subject: "物理",
-    photoUrl: null,
+    photoUrl: "https://picsum.photos/seed/jsjy-teacher-portrait/480/640",
     year: new Date().getFullYear(),
     tenure: { days: 732, candles: 2 },
     stats: { lessons: 318, students: 27, hours: 596.5 },

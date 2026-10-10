@@ -18,7 +18,12 @@ export interface SceneHandle {
   dispose(): void;
 }
 
-const REDUCED = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+/**
+ * 系统开了「减少动态效果」时：去掉镜头俯冲、滚动惯性和礼炮这类大幅运动；
+ * 气球、烛火、彩旗、串灯、彩纸这些氛围动画保留但放慢——它们就是这一页的内容本身。
+ */
+const CALM = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+const AMBIENT = CALM ? 0.55 : 1;
 const PARTY = [0xffc56b, 0xff8fa3, 0xb9a6ff, 0x7fd8c3, 0x8cc8ff, 0xfff1d6];
 
 const smooth = (t: number) => t * t * (3 - 2 * t);
@@ -301,6 +306,7 @@ export function createScene(canvas: HTMLCanvasElement, opts: { candles: number; 
     const flameMat = keep(new THREE.SpriteMaterial({ map: flameTex, color: new THREE.Color(2.4, 1.7, 1.1), blending: THREE.AdditiveBlending, depthWrite: false }));
     const f = new THREE.Sprite(flameMat);
     f.position.set(c.position.x, 3.28, c.position.z);
+    f.userData.x = c.position.x;
     f.scale.set(0.2, 0.32, 1);
     flames.push(f);
     cake.add(f);
@@ -402,13 +408,49 @@ export function createScene(canvas: HTMLCanvasElement, opts: { candles: number; 
   const dummy = new THREE.Object3D();
 
   const burst = () => {
-    if (REDUCED) return;
+    if (CALM) return;
     for (let i = 0; i < CONFETTI * 0.6; i += 1) {
       const side = i % 2 === 0 ? -1 : 1;
       cPos.set([side * 3.4, 0.2, 2.2 + random() * 0.6], i * 3);
       cVel.set([-side * (1.2 + random() * 2.6), 6.5 + random() * 4.5, (random() - 0.5) * 2.4], i * 3);
     }
   };
+
+  // ---------- 蛋糕周围一闪一闪的小星光 ----------
+  const sparkleTex = keep(glow("rgba(255,255,240,1)", "rgba(255,214,140,0.8)"));
+  const sparkles: THREE.Sprite[] = [];
+  for (let i = 0; i < 40; i += 1) {
+    const sprite = new THREE.Sprite(keep(new THREE.SpriteMaterial({ map: sparkleTex, color: new THREE.Color(1.8, 1.6, 1.3), blending: THREE.AdditiveBlending, depthWrite: false, transparent: true })));
+    const angle = random() * Math.PI * 2;
+    const radius = 2 + random() * 2.2;
+    sprite.position.set(Math.cos(angle) * radius, 0.4 + random() * 4.6, Math.sin(angle) * radius * 0.6 - 0.5);
+    sprite.userData = { phase: random() * Math.PI * 2, speed: 1.5 + random() * 2.5, size: 0.08 + random() * 0.12 };
+    sparkles.push(sprite);
+    scene.add(sprite);
+  }
+
+  // ---------- 几只从下往上飘走的气球（循环） ----------
+  const risers = Array.from({ length: 4 }, (_, i) => {
+    const material = keep(new THREE.MeshPhysicalMaterial({ color: PARTY[(i + 2) % PARTY.length], roughness: 0.28, clearcoat: 1, clearcoatRoughness: 0.12 }));
+    const group = new THREE.Group();
+    group.add(new THREE.Mesh(balloonGeo, material));
+    const knot = new THREE.Mesh(knotGeo, material);
+    knot.position.y = -0.64;
+    group.add(knot);
+    group.scale.setScalar(0.55 + random() * 0.25);
+    scene.add(group);
+    return { group, x: (i % 2 === 0 ? -1 : 1) * (1.3 + random() * 1.6), z: -2.5 - random() * 2, speed: 0.35 + random() * 0.25, offset: random() * 12 };
+  });
+
+  // ---------- 蛋糕跟着鼠标（手机上跟着手指）左右转 ----------
+  let pointerX = 0;
+  let pointerSeen = false;
+  const onPointer = (event: PointerEvent) => {
+    pointerX = (event.clientX / window.innerWidth) * 2 - 1;
+    pointerSeen = true;
+  };
+  window.addEventListener("pointermove", onPointer, { passive: true });
+  window.addEventListener("pointerdown", onPointer, { passive: true });
 
   // ---------- 后期：烛火、串灯的光晕 ----------
   const composer = new EffectComposer(renderer);
@@ -443,9 +485,10 @@ export function createScene(canvas: HTMLCanvasElement, opts: { candles: number; 
   window.addEventListener("resize", resize);
 
   const introStart = { pos: new THREE.Vector3(0, 11, 17), look: new THREE.Vector3(0, 3, 0) };
-  let introAt = REDUCED ? -Infinity : Number.POSITIVE_INFINITY;
+  let introAt = CALM ? -Infinity : Number.POSITIVE_INFINITY;
   let burstAt = Number.POSITIVE_INFINITY;
   let progress = 0;
+  let cakeTurn = 0;
   const lookAt = new THREE.Vector3();
   const tmpPos = new THREE.Vector3();
   const tmpLook = new THREE.Vector3();
@@ -457,18 +500,19 @@ export function createScene(canvas: HTMLCanvasElement, opts: { candles: number; 
     const now = performance.now() / 1000;
     const dt = Math.min(0.05, now - last);
     last = now;
+    const t = now * AMBIENT;
 
     // 滚动进度（rAF 里读，不挂 scroll 监听），带一点惯性
     const max = document.documentElement.scrollHeight - window.innerHeight;
     const target = max > 0 ? window.scrollY / max : 0;
-    progress += (target - progress) * Math.min(1, dt * 4);
+    progress += (target - progress) * (CALM ? 1 : Math.min(1, dt * 4));
 
     // 顶部看蛋糕 → 读祝福时上移 → 结尾推近烛光
     const toUp = smooth(clamp01((progress - 0.04) / 0.22));
     const toClose = smooth(clamp01((progress - 0.82) / 0.18));
     tmpPos.lerpVectors(hero.pos, up.pos, toUp).lerp(close.pos, toClose);
     tmpLook.lerpVectors(hero.look, up.look, toUp).lerp(close.look, toClose);
-    if (!REDUCED) tmpPos.x += Math.sin(now * 0.18) * 0.9 * (1 - toClose);
+    tmpPos.x += Math.sin(t * 0.18) * 0.6 * (1 - toClose);
     const intro = now < introAt ? 0 : easeOutCubic(clamp01((now - introAt) / 2.6));
     camera.position.lerpVectors(introStart.pos, tmpPos, intro);
     lookAt.lerpVectors(introStart.look, tmpLook, intro);
@@ -478,37 +522,55 @@ export function createScene(canvas: HTMLCanvasElement, opts: { candles: number; 
       burst();
     }
 
+    // 蛋糕：有鼠标/手指时转向那一侧（最多约 45°），没有时自己慢慢左右摆
+    const turnTarget = pointerSeen ? pointerX * 0.8 : Math.sin(t * 0.35) * 0.45;
+    cakeTurn += (turnTarget - cakeTurn) * Math.min(1, dt * 3);
+    cake.rotation.y = cakeTurn;
+    cake.position.y = Math.sin(t * 1.1) * 0.03;
+
     for (const b of balloons) {
-      const bob = REDUCED ? 0 : Math.sin(now * 0.9 + b.phase) * 0.12;
-      b.group.position.set(b.side * (spread + b.offset), b.y + bob, b.z);
-      if (!REDUCED) b.group.rotation.z = Math.sin(now * 0.7 + b.phase) * 0.06;
+      b.group.position.set(b.side * (spread + b.offset) + Math.sin(t * 0.5 + b.phase) * 0.12, b.y + Math.sin(t * 1.2 + b.phase) * 0.22, b.z);
+      b.group.rotation.z = Math.sin(t * 0.9 + b.phase) * 0.12;
     }
-    if (!REDUCED) {
-      flames.forEach((f, i) => {
-        const k = 1 + Math.sin(now * 13 + i * 1.7) * 0.07 + Math.sin(now * 7.1 + i) * 0.05;
-        f.scale.set(0.2 * k, 0.32 * (2 - k), 1);
-      });
-      candleLight.intensity = 3 + Math.sin(now * 11) * 0.3;
-      for (const flag of flags) flag.rotation.x = Math.sin(now * 1.6 + flag.userData.phase) * 0.22;
-      for (const bulb of bulbs) {
-        (bulb.material as THREE.MeshBasicMaterial).color.setHex(0xffd28a).multiplyScalar(1.6 + 1.6 * (0.5 + 0.5 * Math.sin(now * 2.4 + bulb.userData.phase)));
-      }
+    for (const r of risers) {
+      const y = -1.5 + ((t * r.speed + r.offset) % 13);
+      r.group.position.set(r.x * (spread / 3.2) + Math.sin(t * 0.8 + r.offset) * 0.3, y, r.z);
+      r.group.rotation.z = Math.sin(t * 1.1 + r.offset) * 0.15;
+    }
+    flames.forEach((f, i) => {
+      const k = 1 + Math.sin(t * 15 + i * 1.7) * 0.1 + Math.sin(t * 8.3 + i) * 0.08;
+      f.scale.set(0.2 * k, 0.32 * (2 - k), 1);
+      f.position.x = f.userData.x + Math.sin(t * 6 + i) * 0.008;
+    });
+    candleLight.intensity = 3 + Math.sin(t * 11) * 0.45;
+    for (const flag of flags) {
+      flag.rotation.x = Math.sin(t * 2.2 + flag.userData.phase) * 0.38;
+      flag.rotation.z = Math.sin(t * 1.3 + flag.userData.phase) * 0.08;
+    }
+    // 串灯：一圈亮光沿着灯串跑
+    bulbs.forEach((bulb, i) => {
+      const chase = 0.5 + 0.5 * Math.sin(t * 3 - i * 0.55);
+      (bulb.material as THREE.MeshBasicMaterial).color.setHex(0xffd28a).multiplyScalar(1.2 + 2.6 * chase * chase);
+    });
+    for (const sp of sparkles) {
+      const pulse = Math.max(0, Math.sin(t * sp.userData.speed + sp.userData.phase));
+      sp.scale.setScalar(sp.userData.size * (0.2 + pulse * 1.4));
+      (sp.material as THREE.SpriteMaterial).opacity = pulse;
     }
 
     for (let i = 0; i < CONFETTI; i += 1) {
       const o = i * 3;
-      if (!REDUCED) {
-        cVel[o + 1] = Math.max(cVel[o + 1] - 7.5 * dt, -(0.45 + (i % 5) * 0.08));
-        cVel[o] *= 1 - dt * 0.9;
-        cVel[o + 2] *= 1 - dt * 0.9;
-        cPos[o] += (cVel[o] + Math.sin(now * 1.3 + i) * 0.18) * dt;
-        cPos[o + 1] += cVel[o + 1] * dt;
-        cPos[o + 2] += cVel[o + 2] * dt;
-        cRot[o] += cSpin[o] * dt;
-        cRot[o + 1] += cSpin[o + 1] * dt;
-        cRot[o + 2] += cSpin[o + 2] * dt;
-        if (cPos[o + 1] < -0.5) respawn(i, false);
-      }
+      const step = dt * AMBIENT;
+      cVel[o + 1] = Math.max(cVel[o + 1] - 7.5 * step, -(0.45 + (i % 5) * 0.08));
+      cVel[o] *= 1 - step * 0.9;
+      cVel[o + 2] *= 1 - step * 0.9;
+      cPos[o] += (cVel[o] + Math.sin(t * 1.3 + i) * 0.18) * step;
+      cPos[o + 1] += cVel[o + 1] * step;
+      cPos[o + 2] += cVel[o + 2] * step;
+      cRot[o] += cSpin[o] * step;
+      cRot[o + 1] += cSpin[o + 1] * step;
+      cRot[o + 2] += cSpin[o + 2] * step;
+      if (cPos[o + 1] < -0.5) respawn(i, false);
       dummy.position.set(cPos[o], cPos[o + 1], cPos[o + 2]);
       dummy.rotation.set(cRot[o], cRot[o + 1], cRot[o + 2]);
       dummy.updateMatrix();
@@ -522,7 +584,7 @@ export function createScene(canvas: HTMLCanvasElement, opts: { candles: number; 
 
   return {
     intro() {
-      if (REDUCED) return;
+      if (CALM) return;
       introAt = performance.now() / 1000;
       burstAt = introAt + 1.1;
     },
@@ -530,6 +592,8 @@ export function createScene(canvas: HTMLCanvasElement, opts: { candles: number; 
     dispose() {
       cancelAnimationFrame(raf);
       window.removeEventListener("resize", resize);
+      window.removeEventListener("pointermove", onPointer);
+      window.removeEventListener("pointerdown", onPointer);
       for (const item of disposables) item.dispose();
       composer.dispose();
       renderer.dispose();
