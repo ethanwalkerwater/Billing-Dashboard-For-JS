@@ -1,329 +1,537 @@
 /**
- * 生日 3D 场景：蛋糕和蜡烛 → 吹灭 → 烟化成星星升空，连成以老师名字命名的星座。
- * 星星位置由名字做种子，同一位老师每次打开都一样。WebGLRenderer 创建失败时直接抛出，由调用方降级。
+ * 生日派对 3D 场景：带滴落淋面和裱花的双层蛋糕、气球、彩旗、串灯、持续飘落的彩纸。
+ * 场景铺满整页背景，镜头跟着页面滚动连续移动（不切场景）：顶部看蛋糕 → 往下读祝福时镜头上移到气球彩旗 →
+ * 读到寄语时推近烛光。WebGLRenderer 创建失败时直接抛出，由调用方降级。
  */
 import * as THREE from "three";
+import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
+import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
+import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
+import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
+import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 
 export interface SceneHandle {
-  extinguish(): Promise<void>;
+  /** 拆信后：镜头从高处俯冲到蛋糕前，彩纸礼炮 */
+  intro(): void;
+  /** 再放一次彩纸礼炮 */
+  burst(): void;
   dispose(): void;
 }
 
-interface SceneOptions {
-  candles: number;
-  stars: number;
-  name: string;
-  onStar(index: number): void;
-}
-
 const REDUCED = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-const CAKE_TOP = 1.55;
-const MIN_STARS = 7;
+const PARTY = [0xffc56b, 0xff8fa3, 0xb9a6ff, 0x7fd8c3, 0x8cc8ff, 0xfff1d6];
 
-function seeded(name: string) {
-  let seed = [...name].reduce((sum, ch) => (sum * 31 + ch.codePointAt(0)!) >>> 0, 7);
+const smooth = (t: number) => t * t * (3 - 2 * t);
+const clamp01 = (t: number) => Math.min(1, Math.max(0, t));
+const easeOutCubic = (t: number) => 1 - (1 - t) ** 3;
+
+function seeded(seed: number) {
   return () => {
     seed = (seed * 1664525 + 1013904223) >>> 0;
     return seed / 2 ** 32;
   };
 }
 
-function glowTexture(inner: string, outer: string): THREE.CanvasTexture {
-  const size = 128;
+function canvasTexture(width: number, height: number, draw: (ctx: CanvasRenderingContext2D) => void): THREE.CanvasTexture {
   const canvas = document.createElement("canvas");
-  canvas.width = canvas.height = size;
-  const ctx = canvas.getContext("2d")!;
-  const gradient = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
-  gradient.addColorStop(0, inner);
-  gradient.addColorStop(0.25, outer);
-  gradient.addColorStop(1, "rgba(0,0,0,0)");
-  ctx.fillStyle = gradient;
-  ctx.fillRect(0, 0, size, size);
+  canvas.width = width;
+  canvas.height = height;
+  draw(canvas.getContext("2d")!);
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
   return texture;
 }
 
-const easeInOut = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2);
-const clamp01 = (t: number) => Math.min(1, Math.max(0, t));
+const glow = (inner: string, outer: string) =>
+  canvasTexture(128, 128, (ctx) => {
+    const g = ctx.createRadialGradient(64, 64, 0, 64, 64, 64);
+    g.addColorStop(0, inner);
+    g.addColorStop(0.3, outer);
+    g.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, 128, 128);
+  });
 
-export function createScene(canvas: HTMLCanvasElement, opts: SceneOptions): SceneHandle {
-  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+/** 侧面带圆角的蛋糕层（车削体） */
+function tierGeometry(radius: number, height: number, bevel: number): THREE.LatheGeometry {
+  const points = [new THREE.Vector2(0, 0), new THREE.Vector2(radius - 0.02, 0), new THREE.Vector2(radius, 0.02), new THREE.Vector2(radius, height - bevel)];
+  for (let i = 1; i <= 8; i += 1) {
+    const a = (i / 8) * (Math.PI / 2);
+    points.push(new THREE.Vector2(radius - bevel + Math.cos(a) * bevel, height - bevel + Math.sin(a) * bevel));
+  }
+  points.push(new THREE.Vector2(0, height));
+  return new THREE.LatheGeometry(points, 128);
+}
+
+/** 顶部一圈往下滴的淋面：圆柱侧面按角度给出不同的滴落长度 */
+function dripGeometry(radius: number, random: () => number): THREE.CylinderGeometry {
+  const drips = Array.from({ length: 22 }, () => ({ angle: random() * Math.PI * 2, length: 0.12 + random() * 0.38, width: 0.05 + random() * 0.06 }));
+  const lengthAt = (angle: number) => {
+    let extra = 0;
+    for (const drip of drips) {
+      let d = Math.abs(angle - drip.angle);
+      d = Math.min(d, Math.PI * 2 - d);
+      extra = Math.max(extra, drip.length * Math.exp(-((d / drip.width) ** 2)));
+    }
+    return 0.1 + extra;
+  };
+  const geometry = new THREE.CylinderGeometry(radius, radius, 1, 192, 12, true);
+  const position = geometry.attributes.position;
+  for (let i = 0; i < position.count; i += 1) {
+    const x = position.getX(i);
+    const z = position.getZ(i);
+    const t = 0.5 - position.getY(i); // 0 = 顶边, 1 = 底边
+    const angle = Math.atan2(z, x) + Math.PI;
+    const bulge = 1 + 0.012 * t ** 4;
+    position.setXYZ(i, x * bulge, -t * lengthAt(angle), z * bulge);
+  }
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
+/** 星形裱花嘴挤出的奶油花：球体按角度做出棱纹和旋转 */
+function rosetteGeometry(size: number): THREE.SphereGeometry {
+  const geometry = new THREE.SphereGeometry(size, 32, 20);
+  const position = geometry.attributes.position;
+  const v = new THREE.Vector3();
+  for (let i = 0; i < position.count; i += 1) {
+    v.fromBufferAttribute(position, i).divideScalar(size);
+    const theta = Math.atan2(v.z, v.x) + v.y * 2.2;
+    const ridge = 1 + 0.16 * Math.max(0, Math.cos(theta * 8)) * (1 - Math.abs(v.y) * 0.6);
+    v.multiplyScalar(size * ridge);
+    v.y = v.y * 0.85 + (v.y > 0 ? v.y * v.y * 0.6 : 0);
+    position.setXYZ(i, v.x, v.y, v.z);
+  }
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
+/** 覆盆子：小球表面一颗颗鼓起 */
+function berryGeometry(size: number): THREE.SphereGeometry {
+  const geometry = new THREE.SphereGeometry(size, 28, 20);
+  const position = geometry.attributes.position;
+  const v = new THREE.Vector3();
+  for (let i = 0; i < position.count; i += 1) {
+    v.fromBufferAttribute(position, i).normalize();
+    const bump = Math.abs(Math.sin(v.x * 9) * Math.sin(v.y * 9) * Math.sin(v.z * 9));
+    v.multiplyScalar(size * (1 + bump * 0.14));
+    v.y *= 1.12;
+    position.setXYZ(i, v.x, v.y, v.z);
+  }
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
+function balloonGeometry(): THREE.LatheGeometry {
+  const points: THREE.Vector2[] = [];
+  for (let i = 0; i <= 24; i += 1) {
+    const t = i / 24;
+    const y = -Math.cos(Math.PI * t) * 0.62;
+    const x = Math.sin(Math.PI * t) * 0.46 * (0.62 + 0.38 * Math.sin((Math.PI * t) / 2));
+    points.push(new THREE.Vector2(Math.max(0.001, x), y));
+  }
+  return new THREE.LatheGeometry(points, 48);
+}
+
+export function createScene(canvas: HTMLCanvasElement, opts: { candles: number; name: string }): SceneHandle {
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: "high-performance" });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.75));
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 0.95;
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFShadowMap;
+
+  const disposables: Array<{ dispose(): void }> = [];
+  const keep = <T extends { dispose(): void }>(item: T) => (disposables.push(item), item);
+  const random = seeded([...opts.name].reduce((sum, ch) => (sum * 31 + ch.codePointAt(0)!) >>> 0, 11));
+
   const scene = new THREE.Scene();
-  const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 100);
-  const cakeView = { pos: new THREE.Vector3(0, 2.7, 6.6), look: new THREE.Vector3(0, 1.25, 0) };
-  const skyView = { pos: new THREE.Vector3(0, 3.6, 8.2), look: new THREE.Vector3(0, 9.6, -5) };
-  camera.position.copy(cakeView.pos);
-  camera.lookAt(cakeView.look);
+  scene.background = keep(
+    canvasTexture(4, 256, (ctx) => {
+      const g = ctx.createLinearGradient(0, 0, 0, 256);
+      g.addColorStop(0, "#2d2257");
+      g.addColorStop(0.55, "#1b1640");
+      g.addColorStop(1, "#0d0b1f");
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, 4, 256);
+    }),
+  );
+  const pmrem = keep(new THREE.PMREMGenerator(renderer));
+  const room = new RoomEnvironment();
+  scene.environment = keep(pmrem.fromScene(room, 0.04).texture);
+  scene.environmentIntensity = 0.45;
+  room.dispose();
 
-  // 灯光：冷色夜空 + 一盏随烛火闪烁的暖光
-  const hemi = new THREE.HemisphereLight(0xc4bcf2, 0x3a2f5c, 1.5);
-  scene.add(hemi);
-  const ambient = new THREE.AmbientLight(0xfff1e6, 0.55);
-  scene.add(ambient);
-  const key = new THREE.DirectionalLight(0xc9c2ff, 0.5);
-  key.position.set(-3, 6, 4);
-  scene.add(key);
-  const candleLight = new THREE.PointLight(0xffb15c, 4, 9, 1);
-  candleLight.position.set(0, CAKE_TOP + 0.9, 0.4);
+  const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 120);
+
+  // ---------- 灯光 ----------
+  scene.add(new THREE.HemisphereLight(0xb9b0ff, 0x2a1f4a, 0.6));
+  const key = new THREE.SpotLight(0xffe2c4, 16, 30, Math.PI / 6, 0.7, 1.4);
+  key.position.set(3.5, 9, 6);
+  key.target.position.set(0, 1.6, 0);
+  key.castShadow = true;
+  key.shadow.mapSize.set(1024, 1024);
+  key.shadow.bias = -0.0004;
+  key.shadow.radius = 4;
+  scene.add(key, key.target);
+  const rim = new THREE.DirectionalLight(0xa58bff, 1.4);
+  rim.position.set(-5, 4, -6);
+  scene.add(rim);
+  const candleLight = new THREE.PointLight(0xffb15c, 3, 6, 1.4);
+  candleLight.position.set(0, 3.5, 0.3);
   scene.add(candleLight);
 
-  // 蛋糕
-  const disposables: Array<{ dispose(): void }> = [];
-  const mesh = (geometry: THREE.BufferGeometry, color: number, roughness = 0.65) => {
-    const material = new THREE.MeshStandardMaterial({ color, roughness });
-    disposables.push(geometry, material);
-    return new THREE.Mesh(geometry, material);
+  // ---------- 材质 ----------
+  const mat = {
+    porcelain: keep(new THREE.MeshPhysicalMaterial({ color: 0xf7f4f0, roughness: 0.18, clearcoat: 1, clearcoatRoughness: 0.08 })),
+    gold: keep(new THREE.MeshStandardMaterial({ color: 0xe9c27a, metalness: 1, roughness: 0.22 })),
+    pinkCream: keep(new THREE.MeshPhysicalMaterial({ color: 0xf6c9d0, roughness: 0.62, sheen: 0.7, sheenColor: new THREE.Color(0xffffff), sheenRoughness: 0.5 })),
+    vanilla: keep(new THREE.MeshPhysicalMaterial({ color: 0xf3e8d8, roughness: 0.6, sheen: 0.6, sheenColor: new THREE.Color(0xfff6ea), sheenRoughness: 0.45 })),
+    glaze: keep(new THREE.MeshPhysicalMaterial({ color: 0x9c1f47, roughness: 0.22, clearcoat: 1, clearcoatRoughness: 0.06 })),
+    whipped: keep(new THREE.MeshPhysicalMaterial({ color: 0xf8efe4, roughness: 0.62, sheen: 0.5, sheenColor: new THREE.Color(0xffffff) })),
+    raspberry: keep(new THREE.MeshPhysicalMaterial({ color: 0xc8284f, roughness: 0.38, clearcoat: 0.6, clearcoatRoughness: 0.25 })),
+    blueberry: keep(new THREE.MeshPhysicalMaterial({ color: 0x2c2f66, roughness: 0.45, sheen: 0.8, sheenColor: new THREE.Color(0x8a8fd8) })),
   };
+
+  // ---------- 蛋糕台与蛋糕 ----------
   const cake = new THREE.Group();
-  const plate = mesh(new THREE.CylinderGeometry(2.05, 2.1, 0.08, 64), 0xd9d6e4, 0.35);
-  plate.position.y = 0.04;
-  const bottom = mesh(new THREE.CylinderGeometry(1.6, 1.6, 0.85, 64), 0xe7c6c4);
-  bottom.position.y = 0.08 + 0.425;
-  const top = mesh(new THREE.CylinderGeometry(1.1, 1.1, 0.62, 64), 0xf3e4dc);
-  top.position.y = 0.93 + 0.31;
-  cake.add(plate, bottom, top);
-  const bead = new THREE.SphereGeometry(0.075, 12, 12);
-  const beadMaterial = new THREE.MeshStandardMaterial({ color: 0xfff7f2, roughness: 0.4 });
-  disposables.push(bead, beadMaterial);
-  for (const [radius, y, count] of [[1.6, 0.93, 42], [1.1, CAKE_TOP, 30]] as const) {
+  const stand = new THREE.Mesh(
+    keep(
+      new THREE.LatheGeometry(
+        [
+          [0, 0], [0.62, 0], [0.64, 0.04], [0.5, 0.1], [0.2, 0.22], [0.16, 0.7], [0.24, 0.8], [1.78, 0.84], [1.82, 0.88], [1.78, 0.9], [0, 0.9],
+        ].map(([x, y]) => new THREE.Vector2(x, y)),
+        96,
+      ),
+    ),
+    mat.porcelain,
+  );
+  const rimRing = new THREE.Mesh(keep(new THREE.TorusGeometry(1.8, 0.022, 12, 128)), mat.gold);
+  rimRing.rotation.x = Math.PI / 2;
+  rimRing.position.y = 0.88;
+  cake.add(stand, rimRing);
+
+  const bottomTier = new THREE.Mesh(keep(tierGeometry(1.42, 1.0, 0.07)), mat.pinkCream);
+  bottomTier.position.y = 0.9;
+  const drip = new THREE.Mesh(keep(dripGeometry(1.425, random)), mat.glaze);
+  drip.position.y = 1.9;
+  const glazeCap = new THREE.Mesh(keep(new THREE.CircleGeometry(1.425, 128)), mat.glaze);
+  glazeCap.rotation.x = -Math.PI / 2;
+  glazeCap.position.y = 1.902;
+  const topTier = new THREE.Mesh(keep(tierGeometry(0.98, 0.78, 0.06)), mat.vanilla);
+  topTier.position.y = 1.9;
+  cake.add(bottomTier, drip, glazeCap, topTier);
+
+  // 裱花：下层边缘一圈小花、上层顶边一圈大花
+  const rosette = keep(rosetteGeometry(0.1));
+  for (const [radius, y, count, scale] of [[1.22, 1.93, 26, 0.85], [0.84, 2.7, 18, 1]] as const) {
     for (let i = 0; i < count; i += 1) {
       const angle = (i / count) * Math.PI * 2;
-      const b = new THREE.Mesh(bead, beadMaterial);
-      b.position.set(Math.cos(angle) * radius, y, Math.sin(angle) * radius);
-      cake.add(b);
+      const r = new THREE.Mesh(rosette, mat.whipped);
+      r.position.set(Math.cos(angle) * radius, y, Math.sin(angle) * radius);
+      r.rotation.y = -angle;
+      r.scale.setScalar(scale);
+      cake.add(r);
     }
+  }
+  // 底边一圈金珠
+  const pearl = keep(new THREE.SphereGeometry(0.045, 16, 12));
+  for (let i = 0; i < 64; i += 1) {
+    const angle = (i / 64) * Math.PI * 2;
+    const p = new THREE.Mesh(pearl, mat.gold);
+    p.position.set(Math.cos(angle) * 1.45, 0.94, Math.sin(angle) * 1.45);
+    cake.add(p);
+  }
+  // 顶上的莓果与金珠
+  const berry = keep(berryGeometry(0.085));
+  const blue = keep(new THREE.SphereGeometry(0.06, 20, 14));
+  const goldBead = keep(new THREE.SphereGeometry(0.03, 12, 10));
+  for (let i = 0; i < 14; i += 1) {
+    const angle = random() * Math.PI * 2;
+    const radius = 0.25 + random() * 0.45;
+    const isBerry = i % 2 === 0;
+    const m = new THREE.Mesh(isBerry ? berry : blue, isBerry ? mat.raspberry : mat.blueberry);
+    m.position.set(Math.cos(angle) * radius, 2.68 + (isBerry ? 0.08 : 0.055), Math.sin(angle) * radius);
+    m.rotation.set(random(), random(), random());
+    cake.add(m);
+  }
+  for (let i = 0; i < 26; i += 1) {
+    const angle = random() * Math.PI * 2;
+    const radius = 0.2 + random() * 0.6;
+    const b = new THREE.Mesh(goldBead, mat.gold);
+    b.position.set(Math.cos(angle) * radius, 2.69, Math.sin(angle) * radius);
+    cake.add(b);
+  }
+  cake.traverse((o) => {
+    if (o instanceof THREE.Mesh) {
+      o.castShadow = true;
+      o.receiveShadow = true;
+    }
+  });
+
+  // 螺旋条纹蜡烛 + 烛火（一直亮着）
+  const stripe = keep(
+    canvasTexture(64, 256, (ctx) => {
+      ctx.fillStyle = "#fff8f0";
+      ctx.fillRect(0, 0, 64, 256);
+      ctx.fillStyle = "#f08aa0";
+      for (let y = -64; y < 256; y += 40) {
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(64, y + 32);
+        ctx.lineTo(64, y + 46);
+        ctx.lineTo(0, y + 14);
+        ctx.fill();
+      }
+    }),
+  );
+  stripe.wrapS = stripe.wrapT = THREE.RepeatWrapping;
+  const candleMat = keep(new THREE.MeshStandardMaterial({ map: stripe, roughness: 0.45 }));
+  const candleGeo = keep(new THREE.CylinderGeometry(0.035, 0.035, 0.5, 20));
+  const flameTex = keep(glow("rgba(255,248,225,1)", "rgba(255,170,60,0.9)"));
+  const flames: THREE.Sprite[] = [];
+  const candles = Math.max(1, Math.min(9, opts.candles));
+  for (let i = 0; i < candles; i += 1) {
+    const angle = (i / candles) * Math.PI * 2 + 0.4;
+    const radius = candles === 1 ? 0 : 0.42;
+    const c = new THREE.Mesh(candleGeo, candleMat);
+    c.position.set(Math.cos(angle) * radius, 2.93, Math.sin(angle) * radius);
+    c.castShadow = true;
+    cake.add(c);
+    const flameMat = keep(new THREE.SpriteMaterial({ map: flameTex, color: new THREE.Color(2.4, 1.7, 1.1), blending: THREE.AdditiveBlending, depthWrite: false }));
+    const f = new THREE.Sprite(flameMat);
+    f.position.set(c.position.x, 3.28, c.position.z);
+    f.scale.set(0.2, 0.32, 1);
+    flames.push(f);
+    cake.add(f);
   }
   scene.add(cake);
 
-  // 蜡烛与火焰
-  const flameTexture = glowTexture("rgba(255,244,214,1)", "rgba(255,170,70,0.85)");
-  const flames: THREE.Sprite[] = [];
-  const candleTops: THREE.Vector3[] = [];
-  const candleGeometry = new THREE.CylinderGeometry(0.055, 0.055, 0.55, 16);
-  disposables.push(candleGeometry, flameTexture);
-  const candleColors = [0xf2b8c6, 0xb9d3ef, 0xf6dfa4];
-  const ring = opts.candles === 1 ? 0 : Math.min(0.75, 0.25 + opts.candles * 0.06);
-  for (let i = 0; i < opts.candles; i += 1) {
-    const angle = (i / opts.candles) * Math.PI * 2;
-    const material = new THREE.MeshStandardMaterial({ color: candleColors[i % candleColors.length], roughness: 0.5 });
-    disposables.push(material);
-    const candle = new THREE.Mesh(candleGeometry, material);
-    candle.position.set(Math.cos(angle) * ring, CAKE_TOP + 0.275, Math.sin(angle) * ring);
-    cake.add(candle);
-    const flameMaterial = new THREE.SpriteMaterial({ map: flameTexture, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true });
-    disposables.push(flameMaterial);
-    const flame = new THREE.Sprite(flameMaterial);
-    flame.position.set(candle.position.x, CAKE_TOP + 0.66, candle.position.z);
-    flame.scale.set(0.32, 0.5, 1);
-    flames.push(flame);
-    candleTops.push(flame.position.clone());
-    cake.add(flame);
-  }
+  // 地面接影 + 暖光晕
+  const ground = new THREE.Mesh(keep(new THREE.CircleGeometry(6, 64)), keep(new THREE.ShadowMaterial({ opacity: 0.35 })));
+  ground.rotation.x = -Math.PI / 2;
+  ground.receiveShadow = true;
+  const halo = new THREE.Sprite(keep(new THREE.SpriteMaterial({ map: keep(glow("rgba(255,190,120,0.22)", "rgba(180,120,255,0.08)")), depthWrite: false, blending: THREE.AdditiveBlending })));
+  halo.scale.set(9, 6, 1);
+  halo.position.set(0, 2, -2.5);
+  scene.add(ground, halo);
 
-  // 远处的星空背景
-  const random = seeded(opts.name);
-  const far = new THREE.BufferGeometry();
-  const farPositions = new Float32Array(600 * 3);
-  for (let i = 0; i < 600; i += 1) {
-    const theta = random() * Math.PI * 2;
-    const phi = Math.acos(random() * 1.6 - 0.6);
-    farPositions.set([Math.sin(phi) * Math.cos(theta) * 40, Math.cos(phi) * 40 + 4, Math.sin(phi) * Math.sin(theta) * 40 - 10], i * 3);
-  }
-  far.setAttribute("position", new THREE.BufferAttribute(farPositions, 3));
-  const farMaterial = new THREE.PointsMaterial({ color: 0xcfc8ff, size: 0.09, transparent: true, opacity: 0.55, depthWrite: false });
-  disposables.push(far, farMaterial);
-  scene.add(new THREE.Points(far, farMaterial));
-
-  // 祝福星星（前 opts.stars 颗可点），位置按老师名字固定
-  const starTexture = glowTexture("rgba(255,250,235,1)", "rgba(255,200,110,0.7)");
-  disposables.push(starTexture);
-  const starCount = Math.max(opts.stars, MIN_STARS);
-  const halfWidth = () => Math.min(5.5, Math.max(2, camera.aspect * 5.2));
-  const starSeeds = Array.from({ length: starCount }, () => [random(), random(), random()]);
-  const stars: THREE.Sprite[] = starSeeds.map(([sx, sy], i) => {
-    const material = new THREE.SpriteMaterial({ map: starTexture, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, opacity: 0 });
-    disposables.push(material);
-    const sprite = new THREE.Sprite(material);
-    sprite.userData = { index: i, wish: i < opts.stars, base: i < opts.stars ? 0.62 : 0.34, sx, sy };
-    scene.add(sprite);
-    return sprite;
+  // ---------- 气球 ----------
+  const balloonGeo = keep(balloonGeometry());
+  const knotGeo = keep(new THREE.ConeGeometry(0.05, 0.08, 12));
+  const stringMat = keep(new THREE.LineBasicMaterial({ color: 0xd8d0f0, transparent: true, opacity: 0.55 }));
+  const balloons: Array<{ group: THREE.Group; offset: number; y: number; z: number; phase: number; side: number }> = [];
+  // [左右, 离中线的额外距离, 高度, 深度, 大小]
+  const balloonSpots = [
+    [-1, 0, 0.2, 0, 1.0], [-1, 0.35, 0.9, -0.6, 0.9], [-1, -0.2, 1.3, -1.2, 0.85], [-1, 0.6, 1.8, -1.6, 1.05], [-1, 0.1, 2.4, -2.2, 0.8],
+    [1, 0, 0.35, 0, 1.0], [1, 0.4, 1.0, -0.7, 0.92], [1, -0.15, 1.55, -1.3, 0.85], [1, 0.65, 2.0, -1.7, 1.0], [1, 0.15, 2.6, -2.4, 0.8],
+  ];
+  balloonSpots.forEach(([side, offset, y, z, scale], i) => {
+    const material = keep(new THREE.MeshPhysicalMaterial({ color: PARTY[i % PARTY.length], roughness: 0.28, clearcoat: 1, clearcoatRoughness: 0.12, sheen: 0.4, sheenColor: new THREE.Color(0xffffff) }));
+    const group = new THREE.Group();
+    const body = new THREE.Mesh(balloonGeo, material);
+    const knot = new THREE.Mesh(knotGeo, material);
+    knot.position.y = -0.64;
+    const stringGeo = keep(
+      new THREE.BufferGeometry().setFromPoints(
+        new THREE.CatmullRomCurve3([new THREE.Vector3(0, -0.66, 0), new THREE.Vector3(0.06, -1.3, 0.02), new THREE.Vector3(-0.05, -2, 0), new THREE.Vector3(0.03, -2.8, 0)]).getPoints(24),
+      ),
+    );
+    group.add(body, knot, new THREE.Line(stringGeo, stringMat));
+    group.scale.setScalar(scale);
+    balloons.push({ group, offset, y: 3.1 + y, z, phase: random() * Math.PI * 2, side });
+    scene.add(group);
   });
-  const placeStars = () => {
-    const w = halfWidth();
-    stars.forEach((star, i) => {
-      const [, , sz] = starSeeds[i];
-      star.position.set((star.userData.sx * 2 - 1) * w, 8 + star.userData.sy * 4.2, -5 - sz * 2);
-      star.scale.setScalar(star.userData.base);
-    });
-    const ordered = [...stars].sort((a, b) => a.position.x - b.position.x);
-    lineGeometry.setFromPoints(ordered.map((star) => star.position));
+
+  // ---------- 彩旗与串灯（悬在蛋糕后上方的两条垂线） ----------
+  const catenary = (y: number, z: number, sag: number, span: number) => (t: number) => new THREE.Vector3((t - 0.5) * span, y - sag * (1 - (2 * t - 1) ** 2), z);
+  const flagGeo = keep(new THREE.BufferGeometry());
+  flagGeo.setAttribute("position", new THREE.Float32BufferAttribute([-0.2, 0, 0, 0.2, 0, 0, 0, -0.42, 0], 3));
+  flagGeo.computeVertexNormals();
+  const flags: THREE.Mesh[] = [];
+  const buntingAt = catenary(6.9, -4, 1.0, 14);
+  for (let i = 0; i < 19; i += 1) {
+    const flag = new THREE.Mesh(flagGeo, keep(new THREE.MeshStandardMaterial({ color: PARTY[i % PARTY.length], roughness: 0.7, side: THREE.DoubleSide })));
+    flag.position.copy(buntingAt((i + 0.5) / 19));
+    flag.userData.phase = i * 0.7;
+    flags.push(flag);
+    scene.add(flag);
+  }
+  scene.add(new THREE.Line(keep(new THREE.BufferGeometry().setFromPoints(Array.from({ length: 40 }, (_, i) => buntingAt(i / 39)))), stringMat));
+
+  const lightsAt = catenary(7.9, -5.2, 1.4, 17);
+  const bulbGeo = keep(new THREE.SphereGeometry(0.055, 12, 10));
+  const bulbs: THREE.Mesh[] = [];
+  for (let i = 0; i < 34; i += 1) {
+    const bulb = new THREE.Mesh(bulbGeo, keep(new THREE.MeshBasicMaterial({ color: new THREE.Color(0xffd28a).multiplyScalar(3) })));
+    bulb.position.copy(lightsAt((i + 0.5) / 34));
+    bulb.userData.phase = random() * Math.PI * 2;
+    bulbs.push(bulb);
+    scene.add(bulb);
+  }
+  scene.add(new THREE.Line(keep(new THREE.BufferGeometry().setFromPoints(Array.from({ length: 48 }, (_, i) => lightsAt(i / 47)))), stringMat));
+
+  // 远处星点
+  const far = keep(new THREE.BufferGeometry());
+  far.setAttribute("position", new THREE.Float32BufferAttribute(Array.from({ length: 1500 }, (_, i) => (i % 3 === 0 ? (random() - 0.5) * 70 : i % 3 === 1 ? random() * 30 + 2 : -18 - random() * 20)), 3));
+  scene.add(new THREE.Points(far, keep(new THREE.PointsMaterial({ color: 0xd8d0ff, size: 0.08, transparent: true, opacity: 0.6, depthWrite: false }))));
+
+  // ---------- 彩纸：常态缓缓飘落，礼炮时从两侧喷出 ----------
+  const CONFETTI = 280;
+  const confetti = new THREE.InstancedMesh(
+    keep(new THREE.PlaneGeometry(0.07, 0.12)),
+    keep(new THREE.MeshStandardMaterial({ roughness: 0.45, metalness: 0.25, side: THREE.DoubleSide })),
+    CONFETTI,
+  );
+  const cPos = new Float32Array(CONFETTI * 3);
+  const cVel = new Float32Array(CONFETTI * 3);
+  const cRot = new Float32Array(CONFETTI * 3);
+  const cSpin = new Float32Array(CONFETTI * 3);
+  const color = new THREE.Color();
+  const respawn = (i: number, anywhere: boolean) => {
+    cPos.set([(random() - 0.5) * 14, anywhere ? random() * 9 : 9 + random() * 2, (random() - 0.5) * 8 - 1], i * 3);
+    cVel.set([(random() - 0.5) * 0.2, -(0.35 + random() * 0.35), 0], i * 3);
   };
-  const lineGeometry = new THREE.BufferGeometry();
-  const lineMaterial = new THREE.LineBasicMaterial({ color: 0xffd8a0, transparent: true, opacity: 0.35 });
-  disposables.push(lineGeometry, lineMaterial);
-  const constellation = new THREE.Line(lineGeometry, lineMaterial);
-  scene.add(constellation);
+  for (let i = 0; i < CONFETTI; i += 1) {
+    respawn(i, true);
+    cRot.set([random() * 6, random() * 6, random() * 6], i * 3);
+    cSpin.set([(random() - 0.5) * 6, (random() - 0.5) * 6, (random() - 0.5) * 3], i * 3);
+    confetti.setColorAt(i, color.setHex(PARTY[i % PARTY.length]));
+  }
+  scene.add(confetti);
+  const dummy = new THREE.Object3D();
 
-  // 烟 → 星的粒子
-  const perCandle = 40;
-  const smokeCount = perCandle * opts.candles;
-  const smokeGeometry = new THREE.BufferGeometry();
-  const smokePositions = new Float32Array(smokeCount * 3);
-  const smokeStart = new Float32Array(smokeCount * 3);
-  const smokeDrift = new Float32Array(smokeCount * 3);
-  smokeGeometry.setAttribute("position", new THREE.BufferAttribute(smokePositions, 3));
-  const smokeMaterial = new THREE.PointsMaterial({ map: starTexture, color: 0xb8b2c8, size: 0.16, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending });
-  disposables.push(smokeGeometry, smokeMaterial);
-  const smoke = new THREE.Points(smokeGeometry, smokeMaterial);
-  scene.add(smoke);
-
-  const resize = () => {
-    const width = canvas.clientWidth || window.innerWidth;
-    const height = canvas.clientHeight || window.innerHeight;
-    renderer.setSize(width, height, false);
-    camera.aspect = width / height;
-    // 竖屏手机把蛋糕放远一点，保证整只蛋糕在画面里
-    const portrait = camera.aspect < 0.8;
-    camera.fov = portrait ? 50 : 40;
-    cakeView.pos.set(0, portrait ? 4.2 : 3.2, portrait ? 11.5 : 8.6);
-    cakeView.look.set(0, portrait ? 1.0 : 1.4, 0);
-    camera.updateProjectionMatrix();
-    placeStars();
-    if (phase === "cake") {
-      camera.position.copy(cakeView.pos);
-      camera.lookAt(cakeView.look);
+  const burst = () => {
+    if (REDUCED) return;
+    for (let i = 0; i < CONFETTI * 0.6; i += 1) {
+      const side = i % 2 === 0 ? -1 : 1;
+      cPos.set([side * 3.4, 0.2, 2.2 + random() * 0.6], i * 3);
+      cVel.set([-side * (1.2 + random() * 2.6), 6.5 + random() * 4.5, (random() - 0.5) * 2.4], i * 3);
     }
   };
 
-  type Phase = "cake" | "blowing" | "sky";
-  let phase: Phase = "cake";
-  let blowStart = 0;
-  let finish: (() => void) | undefined;
-  const lookAt = new THREE.Vector3();
-  const seconds = () => performance.now() / 1000;
-  const observer = new ResizeObserver(resize);
-  observer.observe(canvas);
-  resize();
+  // ---------- 后期：烛火、串灯的光晕 ----------
+  const composer = new EffectComposer(renderer);
+  composer.addPass(new RenderPass(scene, camera));
+  const bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.5, 0.5, 1.25); // 阈值高于奶油高光：只有烛火、串灯发光
+  composer.addPass(bloom);
+  composer.addPass(new OutputPass());
 
-  const setSky = (progress: number) => {
-    const t = easeInOut(progress);
-    camera.position.lerpVectors(cakeView.pos, skyView.pos, t);
-    lookAt.lerpVectors(cakeView.look, skyView.look, t);
-    camera.lookAt(lookAt);
+  // ---------- 镜头 ----------
+  const hero = { pos: new THREE.Vector3(), look: new THREE.Vector3(0, 2.2, 0) };
+  const up = { pos: new THREE.Vector3(), look: new THREE.Vector3(0, 5.2, -2) };
+  const close = { pos: new THREE.Vector3(), look: new THREE.Vector3(0, 4.1, 0) };
+  let spread = 2.6;
+  const resize = () => {
+    const width = window.innerWidth;
+    const height = window.innerHeight;
+    renderer.setSize(width, height, false);
+    composer.setSize(width, height);
+    bloom.resolution.set(width / 2, height / 2);
+    camera.aspect = width / height;
+    const portrait = camera.aspect < 0.8;
+    camera.fov = portrait ? 54 : 38;
+    camera.updateProjectionMatrix();
+    hero.pos.set(0, portrait ? 3.4 : 3.6, portrait ? 10.2 : 11.4);
+    up.pos.set(0, portrait ? 5.6 : 5.6, portrait ? 9.6 : 10.6);
+    // 结尾：从蛋糕略下方仰看，烛光落在画面下三分之一，寄语在上方
+    close.pos.set(0.5, 2.9, portrait ? 6.4 : 5.2);
+    // 竖屏时气球往中间收，免得全在画面外
+    spread = THREE.MathUtils.clamp(camera.aspect * 3.6, 1.9, 3.2);
   };
+  resize();
+  window.addEventListener("resize", resize);
+
+  const introStart = { pos: new THREE.Vector3(0, 11, 17), look: new THREE.Vector3(0, 3, 0) };
+  let introAt = REDUCED ? -Infinity : Number.POSITIVE_INFINITY;
+  let burstAt = Number.POSITIVE_INFINITY;
+  let progress = 0;
+  const lookAt = new THREE.Vector3();
+  const tmpPos = new THREE.Vector3();
+  const tmpLook = new THREE.Vector3();
+  let last = performance.now() / 1000;
 
   let raf = 0;
   const frame = () => {
     raf = requestAnimationFrame(frame);
-    const now = seconds();
+    const now = performance.now() / 1000;
+    const dt = Math.min(0.05, now - last);
+    last = now;
 
-    if (phase === "cake" && !REDUCED) {
-      flames.forEach((flame, i) => {
-        const flicker = 1 + Math.sin(now * 13 + i * 1.7) * 0.06 + Math.sin(now * 7.3 + i) * 0.05;
-        flame.scale.set(0.32 * flicker, 0.5 * (2 - flicker), 1);
+    // 滚动进度（rAF 里读，不挂 scroll 监听），带一点惯性
+    const max = document.documentElement.scrollHeight - window.innerHeight;
+    const target = max > 0 ? window.scrollY / max : 0;
+    progress += (target - progress) * Math.min(1, dt * 4);
+
+    // 顶部看蛋糕 → 读祝福时上移 → 结尾推近烛光
+    const toUp = smooth(clamp01((progress - 0.04) / 0.22));
+    const toClose = smooth(clamp01((progress - 0.82) / 0.18));
+    tmpPos.lerpVectors(hero.pos, up.pos, toUp).lerp(close.pos, toClose);
+    tmpLook.lerpVectors(hero.look, up.look, toUp).lerp(close.look, toClose);
+    if (!REDUCED) tmpPos.x += Math.sin(now * 0.18) * 0.9 * (1 - toClose);
+    const intro = now < introAt ? 0 : easeOutCubic(clamp01((now - introAt) / 2.6));
+    camera.position.lerpVectors(introStart.pos, tmpPos, intro);
+    lookAt.lerpVectors(introStart.look, tmpLook, intro);
+    camera.lookAt(lookAt);
+    if (now > burstAt) {
+      burstAt = Number.POSITIVE_INFINITY;
+      burst();
+    }
+
+    for (const b of balloons) {
+      const bob = REDUCED ? 0 : Math.sin(now * 0.9 + b.phase) * 0.12;
+      b.group.position.set(b.side * (spread + b.offset), b.y + bob, b.z);
+      if (!REDUCED) b.group.rotation.z = Math.sin(now * 0.7 + b.phase) * 0.06;
+    }
+    if (!REDUCED) {
+      flames.forEach((f, i) => {
+        const k = 1 + Math.sin(now * 13 + i * 1.7) * 0.07 + Math.sin(now * 7.1 + i) * 0.05;
+        f.scale.set(0.2 * k, 0.32 * (2 - k), 1);
       });
-      candleLight.intensity = 4 + Math.sin(now * 11) * 0.35;
-    }
-
-    if (phase === "blowing") {
-      const t = now - blowStart;
-      // 0–0.4s 火焰熄灭
-      const out = clamp01(t / 0.4);
-      flames.forEach((flame) => flame.scale.setScalar(Math.max(0.0001, (1 - out) * 0.4)));
-      candleLight.intensity = 4 * (1 - out);
-      hemi.intensity = 1.5 - 0.6 * clamp01(t / 2);
-      ambient.intensity = 0.55 - 0.3 * clamp01(t / 2);
-      // 烟：0.2s 起上升，1.2s 起飞向星位
-      smokeMaterial.opacity = clamp01((t - 0.2) / 0.4) * (1 - clamp01((t - 3.0) / 0.8));
-      const toward = easeInOut(clamp01((t - 1.2) / 1.8));
-      const gold = new THREE.Color(0xb8b2c8).lerp(new THREE.Color(0xffd27d), toward);
-      smokeMaterial.color.copy(gold);
-      for (let i = 0; i < smokeCount; i += 1) {
-        const rise = Math.max(0, t - 0.2);
-        const x = smokeStart[i * 3] + smokeDrift[i * 3] * rise + Math.sin(rise * 3 + i) * 0.05 * rise;
-        const y = smokeStart[i * 3 + 1] + rise * (0.7 + smokeDrift[i * 3 + 1]);
-        const z = smokeStart[i * 3 + 2] + smokeDrift[i * 3 + 2] * rise;
-        const target = stars[i % starCount].position;
-        smokePositions[i * 3] = x + (target.x - x) * toward;
-        smokePositions[i * 3 + 1] = y + (target.y - y) * toward;
-        smokePositions[i * 3 + 2] = z + (target.z - z) * toward;
-      }
-      smokeGeometry.attributes.position.needsUpdate = true;
-      // 0.9s 起镜头上仰，2.5s 到位
-      setSky(clamp01((t - 0.9) / 2.5));
-      // 星星在烟到达时亮起，连线逐段画出
-      const appear = clamp01((t - 2.6) / 0.8);
-      stars.forEach((star) => ((star.material as THREE.SpriteMaterial).opacity = appear));
-      const segments = stars.length;
-      lineGeometry.setDrawRange(0, Math.ceil(segments * clamp01((t - 3.0) / 1.4)));
-      if (t > 4.4) {
-        phase = "sky";
-        smoke.visible = false;
-        finish?.();
+      candleLight.intensity = 3 + Math.sin(now * 11) * 0.3;
+      for (const flag of flags) flag.rotation.x = Math.sin(now * 1.6 + flag.userData.phase) * 0.22;
+      for (const bulb of bulbs) {
+        (bulb.material as THREE.MeshBasicMaterial).color.setHex(0xffd28a).multiplyScalar(1.6 + 1.6 * (0.5 + 0.5 * Math.sin(now * 2.4 + bulb.userData.phase)));
       }
     }
 
-    if (phase === "sky" && !REDUCED) {
-      stars.forEach((star, i) => star.scale.setScalar(star.userData.base * (1 + Math.sin(now * 2.2 + i * 1.3) * 0.12)));
+    for (let i = 0; i < CONFETTI; i += 1) {
+      const o = i * 3;
+      if (!REDUCED) {
+        cVel[o + 1] = Math.max(cVel[o + 1] - 7.5 * dt, -(0.45 + (i % 5) * 0.08));
+        cVel[o] *= 1 - dt * 0.9;
+        cVel[o + 2] *= 1 - dt * 0.9;
+        cPos[o] += (cVel[o] + Math.sin(now * 1.3 + i) * 0.18) * dt;
+        cPos[o + 1] += cVel[o + 1] * dt;
+        cPos[o + 2] += cVel[o + 2] * dt;
+        cRot[o] += cSpin[o] * dt;
+        cRot[o + 1] += cSpin[o + 1] * dt;
+        cRot[o + 2] += cSpin[o + 2] * dt;
+        if (cPos[o + 1] < -0.5) respawn(i, false);
+      }
+      dummy.position.set(cPos[o], cPos[o + 1], cPos[o + 2]);
+      dummy.rotation.set(cRot[o], cRot[o + 1], cRot[o + 2]);
+      dummy.updateMatrix();
+      confetti.setMatrixAt(i, dummy.matrix);
     }
-    renderer.render(scene, camera);
+    confetti.instanceMatrix.needsUpdate = true;
+
+    composer.render();
   };
-  lineGeometry.setDrawRange(0, 0);
   frame();
 
-  const raycaster = new THREE.Raycaster();
-  const pointer = new THREE.Vector2();
-  const pick = (event: PointerEvent) => {
-    const rect = canvas.getBoundingClientRect();
-    pointer.set(((event.clientX - rect.left) / rect.width) * 2 - 1, -((event.clientY - rect.top) / rect.height) * 2 + 1);
-    raycaster.setFromCamera(pointer, camera);
-    return raycaster.intersectObjects(stars.filter((star) => star.userData.wish))[0]?.object;
-  };
-  const onUp = (event: PointerEvent) => {
-    if (phase !== "sky") return;
-    const hit = pick(event);
-    if (hit) opts.onStar(hit.userData.index as number);
-  };
-  const onMove = (event: PointerEvent) => {
-    if (phase === "sky" && event.pointerType === "mouse") canvas.style.cursor = pick(event) ? "pointer" : "";
-  };
-  canvas.addEventListener("pointerup", onUp);
-  canvas.addEventListener("pointermove", onMove);
-
   return {
-    extinguish() {
-      if (phase !== "cake") return Promise.resolve();
-      for (let c = 0; c < opts.candles; c += 1) {
-        for (let k = 0; k < perCandle; k += 1) {
-          const i = c * perCandle + k;
-          smokeStart.set([candleTops[c].x, candleTops[c].y, candleTops[c].z], i * 3);
-          smokeDrift.set([(random() - 0.5) * 0.5, random() * 0.6, (random() - 0.5) * 0.5], i * 3);
-        }
-      }
-      if (REDUCED) {
-        flames.forEach((flame) => (flame.visible = false));
-        candleLight.intensity = 0;
-        hemi.intensity = 0.9;
-        ambient.intensity = 0.25;
-        smoke.visible = false;
-        setSky(1);
-        stars.forEach((star) => ((star.material as THREE.SpriteMaterial).opacity = 1));
-        lineGeometry.setDrawRange(0, stars.length);
-        phase = "sky";
-        return Promise.resolve();
-      }
-      phase = "blowing";
-      blowStart = seconds();
-      return new Promise<void>((resolve) => (finish = resolve));
+    intro() {
+      if (REDUCED) return;
+      introAt = performance.now() / 1000;
+      burstAt = introAt + 1.1;
     },
+    burst,
     dispose() {
       cancelAnimationFrame(raf);
-      observer.disconnect();
-      canvas.removeEventListener("pointerup", onUp);
-      canvas.removeEventListener("pointermove", onMove);
+      window.removeEventListener("resize", resize);
       for (const item of disposables) item.dispose();
+      composer.dispose();
       renderer.dispose();
     },
   };

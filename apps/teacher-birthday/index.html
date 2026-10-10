@@ -9,6 +9,8 @@
     <title>生日快乐</title>
   </head>
   <body class="locked">
+    <canvas id="scene" aria-hidden="true"></canvas>
+    <div class="css-cake" aria-hidden="true"><div class="css-candles" id="css-candles"></div><div class="tier top"></div><div class="tier bottom"></div></div>
     <main id="app">
       <section id="envelope" aria-live="polite">
         <div class="loading" id="loading">
@@ -30,15 +32,11 @@
         <p class="tap-hint" id="tap-hint" hidden>轻点信封</p>
       </section>
 
-      <section id="stage" hidden>
-        <canvas id="scene" aria-hidden="true"></canvas>
-        <div class="css-cake" aria-hidden="true"><div class="tier top"></div><div class="tier bottom"></div><div class="css-candles" id="css-candles"></div></div>
-        <h1 class="stage-title" id="stage-title"></h1>
-        <p class="stage-hint" id="stage-hint">对着手机吹一口气，或者长按蛋糕</p>
-        <div class="sky-caption" id="sky-caption" hidden>
-          <p class="sky-line" id="sky-line"></p>
-          <p class="sky-sub" id="sky-sub"></p>
-          <button type="button" class="pill" id="to-wall">读祝福</button>
+      <section id="hero" hidden>
+        <h1 class="hero-title" id="hero-title"></h1>
+        <div class="hero-foot">
+          <p class="hero-sub" id="hero-sub"></p>
+          <button type="button" class="pill" id="to-wall"></button>
         </div>
       </section>
 

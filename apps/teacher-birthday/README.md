@@ -1,6 +1,6 @@
 # 老师生日祝福（teacher-birthday）
 
-教务在飞书维护老师档案。老师生日前 3 天，系统私信教务一份预填好老师姓名的祝福问卷，由教务转给学生和同事；生日当天 9:00，系统往老师群发一张卡片，点开是这位老师的专属生日网页：吹蜡烛 → 祝福化作星座 → 拍立得卡片墙 → AI 寄语。
+教务在飞书维护老师档案。老师生日前 3 天，系统私信教务一份预填好老师姓名的祝福问卷，由教务转给学生和同事；生日当天 9:00，系统往老师群发一张卡片，点开是这位老师的专属生日网页：一场 3D 生日派对（精致蛋糕、气球、彩旗、串灯、彩纸礼炮），往下滑镜头连续移动，依次看到拍立得祝福卡片墙和 AI 寄语。
 
 - 网页：`https://app.jsjy.asia/birthday/?t=<token>`。每位老师每年一个链接，不需要登录，靠 token 防猜；本地没有 `t` 参数时显示演示数据（`?demo=0|6|12`）。
 - 设计与口径：[`specs/teacher-birthday/design.md`](../../specs/teacher-birthday/design.md)；实施计划：[`tasks.md`](../../specs/teacher-birthday/tasks.md)。
@@ -67,7 +67,7 @@ OpenAI 兼容接口，`server.env` 的 `AI_BASE_URL` / `AI_API_KEY` / `AI_MODEL`
 src/domain/      纯函数：日期规则、飞书字段解析、课表统计、寄语提示词与模板、飞书卡片、网页数据形状
 src/server/      service.ts（每日任务 / 演练 / 网页数据，飞书 IO 注入）、token.ts、ai.ts
 functions/       birthday-api 云函数入口（定时 + 调用 + HTTP /birthday-api/page）
-src/web/         网页：main.ts 编排、scene.ts（three.js）、blow.ts（吹气检测）、cards.ts、styles.css
+src/web/         网页：main.ts 编排、scene.ts（three.js 派对场景，镜头随滚动移动）、cards.ts、styles.css
 scripts/         setup-feishu.ts（建表）、deploy-function.mjs、rehearse.mjs
 ```
 
@@ -84,4 +84,4 @@ npm run deploy:web -w @jingshi/teacher-birthday
 
 HTTP 路由 `app.jsjy.asia/birthday-api → 云函数 birthday-api` 已用 `tcb routes add` 加好；网页在静态托管 `/birthday/`。
 
-吹气检测的灵敏度在 `src/web/blow.ts`（音量阈值 0.18、持续 18 帧），真机误触或吹不灭只改这两个数。
+场景亮度的调节点在 `src/web/scene.ts`：主光 `SpotLight` 强度、`toneMappingExposure`、泛光阈值（`UnrealBloomPass` 第 4 个参数，高于奶油高光才不会整块发白）。
