@@ -10,7 +10,7 @@ import {
   validateCancellation,
 } from "./rules";
 import type { CancellableLesson, CancellationReason, CancellationTier, ListedLesson } from "./rules";
-import { groupAlertCard, groupCancellationCard, teacherCancellationCard } from "./messages";
+import { formatLessonTime, groupAlertCard, groupCancellationCard, teacherCancellationCard } from "./messages";
 import type { FeishuCard } from "./messages";
 
 /** 取消编号的有效期：学生在选课页点确认后，30 分钟内提交问卷才有效。 */
@@ -32,6 +32,10 @@ export interface CancelIntent {
   studentKey: string;
   studentName: string;
   scheduleRecordId: string;
+  /** 例：10/09（周五）19:30-21:30 · IG英语，工作台取消记录直接显示 */
+  lessonLabel?: string;
+  teacherName?: string;
+  lessonStartMs?: number;
   createdMs: number;
   expiresMs: number;
   status: IntentStatus;
@@ -139,6 +143,9 @@ export async function createIntent(
     studentKey: link.studentKey,
     studentName: link.studentName,
     scheduleRecordId,
+    lessonLabel: `${formatLessonTime(lesson)} · ${lesson.courseName}`,
+    teacherName: lesson.teacherName,
+    lessonStartMs: lesson.startMs,
     createdMs: nowMs,
     expiresMs: nowMs + INTENT_TTL_MS,
     status: "pending",

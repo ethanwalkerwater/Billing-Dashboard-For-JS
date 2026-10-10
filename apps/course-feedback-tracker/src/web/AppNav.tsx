@@ -1,13 +1,18 @@
-import { ClipboardList, LogOut, Tags, Trophy } from "lucide-react";
+import { CalendarX, ClipboardList, LogOut, Tags, Trophy } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
-export type Page = "tracking" | "scores" | "course-types";
+export type Page = "tracking" | "scores" | "course-types" | "cancellations";
 
-const HASH: Record<Page, string> = { tracking: "#/", scores: "#/scores", "course-types": "#/course-types" };
+const HASH: Record<Page, string> = {
+  tracking: "#/",
+  scores: "#/scores",
+  "course-types": "#/course-types",
+  cancellations: "#/cancellations",
+};
 
 function pageFromHash(): Page {
   const entry = Object.entries(HASH).find(([, hash]) => hash !== "#/" && window.location.hash === hash);
@@ -37,6 +42,9 @@ export function AppNav({ page, onChange }: { page: Page; onChange: (page: Page) 
         </TabsTrigger>
         <TabsTrigger value="course-types">
           <Tags /> 课程类型
+        </TabsTrigger>
+        <TabsTrigger value="cancellations">
+          <CalendarX /> 取消课程
         </TabsTrigger>
       </TabsList>
     </Tabs>

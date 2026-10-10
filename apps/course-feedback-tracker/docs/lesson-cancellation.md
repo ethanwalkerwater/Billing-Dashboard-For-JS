@@ -4,7 +4,7 @@
 
 ## 流程
 
-1. 教务用 `npm run cancel-links` 给学生生成专属链接 `https://app.jsjy.asia/cancel/?t=<token>`（存 `cancel_links`，可停用重发）。
+1. 教务在工作台「取消课程」页（`https://app.jsjy.asia/feedback/#/cancellations`）搜索学生、复制链接或下载二维码；新学生点「为新学生生成链接」。链接形如 `https://app.jsjy.asia/cancel/?t=<token>`，存 `cancel_links`，可用 `npm run cancel-links -- --revoke 张三` 停用重发。同一页列出最近的取消记录。
 2. 学生打开选课页，只看到自己**正在上和接下来 14 天**的课，点课时实时提示收费档位。多人共用一条课表记录的课不能自助取消。
 3. 确认后 `POST /cancel-api/intent` 生成**一次性取消编号**（30 分钟有效，存 `cancel_intents`），跳转飞书问卷，编号预填并隐藏。
 4. 学生在问卷里选原因（个人原因 / 病假，可传证明）提交。飞书「多维表格记录变更」事件推到 `POST /cancel-api/webhooks/feishu`。
@@ -25,6 +25,7 @@
 ```bash
 cp cancel.env.example cancel.env   # 填飞书应用密钥、课表/申请表、表单链接、教务群
 tcb db execute --sql "$(cat migrations/202610090002_lesson_cancellation.sql)"
+tcb db execute --sql "$(cat migrations/202610100001_cancel_intent_lesson.sql)"
 npm run deploy:cancel-api          # 打包 + 部署 cancel-api（CLOUDBASE_* 复用 server.env）
 npm run deploy:cancel-page         # 选课页 → 静态托管 /cancel/
 ```
@@ -34,7 +35,7 @@ HTTP 访问服务路由：`app.jsjy.asia/cancel-api → 云函数 cancel-api`（
 
 ## 切换到主课表
 
-只改 `cancel.env` 的 `CANCEL_SCHEDULE_*` / `CANCEL_REQUEST_*` / `CANCEL_FORM_URL` 后重新部署；主课表需同样有「提前取消-0%」选项和带请假前缀的「老师课程ID」公式。
+学生链接按学员信息表的记录 ID 绑定，测试表和主表的 ID 不同，切换后要重新生成全部链接（`npm run cancel-links`），旧链接作废。只改 `cancel.env` 的 `CANCEL_SCHEDULE_*` / `CANCEL_REQUEST_*` / `CANCEL_FORM_URL` 后重新部署；主课表需同样有「提前取消-0%」选项和带请假前缀的「老师课程ID」公式。
 
 ## 课表字段改动（测试课表已改，主课表切换时照做）
 
