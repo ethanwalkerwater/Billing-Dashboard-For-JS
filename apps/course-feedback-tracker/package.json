@@ -15,7 +15,8 @@
     "deploy:root-redirect": "tcb hosting deploy root-redirect/index.html index.html -e jingshi-test-d5gp401i44a0fa7a7",
     "deploy:cancel-api": "node scripts/deploy-cancel-api.mjs",
     "deploy:cancel-page": "tcb hosting deploy cancel-page /cancel -e jingshi-test-d5gp401i44a0fa7a7",
-    "cancel-links": "tsx scripts/cancel-links.ts"
+    "cancel-links": "tsx scripts/cancel-links.ts",
+    "deploy:cancellations": "vite build -c vite.cancellations.config.ts && mv dist-cancellations/cancellations.html dist-cancellations/index.html && tcb hosting deploy dist-cancellations /cancellations -e jingshi-test-d5gp401i44a0fa7a7"
   },
   "dependencies": {
     "@cloudbase/js-sdk": "^3.9.4",

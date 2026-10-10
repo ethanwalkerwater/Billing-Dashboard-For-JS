@@ -7,3 +7,4 @@ server.env
 cloudbaserc.local.json
 cancel.env
 cloudbaserc.cancel.local.json
+dist-cancellations/

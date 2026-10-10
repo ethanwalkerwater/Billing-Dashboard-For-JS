@@ -1,5 +1,4 @@
-import { Check, Copy, QrCode, RefreshCw, Search, UserPlus } from "lucide-react";
-import QRCode from "qrcode";
+import { Check, Copy, LogOut, RefreshCw, Search, UserPlus } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -9,10 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { cancelLinkUrl } from "@/cancellation/links";
-import { PageHeader } from "./AppNav";
-import type { Page } from "./AppNav";
 import { app, db } from "./cloudbase";
-import { downloadBlob } from "./qr";
 
 interface LinkRow {
   token: string;
@@ -77,6 +73,24 @@ function formatTime(iso: string): string {
   }).format(new Date(iso));
 }
 
+/** 剪贴板 API 在部分浏览器（企业微信/飞书内置浏览器、无权限时）会拒绝，退回 execCommand */
+async function copyText(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    const area = document.createElement("textarea");
+    area.value = text;
+    area.style.position = "fixed";
+    area.style.opacity = "0";
+    document.body.append(area);
+    area.select();
+    const ok = document.execCommand("copy");
+    area.remove();
+    return ok;
+  }
+}
+
 function LinkActions({ row }: { row: LinkRow }) {
   const [copied, setCopied] = useState(false);
   const url = cancelLinkUrl(row.token);
@@ -86,7 +100,8 @@ function LinkActions({ row }: { row: LinkRow }) {
         variant="outline"
         size="sm"
         onClick={() =>
-          void navigator.clipboard.writeText(url).then(() => {
+          void copyText(url).then((ok) => {
+            if (!ok) return window.prompt("复制下面的链接", url);
             setCopied(true);
             setTimeout(() => setCopied(false), 1500);
           })
@@ -94,32 +109,12 @@ function LinkActions({ row }: { row: LinkRow }) {
       >
         {copied ? <Check /> : <Copy />} {copied ? "已复制" : "复制链接"}
       </Button>
-      <Button
-        variant="ghost"
-        size="sm"
-        onClick={() =>
-          void QRCode.toDataURL(url, { width: 480, margin: 2 })
-            .then((dataUrl) => fetch(dataUrl))
-            .then((response) => response.blob())
-            .then((blob) => downloadBlob(blob, `${row.student_name}-取消课程二维码.png`))
-        }
-        aria-label={`下载 ${row.student_name} 的二维码`}
-      >
-        <QrCode /> 二维码
-      </Button>
     </div>
   );
 }
 
-export function Cancellations({
-  page,
-  onPageChange,
-  onSignOut,
-}: {
-  page: Page;
-  onPageChange: (page: Page) => void;
-  onSignOut: () => void | Promise<void>;
-}) {
+/** 教务用的独立页面 https://app.jsjy.asia/cancellations/ ：查学生取消链接、看取消记录。 */
+export function Cancellations({ onSignOut }: { onSignOut: () => void | Promise<void> }) {
   const { links, records, error, reload } = useCancellationData();
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
@@ -153,26 +148,25 @@ export function Cancellations({
   return (
     <div className="bg-muted/40 min-h-screen">
       <div className="mx-auto flex max-w-[1400px] flex-col gap-6 p-6 lg:p-8">
-        <PageHeader
-          page={page}
-          onPageChange={onPageChange}
-          onSignOut={onSignOut}
-          actions={
-            <>
+        <header className="flex flex-col gap-2">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <h1 className="text-2xl font-semibold tracking-tight">取消课程</h1>
+            <div className="flex flex-wrap items-center gap-2">
               <Button variant="outline" onClick={() => void reload()}>
                 <RefreshCw /> 刷新
               </Button>
               <Button onClick={() => void generateLinks()} disabled={busy}>
                 <UserPlus /> {busy ? "正在生成…" : "为新学生生成链接"}
               </Button>
-            </>
-          }
-          status={
-            <p className="text-muted-foreground text-xs">
-              学生用专属链接选课取消，提交飞书问卷后自动写入课表「临时取消」并通知老师。新学生加入学员信息表后，点「为新学生生成链接」。
-            </p>
-          }
-        />
+              <Button variant="ghost" size="icon" onClick={() => void onSignOut()} aria-label="退出登录">
+                <LogOut />
+              </Button>
+            </div>
+          </div>
+          <p className="text-muted-foreground text-xs">
+            把学生的专属链接发给学生或家长；学生选课并提交飞书问卷后，系统自动写入课表「临时取消」并通知老师。新学生加入学员信息表后，点「为新学生生成链接」。
+          </p>
+        </header>
 
         {error ? (
           <Alert variant="destructive">
@@ -190,7 +184,7 @@ export function Cancellations({
           <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索学生姓名" className="bg-background pl-9" />
         </div>
 
-        <div className="grid gap-6 xl:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
+        <div className="grid gap-6 xl:grid-cols-2">
           <Card>
             <CardHeader>
               <CardTitle className="text-base">学生取消链接</CardTitle>
@@ -201,6 +195,7 @@ export function Cancellations({
                 <TableHeader>
                   <TableRow>
                     <TableHead>学生</TableHead>
+                    <TableHead>取消链接</TableHead>
                     <TableHead className="text-right">操作</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -208,14 +203,17 @@ export function Cancellations({
                   {visibleLinks.map((row) => (
                     <TableRow key={row.token}>
                       <TableCell className="font-medium">{row.student_name}</TableCell>
-                      <TableCell>
+                      <TableCell className="text-muted-foreground max-w-[13rem] truncate font-mono text-xs select-all">
+                        {cancelLinkUrl(row.token)}
+                      </TableCell>
+                      <TableCell className="w-px whitespace-nowrap">
                         <LinkActions row={row} />
                       </TableCell>
                     </TableRow>
                   ))}
                   {links && !visibleLinks.length ? (
                     <TableRow>
-                      <TableCell colSpan={2} className="text-muted-foreground py-8 text-center">
+                      <TableCell colSpan={3} className="text-muted-foreground py-8 text-center">
                         {links.length ? "没有匹配的学生" : "还没有生成链接，点右上角「为新学生生成链接」"}
                       </TableCell>
                     </TableRow>
@@ -234,7 +232,7 @@ export function Cancellations({
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>提交时间</TableHead>
+                    <TableHead>处理时间</TableHead>
                     <TableHead>学生</TableHead>
                     <TableHead>课程</TableHead>
                     <TableHead>结果</TableHead>
@@ -256,7 +254,6 @@ export function Cancellations({
                           <Badge variant="destructive">未生效</Badge>
                         )}
                         <div className="text-muted-foreground mt-1 text-xs">
-                          {row.reason === "sick" ? "病假 · " : ""}
                           {row.message}
                         </div>
                       </TableCell>

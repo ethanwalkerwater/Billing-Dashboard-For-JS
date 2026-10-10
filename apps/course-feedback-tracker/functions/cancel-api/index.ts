@@ -5,7 +5,7 @@
  *   POST /intent  {t, recordId}  生成一次性取消编号，返回预填好的飞书问卷链接
  *   POST /webhooks/feishu        「取消申请」表新增记录事件 → 核验、写课表、通知
  *
- * 教务工作台 callFunction：ensure-links（为新学生生成链接，需管理员登录）。
+ * 教务管理页 /cancellations/ callFunction：ensure-links（为新学生生成链接，需管理员登录）。
  *
  * 用独立的飞书应用（机器人「课表分析」），密钥只经 cancel.env 注入函数环境变量。
  */

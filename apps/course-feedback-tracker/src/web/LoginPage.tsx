@@ -5,7 +5,15 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { auth } from "./cloudbase";
 
-export function LoginPage({ onSignedIn }: { onSignedIn: () => void | Promise<void> }) {
+export function LoginPage({
+  onSignedIn,
+  title = "月度课程反馈",
+  description = "用教务账号登录工作台",
+}: {
+  onSignedIn: () => void | Promise<void>;
+  title?: string;
+  description?: string;
+}) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -37,8 +45,8 @@ export function LoginPage({ onSignedIn }: { onSignedIn: () => void | Promise<voi
     <main className="bg-muted/40 flex min-h-screen items-center justify-center p-6">
       <Card className="w-full max-w-sm">
         <CardHeader>
-          <CardTitle className="text-xl">月度课程反馈</CardTitle>
-          <CardDescription>用教务账号登录工作台</CardDescription>
+          <CardTitle className="text-xl">{title}</CardTitle>
+          <CardDescription>{description}</CardDescription>
         </CardHeader>
         <CardContent>
           <form className="grid gap-4" onSubmit={submit}>
