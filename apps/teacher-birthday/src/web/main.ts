@@ -60,6 +60,8 @@ function fillText(data: PageData) {
   if (data.photoUrl) {
     $<HTMLImageElement>("portrait-img").src = data.photoUrl;
     $("portrait").hidden = false;
+    $<HTMLImageElement>("hero-photo-img").src = data.photoUrl;
+    $("hero-photo").hidden = false;
   }
   if (data.tenure) {
     $("tenure").textContent = `今天是你在菁仕的第 ${data.tenure.days} 天`;
@@ -114,7 +116,27 @@ async function prepareScene(data: PageData): Promise<SceneHandle | null> {
   }
 }
 
+/**
+ * 滚动驱动的两个量，每帧写到 CSS 变量（rAF 里读 scrollY，不挂 scroll 监听）：
+ * --hero-out：开场文字随下滑淡出上移；--dim：场景压暗，读祝福时最暗，到结尾烛光处再亮回来一些。
+ */
+function trackScroll() {
+  const root = document.documentElement.style;
+  const finale = $("finale");
+  const tick = () => {
+    const vh = window.innerHeight;
+    const heroOut = Math.min(1, Math.max(0, window.scrollY / (vh * 0.6)));
+    const finaleIn = Math.min(1, Math.max(0, (vh - finale.getBoundingClientRect().top) / vh));
+    const ease = (t: number) => t * t * (3 - 2 * t);
+    root.setProperty("--hero-out", heroOut.toFixed(3));
+    root.setProperty("--dim", (0.58 * ease(heroOut) * (1 - 0.45 * ease(finaleIn))).toFixed(3));
+    requestAnimationFrame(tick);
+  };
+  tick();
+}
+
 function openParty(data: PageData, scene: SceneHandle | null) {
+  trackScroll();
   scene?.intro();
   document.body.classList.add("party");
   const hero = $("hero");
