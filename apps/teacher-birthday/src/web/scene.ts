@@ -326,7 +326,8 @@ export function createScene(canvas: HTMLCanvasElement, opts: { candles: number; 
   const balloonGeo = keep(balloonGeometry());
   const knotGeo = keep(new THREE.ConeGeometry(0.05, 0.08, 12));
   const stringMat = keep(new THREE.LineBasicMaterial({ color: 0xd8d0f0, transparent: true, opacity: 0.55 }));
-  const balloons: Array<{ group: THREE.Group; offset: number; y: number; z: number; phase: number; side: number }> = [];
+  // off/vel：被鼠标推开后的弹簧偏移
+  const balloons: Array<{ group: THREE.Group; offset: number; y: number; z: number; phase: number; side: number; off: THREE.Vector2; vel: THREE.Vector2; radius: number }> = [];
   // [左右, 离中线的额外距离, 高度, 深度, 大小]
   const balloonSpots = [
     [-1, 0, 0.2, 0, 1.0], [-1, 0.35, 0.9, -0.6, 0.9], [-1, -0.2, 1.3, -1.2, 0.85], [-1, 0.6, 1.8, -1.6, 1.05], [-1, 0.1, 2.4, -2.2, 0.8],
@@ -345,7 +346,7 @@ export function createScene(canvas: HTMLCanvasElement, opts: { candles: number; 
     );
     group.add(body, knot, new THREE.Line(stringGeo, stringMat));
     group.scale.setScalar(scale);
-    balloons.push({ group, offset, y: 3.1 + y, z, phase: random() * Math.PI * 2, side });
+    balloons.push({ group, offset, y: 3.1 + y, z, phase: random() * Math.PI * 2, side, off: new THREE.Vector2(), vel: new THREE.Vector2(), radius: 0.75 * scale });
     scene.add(group);
   });
 
@@ -359,7 +360,7 @@ export function createScene(canvas: HTMLCanvasElement, opts: { candles: number; 
   for (let i = 0; i < 19; i += 1) {
     const flag = new THREE.Mesh(flagGeo, keep(new THREE.MeshStandardMaterial({ color: PARTY[i % PARTY.length], roughness: 0.7, side: THREE.DoubleSide })));
     flag.position.copy(buntingAt((i + 0.5) / 19));
-    flag.userData.phase = i * 0.7;
+    flag.userData = { phase: i * 0.7, swing: 0, swingVel: 0 };
     flags.push(flag);
     scene.add(flag);
   }
@@ -445,10 +446,21 @@ export function createScene(canvas: HTMLCanvasElement, opts: { candles: number; 
   // ---------- 蛋糕跟着鼠标（手机上跟着手指）左右转 ----------
   let pointerX = 0;
   let pointerSeen = false;
+  const pointerNdc = new THREE.Vector2(9, 9);
   const onPointer = (event: PointerEvent) => {
     pointerX = (event.clientX / window.innerWidth) * 2 - 1;
+    pointerNdc.set(pointerX, -(event.clientY / window.innerHeight) * 2 + 1);
     pointerSeen = true;
   };
+  // 鼠标在某个深度平面上的世界坐标（气球、彩旗各在自己的深度）
+  const ray = new THREE.Raycaster();
+  const pointerAt = (z: number, out: THREE.Vector3) => {
+    const { origin, direction } = ray.ray;
+    return out.copy(origin).addScaledVector(direction, (z - origin.z) / direction.z);
+  };
+  const hit = new THREE.Vector3();
+  const lastFlagHit = new THREE.Vector3();
+  const push = new THREE.Vector2();
   window.addEventListener("pointermove", onPointer, { passive: true });
   window.addEventListener("pointerdown", onPointer, { passive: true });
 
@@ -528,9 +540,21 @@ export function createScene(canvas: HTMLCanvasElement, opts: { candles: number; 
     cake.rotation.y = cakeTurn;
     cake.position.y = Math.sin(t * 1.1) * 0.03;
 
+    ray.setFromCamera(pointerNdc, camera);
+    // 气球：靠近鼠标会被轻轻推开，再弹回来；整体随鼠标有一点视差
     for (const b of balloons) {
-      b.group.position.set(b.side * (spread + b.offset) + Math.sin(t * 0.5 + b.phase) * 0.12, b.y + Math.sin(t * 1.2 + b.phase) * 0.22, b.z);
-      b.group.rotation.z = Math.sin(t * 0.9 + b.phase) * 0.12;
+      const x = b.side * (spread + b.offset) + Math.sin(t * 0.5 + b.phase) * 0.12 + pointerX * 0.18 * (1 + b.z * -0.15);
+      const y = b.y + Math.sin(t * 1.2 + b.phase) * 0.22;
+      pointerAt(b.z, hit);
+      push.set(x + b.off.x - hit.x, y + b.off.y - hit.y);
+      const reach = b.radius + 0.55;
+      const dist = push.length();
+      const force = pointerSeen && dist < reach ? push.normalize().multiplyScalar((reach - dist) * 26) : push.set(0, 0);
+      b.vel.x += (force.x - b.off.x * 9 - b.vel.x * 3.2) * dt;
+      b.vel.y += (force.y - b.off.y * 9 - b.vel.y * 3.2) * dt;
+      b.off.addScaledVector(b.vel, dt);
+      b.group.position.set(x + b.off.x, y + b.off.y, b.z);
+      b.group.rotation.z = Math.sin(t * 0.9 + b.phase) * 0.12 - b.off.x * 0.35;
     }
     for (const r of risers) {
       const y = -1.5 + ((t * r.speed + r.offset) % 13);
@@ -543,9 +567,20 @@ export function createScene(canvas: HTMLCanvasElement, opts: { candles: number; 
       f.position.x = f.userData.x + Math.sin(t * 6 + i) * 0.008;
     });
     candleLight.intensity = 3 + Math.sin(t * 11) * 0.45;
+    // 彩旗：鼠标划过时被拨动，荡几下再停
+    const flagZ = flags[0].position.z;
+    pointerAt(flagZ, hit);
+    const sweep = pointerSeen ? (hit.x - lastFlagHit.x) / Math.max(dt, 1e-3) : 0;
+    lastFlagHit.copy(hit);
     for (const flag of flags) {
-      flag.rotation.x = Math.sin(t * 2.2 + flag.userData.phase) * 0.38;
-      flag.rotation.z = Math.sin(t * 1.3 + flag.userData.phase) * 0.08;
+      const d = flag.userData;
+      const dx = flag.position.x - hit.x;
+      const dy = flag.position.y - 0.2 - hit.y;
+      const near = Math.max(0, 1 - Math.hypot(dx, dy) / 1.3);
+      d.swingVel += (near * THREE.MathUtils.clamp(sweep, -12, 12) * 0.9 - d.swing * 14 - d.swingVel * 2.2) * dt;
+      d.swing += d.swingVel * dt;
+      flag.rotation.x = Math.sin(t * 2.2 + d.phase) * 0.38 + d.swing * 0.6;
+      flag.rotation.z = Math.sin(t * 1.3 + d.phase) * 0.08 + d.swing;
     }
     // 串灯：一圈亮光沿着灯串跑
     bulbs.forEach((bulb, i) => {

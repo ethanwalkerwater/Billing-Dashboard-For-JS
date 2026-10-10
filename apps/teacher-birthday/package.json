@@ -13,6 +13,7 @@
     "rehearse": "node scripts/rehearse.mjs"
   },
   "dependencies": {
+    "lxgw-wenkai-webfont": "^1.7.0",
     "three": "^0.186.1"
   },
   "devDependencies": {

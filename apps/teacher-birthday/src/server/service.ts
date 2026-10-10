@@ -2,7 +2,7 @@
 import { blessingMessages, chooseBlessing } from "../domain/blessing";
 import { askCard, celebrateCard, wishFormUrl } from "../domain/cards";
 import type { FeishuCard } from "../domain/cards";
-import { dueActions, nextBirthday, shanghaiYmd, tenure } from "../domain/dates";
+import { birthdayIn, dueActions, nextBirthday, shanghaiYmd, tenure } from "../domain/dates";
 import type { DueAction, LessonStats, TeacherRow, Ymd } from "../domain/dates";
 import type { PageData } from "../domain/page-data";
 import { TEACHER_FIELDS as T, parseTeacher, parseWish } from "../domain/records";
@@ -146,6 +146,7 @@ export async function pageData(deps: BirthdayDeps, token: string): Promise<PageD
     subject: teacher.subject,
     photoUrl: (teacher.photoToken && urls.get(teacher.photoToken)) || null,
     year: parsed.year,
+    dateLabel: teacher.birthMs === null ? null : (({ m, d }) => `${m} 月 ${d} 日`)(birthdayIn(parsed.year, shanghaiYmd(teacher.birthMs))),
     tenure: tenure(teacher.joinMs, deps.now()),
     stats: teacher.stats,
     blessing: chooseBlessing(teacher),
