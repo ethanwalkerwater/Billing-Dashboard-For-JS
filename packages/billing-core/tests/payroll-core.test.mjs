@@ -39,6 +39,7 @@ test("parses payroll support tables", () => {
 
   assert.deepEqual(base[0].teacher, "张老师");
   assert.equal(base[0].baseSalary, 1000);
+  assert.equal(base[0].transportReimbursement, 0);
   assert.equal(ownership[0].ownerTeacher, "张老师");
   assert.equal(taxSocial[0].personalSocialInsurance, 300);
   assert.equal(taxSocial[0].companySocialInsurance, 200);
@@ -259,6 +260,37 @@ test("negative bonus is retained for review but contributes zero to income and c
   assert.equal(row.appliedBonusSalary, 0);
   assert.equal(row.personalTotalIncome, 1800);
   assert.match(row.issues.find((issue) => issue.code === "bonus_negative").label, /按 0 处理/);
+});
+
+test("transport reimbursement adds separately to net pay and company cost without entering Bonus", () => {
+  const report = buildReportFromCsv(scheduleCsv, "schedule.csv");
+  for (const [salary, bonus, netPay, companyCost] of [
+    [1000, 100, 925, 997],
+    [2000, -1100, 1825, 1897],
+  ]) {
+    for (const amount of ["123.45", "0", ""]) {
+      const baseSalaries = parseBaseSalaryCsv([
+        "老师名,雇佣属性,基础薪水,管理费,房租扣除,交通报销",
+        `张老师,兼职,${salary},300,200,${amount}`,
+      ].join("\n"));
+      const row = buildPayrollReport(report, {
+        parameters: { partTimeLessonRate: 0.5 },
+        baseSalaries,
+        reimbursements: [{ teacher: "张老师", reimbursement: 50 }],
+        taxSocial: [{ teacher: "张老师", personalSocialInsurance: 20, tax: 10, companySocialInsurance: 40 }],
+        netPayAdjustments: [{ month: "2026-05", teacher: "张老师", amount: 5 }],
+        companyCostAdjustments: [{ month: "2026-05", teacher: "张老师", amount: 7 }],
+      }).byMonth["2026-05"]["张老师"];
+
+      assert.equal(baseSalaries[0].transportReimbursement, Number(amount));
+      assert.equal(row.transportReimbursement, Number(amount));
+      assert.equal(row.reimbursement, 50);
+      assert.equal(row.fixedIncome, salary - 200);
+      assert.equal(row.bonusSalary, bonus);
+      assert.equal(row.personalTotalIncome, netPay + Number(amount));
+      assert.equal(row.companyTotalCost, companyCost + Number(amount));
+    }
+  }
 });
 
 test("net pay and company cost take their own manual adjustments as the last step", () => {

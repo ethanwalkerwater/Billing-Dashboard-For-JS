@@ -86,6 +86,7 @@ export function parseBaseSalaryCsv(csvText, options = {}) {
         schedulingFee: parseMoney(pick(row, ["排课", "基础收入 排课"])),
         adminFee: parseMoney(pick(row, ["行政前台", "基础收入 行政前台"])),
         rentDeduction: parseMoney(pick(row, ["房租扣除", "基础支出 房租扣除"])),
+        transportReimbursement: parseMoney(pick(row, ["交通报销"])),
         sourceName: cleanText(name),
       };
     })
@@ -547,15 +548,16 @@ export function buildPayrollReport(reportData, input = {}) {
       );
       const appliedBonusSalary = Math.max(0, bonusSalary);
       const reimbursementAmount = round(reimbursement?.reimbursement || 0);
+      const transportReimbursement = round(base?.transportReimbursement || 0);
       const tax = round(taxSocial?.tax || 0);
       const personalSocialInsurance = round(taxSocial?.personalSocialInsurance || 0);
       const companySocialInsurance = round(taxSocial?.companySocialInsurance || 0);
       // personalTotalIncome 在页面上叫「实发工资」（字段名保留，避免下游改名）
       const personalTotalIncome = round(
-        fixedIncome + appliedBonusSalary + reimbursementAmount - personalSocialInsurance - tax + netPayAdjustmentTotal,
+        fixedIncome + appliedBonusSalary + reimbursementAmount + transportReimbursement - personalSocialInsurance - tax + netPayAdjustmentTotal,
       );
       const companyTotalCost = round(
-        fixedIncome + appliedBonusSalary + reimbursementAmount + companySocialInsurance + companyCostAdjustmentTotal,
+        fixedIncome + appliedBonusSalary + reimbursementAmount + transportReimbursement + companySocialInsurance + companyCostAdjustmentTotal,
       );
       const issues = [];
       if (!base) issues.push({ code: MISSING.baseSalary, label: "缺少基础薪水" });
@@ -599,6 +601,7 @@ export function buildPayrollReport(reportData, input = {}) {
         bonusSalary,
         appliedBonusSalary,
         reimbursement: reimbursementAmount,
+        transportReimbursement,
         personalSocialInsurance,
         companySocialInsurance,
         tax,
