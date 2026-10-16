@@ -1,0 +1,29 @@
+[package]
+name = "classroom-recorder"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "image-png", "macos-private-api"] }
+tauri-plugin-opener = "2"
+tauri-plugin-autostart = "2"
+tauri-plugin-single-instance = "2"
+tauri-plugin-clipboard-manager = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["time", "sync", "macros"] }
+reqwest = { version = "0.13", features = ["json", "query"] }
+chrono = "0.4"
+cpal = "0.17"
+mp3lame-encoder = "0.2"
+sha2 = "0.10"
+keepawake = "0.5"
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true

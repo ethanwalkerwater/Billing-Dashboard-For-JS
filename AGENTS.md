@@ -9,6 +9,7 @@
 - **雅思正向率**：`apps/ielts-progress`，飞书录入雅思成绩，按课表归属老师，看老师的学生正向率（CloudBase）。
 - **老师生日**：`apps/teacher-birthday`，飞书老师档案 + 生日前问卷与当天群卡片 + 3D 祝福网页（CloudBase）。
 - **学生取消课程**：`apps/course-feedback-tracker` 里的独立模块（云函数 `cancel-api` + 页面 `/cancel/`），学生自助取消、写课表「临时取消」、飞书通知老师，见 `apps/course-feedback-tracker/docs/lesson-cancellation.md`。
+- **菁仕课堂（录课）**：`apps/classroom-recorder`，老师端 Mac/Windows 录课 App（Tauri）+ CloudBase 云函数 `classroom-api`（飞书登录、分段上传、腾讯云转写、家长总结）+ 完整报告网页与后台（录音 / 转写 / 报告查看、提示词调试与发布）`/classroom/`。UI 以 `docs/MVP.html`、`docs/classroom-report.html` 为准，接口约定见 `apps/classroom-recorder/docs/design.md`。
 - **计费内核**：`packages/billing-core`，课时、取消、金额和薪资计算唯一真源。
 
 ## 依赖关系

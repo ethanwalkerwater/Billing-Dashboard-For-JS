@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>菁仕课堂课程档案</title>
+<style>
+:root{color-scheme:light;--bg:#f6f7f9;--paper:#fff;--text:#16181d;--muted:#5d6573;--line:#e3e6eb;--accent:#2f6bff;--soft:#e8efff;--ok:#177648;--ok-bg:#e3f4ea;--warn:#92621b;--warn-bg:#fbf0dc;--none:#c9ced6}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.8 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;-webkit-font-smoothing:antialiased}
+main{max-width:920px;margin:36px auto 64px;padding:44px 52px;background:var(--paper);border:1px solid var(--line);border-radius:16px}
+.eyebrow{color:var(--accent);font-size:13px;font-weight:600;letter-spacing:2px}h1{font-size:32px;line-height:1.35;margin:8px 0 10px}.meta{color:var(--muted);font-size:14px;margin:0}
+h2{font-size:20px;margin:40px 0 12px;padding-top:24px;border-top:1px solid var(--line)}h3{font-size:15px;margin:22px 0 6px}p{margin:8px 0}ul,ol{margin:8px 0;padding-left:22px}li+li{margin-top:4px}
+.lead{font-size:18px;line-height:1.7;margin:22px 0 0}
+.tag{display:inline-block;font-size:12px;font-weight:600;border-radius:6px;padding:1px 8px;margin-right:6px}.done{background:var(--ok-bg);color:var(--ok)}.todo{background:var(--soft);color:var(--accent)}.ask{background:var(--warn-bg);color:var(--warn)}
+table{width:100%;border-collapse:collapse;font-size:14px;margin:10px 0}th{text-align:left;color:var(--muted);font-size:12px;font-weight:500;background:var(--bg)}th,td{padding:10px;border-bottom:1px solid var(--line);vertical-align:top}
+.wrap{overflow-x:auto}
+code,pre{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:12.5px}pre{background:var(--bg);border-radius:10px;padding:14px 16px;white-space:pre-wrap;line-height:1.7}
+.mock{border:1px solid var(--line);border-radius:12px;padding:22px 24px;margin-top:14px}
+.mock h4{margin:0;font-size:18px}.mock .meta{margin-bottom:14px}
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:14px 0 18px}.kpis div{background:var(--bg);border-radius:10px;padding:10px 14px}.kpis small{display:block;color:var(--muted);font-size:12px}.kpis b{font-size:18px}
+.chapter{display:grid;grid-template-columns:150px 1fr 54px;gap:12px;align-items:center;font-size:14px;margin:8px 0}.chapter b{font-weight:600}
+.cells{display:flex;gap:3px;flex-wrap:wrap}.cells i{width:22px;height:14px;border-radius:3px;background:var(--none)}.cells i.m{background:var(--ok)}.cells i.l{background:#7fa6ff}.cells i.p{background:#e0a33a}
+.chapter span:last-child{color:var(--muted);text-align:right;font-variant-numeric:tabular-nums}
+.key{display:flex;gap:16px;flex-wrap:wrap;color:var(--muted);font-size:12px;margin-top:10px}.key i{display:inline-block;width:12px;height:10px;border-radius:2px;margin-right:4px;vertical-align:-1px}
+.detail{margin-top:16px;border-top:1px dashed var(--line);padding-top:12px;font-size:14px}.detail .when{color:var(--muted);font-size:13px}
+@media(max-width:640px){main{margin:16px 12px 32px;padding:28px 20px}h1{font-size:26px}.kpis{grid-template-columns:1fr 1fr}.chapter{grid-template-columns:1fr 44px}.chapter .cells{grid-column:1/-1;grid-row:2}}
+</style>
+</head>
+<body>
+<main>
+  <div class="eyebrow">产品方案 · 菁仕课堂</div>
+  <h1>课程档案：从单节学情报告到课程长期报告</h1>
+  <p class="meta">记录于 2026-10-16 · 方案 A 已上线，方案 C 待讨论后推进</p>
+  <p class="lead">每节课的学情报告只回答「这节课怎么样」。课程档案要回答「这门课学到哪了、哪些知识点稳了、离考试还差什么」：按学生 + 课程建档，每节课的学情自动累加，对照考纲展开成整门课的进度。</p>
+
+  <h2>一、已决定的推进顺序</h2>
+  <div class="wrap"><table>
+    <thead><tr><th>方案</th><th>内容</th><th>状态</th></tr></thead>
+    <tbody>
+      <tr><td><b>A. 单课报告加图表</b></td><td>课堂时间分布时间轴（复习 / 讲解 / 例题 / 练习 / 答疑 / 总结 / 其他）、知识点用时占比、学生主动提问板块</td><td><span class="tag done">已上线</span>提示词 v3</td></tr>
+      <tr><td><b>B. 不按考纲的档案</b></td><td>把历次报告的知识点按名字直接累加</td><td><span class="tag ask">不做</span>知识点名字每次不一样，累加不起来</td></tr>
+      <tr><td><b>C. 按考纲的课程档案</b></td><td>考纲知识点库 → 每节课对应到考纲编号 → 档案页按章节展示进度、状态和历次依据</td><td><span class="tag todo">待讨论</span>先挑一门课试点</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>方案 A 做了什么（2026-10-16 上线）</h3>
+  <ul>
+    <li><b>提示词</b>：学情报告多输出 <code>timeline</code>（每个环节的类型、起止时间、讲到的知识点）和 <code>questions</code>（学生主动提的问题、时间、老师怎么回应）。后台提示词发布为 v3，在 v2（你改过的家长总结）基础上只加了这两条要求。</li>
+    <li><b>程序校验</b>：时间不合法的环节丢掉、重叠截断、知识点只认本课「掌握情况」里有的名字；旧报告和旧提示词没有这两项时，对应板块不显示。</li>
+    <li><b>知识点用时</b>由程序按时间轴算（一段讲了几个知识点就平分这段时间），不让大模型估分钟数。</li>
+    <li><b>页面</b>：报告从 6 个板块变成最多 9 个：本课学习内容 → 课堂时间分布 → 知识点用时 → 知识点掌握情况 → 主动提问（有才显示）→ 课堂表现 → 易错点 → 巩固计划 → 下节课衔接。PDF 由原来固定 2 页变为约 3 页，去掉了强制分页。</li>
+  </ul>
+  <p class="meta">方案 A 的时间轴和知识点用时，就是方案 C 的原材料：每节课「哪个知识点讲了多久、掌握到什么程度、依据是什么」都已经结构化存下来了。</p>
+
+  <h2>二、方案 C：按考纲的课程档案</h2>
+  <h3>1. 档案怎么建</h3>
+  <ul>
+    <li><b>一份档案 = 学生 + 课表里的「课程类型」</b>，如「浩然 · IG物理」「浩然 · Alevel数学」。课表里的课程类型目前有 IG物理、Alevel物理、IG数学、Alevel数学、雅思写作、英语刷题班等 30 多种。</li>
+    <li><b>有考纲的课</b>（IG / Alevel 各科）按考纲展开进度；<b>没有固定考纲的课</b>（刷题班、雅思）先只做「历次课程汇总 + 反复出现的易错点」，以后再设计各自的技能树（如雅思按四项评分标准）。</li>
+    <li><b>转写一直保留</b>（录音 30 天后删除），所以档案可以随时用全部历史课重算。</li>
+  </ul>
+
+  <h3>2. 考纲知识点库</h3>
+  <p>每门课一份考纲树，存数据库，后台可看可改。以 Cambridge IGCSE Physics（0625）为例，初稿由我按官方考纲整理，<b>需要物理老师核对</b>：</p>
+  <div class="wrap"><table>
+    <thead><tr><th>章节</th><th>知识点（编号）</th></tr></thead>
+    <tbody>
+      <tr><td>1 Motion, forces and energy</td><td>1.1 物理量与测量 · 1.2 运动 · 1.3 质量与重量 · 1.4 密度 · 1.5 力 · 1.6 动量 · 1.7 能量、功与功率 · 1.8 压强</td></tr>
+      <tr><td>2 Thermal physics</td><td>2.1 分子动理论 · 2.2 热学性质与温度 · 2.3 热传递</td></tr>
+      <tr><td>3 Waves</td><td>3.1 波的一般性质 · 3.2 光 · 3.3 电磁波谱 · 3.4 声</td></tr>
+      <tr><td>4 Electricity and magnetism</td><td>4.1 磁现象 · 4.2 电学量 · 4.3 电路 · 4.4 用电安全 · 4.5 电磁效应</td></tr>
+      <tr><td>5 Nuclear physics</td><td>5.1 原子核模型 · 5.2 放射性</td></tr>
+      <tr><td>6 Space physics</td><td>6.1 地球与太阳系 · 6.2 恒星与宇宙</td></tr>
+    </tbody>
+  </table></div>
+  <p class="meta">实际使用时每个编号下还会细到考纲条目（如 1.5.2 牛顿第二定律），档案按条目累计、按章节汇总。</p>
+
+  <h3>3. 每节课怎么对应到考纲</h3>
+  <ol>
+    <li>出报告时，把这门课的考纲条目列表一起给大模型，要求 <code>mastery</code> 里每个知识点<b>只能从列表里选编号</b>（不能自己起名字），时间轴的 <code>points</code> 同理。这样「牛顿第二定律」和「F=ma」都会落到同一个编号上。</li>
+    <li>对应不上的内容（考纲外的拓展、学校作业）记为「考纲外」，不计入进度。</li>
+    <li>老师可以在后台改某节课的对应关系，档案跟着重算。</li>
+  </ol>
+
+  <h3>4. 状态怎么累加</h3>
+  <div class="wrap"><table>
+    <thead><tr><th>档案状态</th><th>规则</th></tr></thead>
+    <tbody>
+      <tr><td>未学</td><td>没有任何一节课讲到</td></tr>
+      <tr><td>学过</td><td>讲过，最近一次是「本课已学习」或「开始运用」</td></tr>
+      <tr><td>已掌握</td><td>最近一次是「基本掌握」，且之前没有连续两次「需要巩固」</td></tr>
+      <tr><td>需巩固</td><td>最近一次是「需要巩固」，或同一易错点在两节以上课里出现</td></tr>
+    </tbody>
+  </table></div>
+  <p class="meta">只看「最近一次」是为了让进步能体现出来；规则写在代码里，不让大模型判断整门课的状态。</p>
+
+  <h3>5. 档案页长什么样（示意）</h3>
+  <div class="mock" aria-label="课程档案页面示意">
+    <h4>浩然 · IG 物理 课程档案</h4>
+    <p class="meta">2026.09.01 起 · 14 节课 · 21 小时 · 王老师</p>
+    <div class="kpis"><div><small>考纲覆盖</small><b>38%</b></div><div><small>已掌握</small><b>9 项</b></div><div><small>需巩固</small><b>3 项</b></div><div><small>主动提问</small><b>17 次</b></div></div>
+    <div class="chapter"><b>1 运动、力与能量</b><div class="cells"><i class="m"></i><i class="m"></i><i class="m"></i><i class="l"></i><i class="m"></i><i class="p"></i><i class="l"></i><i class="m"></i><i class="m"></i><i class="p"></i><i class="l"></i><i class="m"></i><i class="m"></i><i class="l"></i><i></i><i></i></div><span>81%</span></div>
+    <div class="chapter"><b>2 热学</b><div class="cells"><i class="m"></i><i class="l"></i><i class="p"></i><i></i><i></i><i></i><i></i><i></i></div><span>38%</span></div>
+    <div class="chapter"><b>3 波</b><div class="cells"><i class="l"></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><span>10%</span></div>
+    <div class="chapter"><b>4 电与磁</b><div class="cells"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><span>0%</span></div>
+    <div class="chapter"><b>5 核物理</b><div class="cells"><i></i><i></i><i></i><i></i><i></i></div><span>0%</span></div>
+    <div class="chapter"><b>6 天体物理</b><div class="cells"><i></i><i></i><i></i><i></i></div><span>0%</span></div>
+    <div class="key"><span><i style="background:var(--ok)"></i>已掌握</span><span><i style="background:#7fa6ff"></i>学过</span><span><i style="background:#e0a33a"></i>需巩固</span><span><i style="background:var(--none)"></i>未学</span></div>
+    <div class="detail">
+      <b>1.5.2 牛顿第二定律</b> · 已掌握 · 累计 52 分钟
+      <ul>
+        <li><span class="when">10.08</span> 本课已学习：理解 F 是合力，能算水平面的加速度</li>
+        <li><span class="when">10.15</span> 需要巩固：两次把 g 当成 kg 代入</li>
+        <li><span class="when">10.22</span> 基本掌握：三道练习题全对，自己先换了单位</li>
+      </ul>
+    </div>
+  </div>
+  <p class="meta">点每个格子展开这个知识点的历次记录；下方再接「最近的课」时间线（每节课的时间分布缩略图 + 报告链接）和「反复出现的易错点」。</p>
+
+  <h3>6. 要做的事（试点一门课）</h3>
+  <ol>
+    <li>建表：考纲树（课程类型 → 章节 → 条目）、课时与考纲条目的对应记录。</li>
+    <li>整理试点课程的考纲初稿 → 老师核对 → 导入。</li>
+    <li>学情报告提示词加「只能从考纲列表选编号」，对这门课生效；其余课不变。</li>
+    <li>用已有转写回填历史课。</li>
+    <li>档案页（网页，同报告风格，可打印 PDF）+ 后台入口；App 课程详情里加「课程档案」链接。</li>
+  </ol>
+
+  <h2>三、待你决定</h2>
+  <ul>
+    <li><span class="tag ask">试点课程</span>IG物理（考纲最清晰，推荐）/ Alevel数学（课最多）/ 其他</li>
+    <li><span class="tag ask">谁能看</span>先给老师和后台看，内容稳定后再开放给家长（推荐）/ 一开始就给家长链接</li>
+    <li><span class="tag ask">学生识别</span>课表「学生」字段是否会重名？会的话改用「学员课程ID」区分</li>
+    <li><span class="tag ask">考纲核对</span>由哪位老师核对试点课程的考纲初稿</li>
+  </ul>
+
+  <h2>四、风险与成本</h2>
+  <ul>
+    <li><b>对应准确度</b>：一节课常跨多个考纲条目，大模型可能选错编号。缓解：限定只能选列表里的编号 + 老师可改 + 只看最近一次状态。</li>
+    <li><b>转写质量</b>：录音嘈杂时知识点判断会偏。档案页注明「依据课堂录音整理」，每个状态都能点开看到判断依据。</li>
+    <li><b>成本</b>：每节课多带一份考纲列表（约 2–4 千字），大模型费用增加不到 1 分钱；档案页按需计算，不加定时任务。</li>
+  </ul>
+</main>
+</body>
+</html>

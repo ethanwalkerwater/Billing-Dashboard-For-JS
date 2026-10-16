@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>会议纪要 · 菁仕教育</title>
+<style>
+:root{color-scheme:light dark;--bg:#f6f7f9;--paper:#fff;--text:#16181d;--muted:#5d6573;--line:#e3e6eb;--accent:#2f6bff;--soft:#e8efff;--ok:#177648;--warn:#92621b}
+@media(prefers-color-scheme:dark){:root{--bg:#0f1115;--paper:#171a20;--text:#eceef2;--muted:#a3aab6;--line:#2a2f38;--accent:#91b0ff;--soft:#1b2540;--ok:#74d9a6;--warn:#edc57e}}
+*{box-sizing:border-box}[hidden]{display:none!important}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.8 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;-webkit-font-smoothing:antialiased}
+a{color:var(--accent)}a:focus-visible{outline:3px solid var(--accent);outline-offset:4px}button,a{touch-action:manipulation}
+.toolbar{position:sticky;top:0;z-index:2;background:var(--paper);border-bottom:1px solid var(--line)}
+.toolbar-inner{max-width:960px;margin:auto;padding:14px 28px;display:flex;align-items:center;justify-content:space-between;gap:16px}
+.back{text-decoration:none;color:var(--muted);font-size:13px}.download{display:inline-flex;align-items:center;justify-content:center;gap:8px;background:#2f6bff;color:#fff;text-decoration:none;padding:9px 18px;border-radius:10px;font-size:14px;font-weight:600}
+.download:hover{background:#2459dc}.download svg{width:17px;height:17px}
+main{max-width:904px;margin:36px auto 64px;padding:44px 52px 28px;background:var(--paper);border:1px solid var(--line);border-radius:16px}
+.brand{display:flex;align-items:center;gap:10px;font-weight:600;font-size:14px}.mark{display:grid;place-items:center;width:30px;height:30px;background:#2f6bff;color:#fff;border-radius:8px}.sample{margin-left:auto;color:var(--muted);font-size:12px;font-weight:400;border:1px solid var(--line);padding:2px 9px;border-radius:6px}
+.eyebrow{margin-top:36px;color:var(--accent);font-size:13px;font-weight:600;letter-spacing:2px}h1{font-size:34px;line-height:1.35;letter-spacing:-1px;margin:8px 0 12px}.meta{color:var(--muted);font-size:14px}.lead{font-size:19px;line-height:1.7;margin:26px 0 24px;max-width:650px}
+.facts{display:grid;grid-template-columns:repeat(3,1fr);padding:18px 0;border-block:1px solid var(--line)}.facts div+div{border-left:1px solid var(--line);padding-left:26px}.facts small{display:block;color:var(--muted);font-size:12px}.facts b{font-size:18px;font-weight:600}
+section{margin-top:34px}h2{display:flex;align-items:baseline;gap:12px;font-size:19px;line-height:1.5;margin:0 0 16px}h2 small{font-size:12px;color:var(--accent);font-variant-numeric:tabular-nums;font-weight:500}p{margin:0}ol,ul{margin:0;padding-left:22px}li+li{margin-top:8px}
+.table-wrap{overflow-x:auto}table{width:100%;border-collapse:collapse;font-size:14px}th{text-align:left;color:var(--muted);font-size:12px;font-weight:500;background:var(--bg)}th,td{padding:12px 10px;border-bottom:1px solid var(--line);vertical-align:top}th:first-child,td:first-child{padding-left:0;width:28%}td:nth-child(2){width:20%;font-weight:600;white-space:nowrap}.good{color:var(--ok)}.practice{color:var(--warn)}.evidence{color:var(--muted)}
+.insight{border-left:3px solid var(--accent);padding:2px 0 2px 18px}.issue{padding:18px 20px;background:var(--bg);border-radius:10px}.issue b{display:block;margin-bottom:6px}.plan{display:grid;grid-template-columns:1fr 1fr;gap:26px}.plan h3{font-size:14px;margin:0 0 8px}.plan p{color:var(--muted);font-size:14px}.foot{margin-top:36px;padding-top:18px;border-top:1px solid var(--line);font-size:12px;color:var(--muted)}
+@media(max-width:640px){.toolbar-inner{padding:12px 16px}.back{font-size:12px}.download{padding:8px 12px}main{margin:16px 12px 32px;padding:28px 20px;border-radius:12px}h1{font-size:28px}.lead{font-size:17px}.facts b{font-size:16px}.facts div+div{padding-left:12px}.plan{grid-template-columns:1fr;gap:18px}th,td{padding:10px 6px}table{font-size:12px}td:nth-child(2){white-space:normal}.sample{font-size:11px}}
+.tl{position:relative;height:28px;border-radius:8px;background:var(--bg);overflow:hidden}.tl i{position:absolute;top:0;bottom:0;box-shadow:inset -2px 0 0 var(--paper)}.tl-axis{display:flex;justify-content:space-between;margin-top:6px;color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums}
+.p0{background:#8b5cf6}.p1{background:#2f6bff}.p2{background:#06b6d4}.p3{background:#16a34a}.p4{background:#f59e0b}.p5{background:#ec4899}.p6{background:#cbd5e1}
+.legend,.steps{list-style:none;padding:0}.legend{display:flex;flex-wrap:wrap;gap:8px 22px;margin:14px 0 0;font-size:14px}.legend li{display:flex;align-items:center;gap:6px;margin:0}.legend b{font-weight:600}.legend span{color:var(--muted);font-size:12px}.legend i,.steps i{width:10px;height:10px;border-radius:3px}
+.steps{margin:18px 0 0;border-top:1px solid var(--line);font-size:14px}.steps li{display:grid;grid-template-columns:104px 10px 36px 1fr;align-items:center;gap:10px;margin:0;padding:7px 0;border-bottom:1px solid var(--line)}.steps b{font-weight:600}.when{color:var(--muted);font-size:13px;font-variant-numeric:tabular-nums}
+.bars{display:grid;gap:12px}.bar{display:grid;grid-template-columns:minmax(0,30%) 1fr 116px;align-items:center;gap:14px;font-size:14px}.track{height:10px;background:var(--bg);border-radius:5px;overflow:hidden}.track i{display:block;height:100%;background:var(--accent);border-radius:5px}.bar b{color:var(--muted);font-size:13px;font-weight:500;text-align:right;font-variant-numeric:tabular-nums}
+.qs{display:grid;gap:12px;margin-top:12px}.q{margin:0;padding:14px 18px;border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:10px}.q blockquote{margin:2px 0 0;font-size:16px;font-weight:600}.q figcaption{margin-top:6px;color:var(--muted);font-size:14px}
+@media(max-width:640px){.steps li{grid-template-columns:88px 10px 32px 1fr;gap:8px;font-size:13px}.bar{grid-template-columns:1fr 96px;gap:6px 10px}.bar span{grid-column:1/-1}.legend{gap:6px 16px}}
+@media print{.tl,.legend,.steps li,.bar,.q{break-inside:avoid}.q blockquote{font-size:12pt}}
+@page{size:A4;margin:18mm 18mm}
+@media print{html{color-scheme:light}body{background:#fff;color:#16181d;font-size:11pt;--bg:#f6f7f9;--paper:#fff;--text:#16181d;--muted:#5d6573;--line:#e3e6eb;--accent:#2f6bff;--ok:#177648;--warn:#92621b;-webkit-print-color-adjust:exact;print-color-adjust:exact}.toolbar{display:none}main{margin:0;padding:0;max-width:none;border:0;border-radius:0}.eyebrow{margin-top:28px}h1{font-size:28pt}.lead{font-size:15pt}.facts b{font-size:14pt}section{margin-top:26px}h2{font-size:15pt;break-after:avoid}table{font-size:10pt}tr,.issue,.plan,.insight{break-inside:avoid}.foot{font-size:9pt}.plan{display:grid;grid-template-columns:1fr 1fr}}
+.actions{display:flex;gap:10px}.ghost{border:1px solid var(--line);background:var(--paper);color:var(--text);border-radius:10px;padding:8px 16px;font:inherit;font-size:14px;font-weight:600;cursor:pointer}button.download{border:0;font-family:inherit;line-height:inherit;cursor:pointer}
+
+.facts.four{grid-template-columns:repeat(4,1fr)}
+.decisions{padding-left:22px}.decisions .when{float:right;margin-left:16px}
+.todos td:nth-child(2){width:14%}.todos td:nth-child(3){width:12%;white-space:nowrap}.todos th:last-child,.todos td:last-child{width:72px;text-align:right}.todos th:first-child,.todos td:first-child{width:52%}
+.agenda+.agenda{margin-top:22px}.agenda h3{display:flex;align-items:center;gap:8px;font-size:15px;margin:0 0 8px}.agenda h3 i{width:10px;height:10px;border-radius:3px}.agenda h3 span{color:var(--muted);font-size:12px;font-weight:500}
+.agenda .steps{margin-top:0}.agenda .steps li{grid-template-columns:104px minmax(0,32%) 1fr;align-items:start}
+.spec{max-width:904px;margin:0 auto 64px;padding:28px 52px;border:1px dashed var(--line);border-radius:16px;font-size:14px;color:var(--muted)}.spec h2{font-size:16px;color:var(--text)}.spec h3{font-size:14px;color:var(--text);margin:20px 0 6px}.spec pre{white-space:pre-wrap;background:var(--paper);border:1px solid var(--line);border-radius:10px;padding:14px 16px;font-size:12.5px;line-height:1.7;color:var(--text);overflow-x:auto}
+@media(max-width:640px){.facts.four{grid-template-columns:1fr 1fr;row-gap:12px}.facts.four div:nth-child(3){border-left:0;padding-left:0}.agenda .steps li{grid-template-columns:88px 1fr}.agenda .steps li>span:last-child{grid-column:2}.todos td:nth-child(3),.todos th:nth-child(3){display:none}.spec{margin:0 12px 32px;padding:20px}.ghost{padding:7px 12px}}
+@media print{.spec,.toolbar{display:none}.facts.four{grid-template-columns:repeat(4,1fr)}tr,.agenda h3{break-inside:avoid;break-after:avoid}}
+</style>
+</head>
+<body>
+<nav class="toolbar" aria-label="纪要操作"><div class="toolbar-inner"><a class="back" href="MVP.html">← 返回菁仕课堂</a><span class="actions"><button type="button" class="ghost" id="copy">复制纪要</button><button type="button" class="download" id="download"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m-5-5 5 5 5-5M5 16v5h14v-5"/></svg>下载 PDF</button></span></div></nav>
+<main id="report"></main>
+<aside class="spec" aria-label="设计说明">
+  <h2>设计说明（不进正式页面）</h2>
+  <h3>什么时候出这份纪要</h3>
+  <p>随时录制结束时选「会议」→ 转写（不区分老师 / 学生，保留「说话人N」）→ 大模型输出下面的 JSON → 程序校验 → 这个页面渲染。App 里的「会议纪要」卡片、飞书私信和「复制纪要」用的纯文本，都由程序从同一份 JSON 拼出来，三处内容一致。会议不出家长总结和学情报告，不进「总结未发送」。</p>
+  <h3>页面结构（顺序 = 会后最先要看的）</h3>
+  <ol><li>一句话总结 + 时长 / 议题 / 决定 / 待办四个数</li><li>决定事项：会上拍板的事，带时间点</li><li>待办事项：事项、负责人、截止、时间点；听不出负责人的标「待认领」</li><li>会议时间分布：按板块着色的时间轴 + 各板块用时</li><li>议题详情：板块 → 具体议题（一个学生、一个岗位、一条政策），每条有结论，「未定」标黄</li><li>待跟进：提出了但没结论的问题</li><li>发言占比：程序按转写里每个说话人的发言秒数算，不让大模型估</li></ol>
+  <h3>提示词（已上线：后台「提示词」第四栏「会议纪要」，可改可试可发布）</h3>
+  <pre>你是会议记录员，根据会议录音转写写一份结构化的会议纪要。
+只写转写里有依据的内容，不编造人名、日期和数字；听不清、没结论的不要替它下结论，放进 followups。转写由机器识别，同音错字按上下文理解，不要照抄明显的错字。
+
+字段要求：
+- title：会议主题，15 字以内；lead：一句话总结，40 字以内，写最重要的结论或下一步
+- sections：先把整场会分成 2–6 个板块（如「学生近况」「申请进度」「招聘」「制度与政策」）；每个板块下按时间顺序列出具体议题 items，每个 item 是一件具体的事（一个学生、一个岗位、一条政策），整场最多 40 个；start / end 照抄转写里的时间（mm:ss）；conclusion 一句话、30 字以内，没有结论写「未定」
+- decisions：会上明确拍板的事，最多 15 条，挑最重要的；只是讨论、没拍板的不算
+- todos：明确有人要去做的事，最多 20 条；owner 用转写里的称呼（如「郭老师」），听不出就留空；due 转写里说了才写
+- followups：提出了但没有结论、需要会后确认的问题，最多 8 条</pre>
+  <h3>JSON（结构写死在代码里，后台只改上面的文字要求）</h3>
+  <pre>{
+  "title": "", "lead": "",
+  "sections": [{ "title": "板块", "items": [{ "title": "议题", "start": "mm:ss", "end": "mm:ss", "conclusion": "" }] }],
+  "decisions": [{ "text": "", "time": "mm:ss" }],
+  "todos": [{ "task": "", "owner": "", "due": "", "time": "mm:ss" }],
+  "followups": [""]
+}</pre>
+  <h3>程序兜底</h3>
+  <ul><li>时间不合法的议题丢掉；板块为空的丢掉；提示词里限定条数，程序再兜底：决定最多 15 条、待办最多 30 条、待跟进最多 10 条；长会输出放宽到 8000 token，避免 JSON 被截断</li><li>超过 1.2 万字的转写先分段整理（每段要求带时间线、决定、待办、未决问题），再汇总成 JSON</li><li>JSON 不合格让大模型重写一次，再不行记失败走重试</li></ul>
+  <h3>用真实录音试过</h3>
+  <p>9 月 22 日那段 82 分钟的录音（文件名叫「课程录音」，内容其实是教务例会）：分成 7 个板块、60 个具体议题，28 条决定、21 条待办（大部分听得出负责人）、39 个待跟进。只给一层议题时，大模型要么把 58 分钟塞进一个议题、要么列出 35 条平铺议题，所以改成「板块 → 议题」两层。</p>
+</aside>
+<script>
+// 演示数据（虚构）；正式页面的数据来自 GET /classroom-api/report?t=&lt;token&gt;，结构同右侧 JSON
+const meeting = {
+  title: '教务周会：期中前学生跟进', date: '2026-10-14', time: '15:00–15:58', speakers: [['说话人1', 1460], ['说话人2', 820], ['说话人3', 610], ['说话人4', 330]],
+  lead: '期中前重点盯 3 名波动学生，数学老师下周试讲，排课取消改为 24 小时内处理。',
+  sections: [
+    { title: '学生近况', items: [
+      { title: '浩然 · IG 数学', start: '00:40', end: '06:10', conclusion: '审题漏条件仍反复，下周加一节刷题课' },
+      { title: '小雨 · IG 物理', start: '06:10', end: '11:30', conclusion: '单位换算问题已改善，维持现有课量' },
+      { title: '子涵 · 雅思口语', start: '11:30', end: '17:45', conclusion: '期中后再定是否加课', },
+      { title: '一诺 · 化学', start: '17:45', end: '22:20', conclusion: '约家长线下沟通目标' },
+    ] },
+    { title: '申请进度', items: [
+      { title: '本季申请总数', start: '22:20', end: '27:00', conclusion: '已签 36 单，10 月底前追平去年' },
+      { title: '文书系统信息', start: '27:00', end: '31:40', conclusion: '文书老师和进度必须写进系统' },
+    ] },
+    { title: '招聘', items: [
+      { title: '数学老师', start: '31:40', end: '37:10', conclusion: '2 位候选人下周三试讲' },
+      { title: '生物老师', start: '37:10', end: '40:30', conclusion: '未定' },
+    ] },
+    { title: '制度与政策', items: [
+      { title: '排课取消时限', start: '40:30', end: '49:00', conclusion: '老师须在 24 小时内在课表里取消' },
+      { title: '提成统计', start: '49:00', end: '55:20', conclusion: '本月起按月统计' },
+    ] },
+    { title: '其他', items: [{ title: '中秋假期值班', start: '55:20', end: '58:00', conclusion: '值班表周五前发群里' }] },
+  ],
+  decisions: [
+    { text: '浩然下周加一节数学刷题课', time: '05:20' },
+    { text: '数学老师候选人下周三下午试讲', time: '35:40' },
+    { text: '排课取消须在 24 小时内处理，多收家长费用的按月扣罚', time: '47:10' },
+    { text: '提成从本月起按月统计', time: '50:05' },
+  ],
+  todos: [
+    { task: '给浩然排加课，通知家长', owner: '王老师', due: '本周五', time: '05:40' },
+    { task: '约一诺家长线下沟通', owner: '丁老师', due: '', time: '21:30' },
+    { task: '补齐文书老师和进度到系统', owner: '各规划老师', due: '10 月底', time: '30:10' },
+    { task: '安排试讲教室和听课老师', owner: '', due: '下周二', time: '36:20' },
+    { task: '把排课取消新规发到老师群', owner: '罗老师', due: '明天', time: '48:30' },
+  ],
+  followups: ['生物老师是否必须理科背景', '子涵期中后的课量方案', '假期加课的收费标准'],
+};
+
+// 下面三个函数与 classroom-report.html 一致（时间轴配色、分钟、占比）
+const clock = s => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(Math.round(s % 60)).padStart(2, '0')}`;
+const minutes = s => `${Math.max(1, Math.round(s / 60))} 分钟`;
+const pct = (part, whole) => `${Math.round((part / whole) * 100)}%`;
+const secs = t => t.split(':').reduce((a, b) => a * 60 + Number(b), 0);
+
+function plainText(m) {
+  const list = (rows) => rows.length ? rows.map((r, i) => `${i + 1}. ${r}`).join('\n') : '无';
+  return [`${m.title} · ${m.date.slice(5).replace('-', '月').replace(/^0/, '')}日 会议纪要`, m.lead,
+    `【决定】\n${list(m.decisions.map(d => d.text))}`,
+    `【待办】\n${list(m.todos.map(t => `${t.owner ? `${t.owner}：` : ''}${t.task}${t.due ? `（${t.due}）` : ''}`))}`,
+    `【待跟进】\n${list(m.followups)}`].join('\n\n');
+}
+
+function render(m) {
+  const sections = m.sections.map((s, i) => ({ ...s, i: i % 7, items: s.items.map(it => ({ ...it, start: secs(it.start), end: secs(it.end) })) }));
+  const items = sections.flatMap(s => s.items.map(it => ({ ...it, i: s.i, section: s.title })));
+  const end = Math.max(...items.map(it => it.end));
+  const total = items.reduce((sum, it) => sum + it.end - it.start, 0);
+  const talk = m.speakers.reduce((sum, [, v]) => sum + v, 0);
+  const blocks = [
+    ['决定事项', m.decisions.length ? `<ol class="decisions">${m.decisions.map(d => `<li><span class="when">${d.time}</span><span>${d.text}</span></li>`).join('')}</ol>` : '<p class="meta">这场会没有明确拍板的事项。</p>'],
+    ['待办事项', m.todos.length ? `<div class="table-wrap"><table class="todos"><thead><tr><th scope="col">事项</th><th scope="col">负责人</th><th scope="col">截止</th><th scope="col">时间点</th></tr></thead><tbody>${m.todos.map(t => `<tr><td>${t.task}</td><td class="${t.owner ? '' : 'practice'}">${t.owner || '待认领'}</td><td>${t.due || '—'}</td><td class="when">${t.time}</td></tr>`).join('')}</tbody></table></div>` : '<p class="meta">没有明确的待办。</p>'],
+    ['会议时间分布', `<div class="tl" role="img" aria-label="${sections.map(s => `${s.title}${minutes(s.items.reduce((a, it) => a + it.end - it.start, 0))}`).join('，')}">${items.map(it => `<i class="p${it.i}" style="left:${(it.start / end) * 100}%;width:${((it.end - it.start) / end) * 100}%" title="${clock(it.start)}–${clock(it.end)} ${it.section} · ${it.title}"></i>`).join('')}</div>
+      <div class="tl-axis"><span>00:00</span><span>${clock(end / 2)}</span><span>${clock(end)}</span></div>
+      <ul class="legend">${sections.map(s => { const v = s.items.reduce((a, it) => a + it.end - it.start, 0); return `<li><i class="p${s.i}"></i>${s.title}<b>${minutes(v)}</b><span>${pct(v, total)}</span></li>`; }).join('')}</ul>`],
+    ['议题详情', sections.map(s => `<div class="agenda"><h3><i class="p${s.i}"></i>${s.title}<span>${s.items.length} 项</span></h3><ol class="steps">${s.items.map(it => `<li><span class="when">${clock(it.start)}–${clock(it.end)}</span><b>${it.title}</b><span class="${it.conclusion === '未定' ? 'practice' : ''}">${it.conclusion}</span></li>`).join('')}</ol></div>`).join('')],
+    ...(m.followups.length ? [['待跟进', `<ul>${m.followups.map(f => `<li>${f}</li>`).join('')}</ul>`]] : []),
+    ['发言占比', `<div class="bars">${m.speakers.map(([name, v]) => `<div class="bar"><span>${name}</span><div class="track"><i style="width:${(v / m.speakers[0][1]) * 100}%"></i></div><b>${minutes(v)} · ${pct(v, talk)}</b></div>`).join('')}</div><p class="meta" style="margin-top:10px">说话人由录音自动区分，同一个人可能被分成两个编号。</p>`],
+  ];
+  document.title = `${m.title}_${m.date}_会议纪要`;
+  document.getElementById('report').innerHTML = `
+    <div class="brand"><span class="mark">菁</span>菁仕教育<span class="sample">设计稿 · 示例数据</span></div>
+    <div class="eyebrow">会议纪要</div><h1>${m.title}</h1>
+    <p class="meta">${m.date.replaceAll('-', '.')} · ${m.time} · ${m.speakers.length} 位发言人</p>
+    <p class="lead">${m.lead}</p>
+    <div class="facts four"><div><small>会议时长</small><b>${minutes(end)}</b></div><div><small>议题</small><b>${items.length} 个</b></div><div><small>决定</small><b>${m.decisions.length} 项</b></div><div><small>待办</small><b>${m.todos.length} 项</b></div></div>
+    ${blocks.map(([title, body], i) => `<section><h2><small>${String(i + 1).padStart(2, '0')}</small>${title}</h2>${body}</section>`).join('')}
+    <footer class="foot">菁仕教育 · 内容由会议录音整理，说话人和错字以实际会议为准。</footer>`;
+}
+
+render(meeting);
+document.getElementById('download').addEventListener('click', () => window.print());
+document.getElementById('copy').addEventListener('click', async e => {
+  await navigator.clipboard.writeText(plainText(meeting)).catch(() => {});
+  e.target.textContent = '已复制';
+  setTimeout(() => { e.target.textContent = '复制纪要'; }, 1500);
+});
+</script>
+</body>
+</html>
