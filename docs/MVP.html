@@ -1,0 +1,631 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>菁仕课堂 MVP</title>
+<style>
+:root{
+  --bg:#f6f7f9; --surface:#fff; --surface-2:#f1f3f6; --text:#16181d; --muted:#5d6573; --faint:#8a919e;
+  --line:#e3e6eb; --accent:#2f6bff; --accent-soft:#e8efff; --rec:#e5484d; --rec-soft:#fdecec;
+  --ok:#1f9d63; --ok-soft:#e5f6ee; --warn:#b7791f; --warn-soft:#fbf3e2;
+  --wall:linear-gradient(135deg,#dfe7f5 0%,#eadff0 45%,#f6e6d8 100%);
+  --menubar:rgba(255,255,255,.55);
+  --shadow:0 1px 2px rgba(16,24,40,.06),0 24px 60px rgba(16,24,40,.18);
+  --radius:14px;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#0f1115; --surface:#171a20; --surface-2:#1f232b; --text:#eceef2; --muted:#a3aab6; --faint:#7a828f;
+    --line:#2a2f38; --accent:#6b95ff; --accent-soft:#1b2540; --rec:#ff6b6f; --rec-soft:#3a1c1e;
+    --ok:#3ccf8e; --ok-soft:#14301f; --warn:#e8b04a; --warn-soft:#352a14;
+    --wall:linear-gradient(135deg,#1a2133 0%,#251c2e 50%,#2b2119 100%);
+    --menubar:rgba(20,22,28,.55);
+    --shadow:0 1px 2px rgba(0,0,0,.3),0 24px 60px rgba(0,0,0,.5);
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0f1115; --surface:#171a20; --surface-2:#1f232b; --text:#eceef2; --muted:#a3aab6; --faint:#7a828f;
+  --line:#2a2f38; --accent:#6b95ff; --accent-soft:#1b2540; --rec:#ff6b6f; --rec-soft:#3a1c1e;
+  --ok:#3ccf8e; --ok-soft:#14301f; --warn:#e8b04a; --warn-soft:#352a14;
+  --wall:linear-gradient(135deg,#1a2133 0%,#251c2e 50%,#2b2119 100%);
+  --menubar:rgba(20,22,28,.55);
+  --shadow:0 1px 2px rgba(0,0,0,.3),0 24px 60px rgba(0,0,0,.5);
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{background:var(--bg);color:var(--text);font:14px/1.55 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
+.num{font-variant-numeric:tabular-nums}
+
+/* ---------- 桌面 ---------- */
+.stage{position:relative;height:calc(100vh - 116px);min-height:560px;background:var(--wall);overflow:hidden}
+.menubar{position:absolute;inset:0 0 auto 0;height:28px;display:flex;align-items:center;gap:18px;padding:0 14px;background:var(--menubar);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);font-size:13px;z-index:40}
+.menubar .apple{font-weight:700}
+.menubar .spacer{flex:1}
+.tray{display:flex;align-items:center;gap:6px;padding:2px 8px;border-radius:6px;position:relative}
+.tray:hover,.tray.open{background:rgba(127,127,127,.18)}
+.tray svg{width:15px;height:15px}
+.tray .rec{display:none;color:var(--rec);font-weight:600}
+.tray.recording .rec{display:inline-flex;align-items:center;gap:5px}
+.tray.recording .rec::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--rec);animation:pulse 1.4s infinite}
+.traymenu{position:absolute;top:26px;right:0;width:250px;background:var(--surface);border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow);padding:6px;display:none;text-align:left}
+.tray.open .traymenu{display:block}
+.traymenu .status{padding:6px 10px 8px;color:var(--muted);font-size:12px;border-bottom:1px solid var(--line);margin-bottom:4px}
+.traymenu .status b{display:block;color:var(--text);font-size:13px;font-weight:600}
+.traymenu button{display:block;width:100%;text-align:left;padding:6px 10px;border-radius:6px}
+.traymenu button:hover{background:var(--accent);color:#fff}
+.traymenu button[disabled]{opacity:.45;pointer-events:none}
+
+/* ---------- 胶囊 ---------- */
+.pill{--dx:0px;--dy:0px;position:absolute;top:42px;left:50%;transform:translate(calc(-50% + var(--dx)),var(--dy));
+  background:rgba(17,18,22,.92);color:#fff;border-radius:999px;padding:7px 8px 7px 16px;display:flex;align-items:center;gap:12px;
+  box-shadow:0 10px 30px rgba(0,0,0,.28),inset 0 0 0 1px rgba(255,255,255,.06);backdrop-filter:blur(20px);
+  font-size:13px;white-space:nowrap;z-index:30;cursor:grab;user-select:none;
+  transition:opacity .35s, transform .35s cubic-bezier(.2,.8,.2,1), background .3s, padding .3s}
+.pill.dragging{transition:none;cursor:grabbing}
+.pill.hidden{opacity:0;transform:translate(calc(-50% + var(--dx)),calc(var(--dy) - 14px)) scale(.94);pointer-events:none}
+.pill.warn{background:rgba(74,52,10,.95)}
+.pill .t1{font-weight:600}
+.pill .t2{color:rgba(255,255,255,.62);font-size:12px}
+.pill .col{display:flex;flex-direction:column;line-height:1.3}
+.pill .btn{background:rgba(255,255,255,.14);padding:5px 12px;border-radius:999px;font-size:12px;font-weight:600;color:#fff}
+.pill .btn:hover{background:rgba(255,255,255,.24)}
+.pill .btn.red{background:#e5484d}
+.pill .btn.red:hover{background:#f05a5f}
+.pill .dot{width:9px;height:9px;border-radius:50%;background:#ff5a5f;animation:pulse 1.4s infinite;flex:none}
+.pill .timer{font-weight:600;font-size:15px;letter-spacing:.3px}
+.pill .more{display:flex;align-items:center;gap:10px;max-width:0;overflow:hidden;opacity:0;transition:max-width .35s cubic-bezier(.2,.8,.2,1),opacity .25s}
+.pill:hover .more{max-width:320px;opacity:1}
+.pill select{background:rgba(255,255,255,.14);color:#fff;border:0;border-radius:999px;padding:5px 10px;font:inherit;font-size:12px}
+.pill select option{color:#000}
+.spin{width:14px;height:14px;border-radius:50%;border:2px solid rgba(255,255,255,.25);border-top-color:#fff;animation:spin .8s linear infinite;flex:none}
+.wave{display:flex;align-items:center;gap:2px;height:18px}
+.wave i{display:block;width:3px;border-radius:2px;background:currentColor;height:3px;transition:height .12s}
+.wave.green{color:#5fe0a3}.wave.red{color:#ff8a8d}.wave.flat{color:#e8b04a}
+@keyframes pulse{50%{opacity:.35}}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* 结束随时录制：胶囊展开成小卡片 */
+.pill.form{flex-direction:column;align-items:stretch;gap:10px;width:300px;padding:14px;border-radius:18px;white-space:normal;cursor:default}
+.pill input{background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.16);color:#fff;border-radius:10px;padding:8px 10px;font:inherit;outline:none}
+.pill input::placeholder{color:rgba(255,255,255,.4)}
+.pill input:focus{border-color:rgba(255,255,255,.45)}
+.pill .seg{display:grid;grid-template-columns:1fr 1fr;gap:3px;background:rgba(255,255,255,.1);border-radius:10px;padding:3px}
+.pill .seg button{padding:6px;border-radius:8px;font-size:13px;font-weight:600;color:rgba(255,255,255,.7)}
+.pill .seg button.on{background:#fff;color:#111}
+.pill .foot{display:flex;align-items:center;justify-content:space-between;gap:10px}
+
+/* ---------- 悬浮录制按钮 ---------- */
+.fab{--dx:0px;--dy:0px;position:absolute;right:18px;top:46%;transform:translate(var(--dx),var(--dy));height:44px;padding:0 13px;border-radius:999px;
+  background:rgba(17,18,22,.92);color:#fff;display:flex;align-items:center;box-shadow:0 10px 30px rgba(0,0,0,.28),inset 0 0 0 1px rgba(255,255,255,.06);
+  z-index:30;cursor:pointer;user-select:none;touch-action:none;transition:opacity .3s,transform .3s cubic-bezier(.2,.8,.2,1)}
+.fab.dragging{transition:none;cursor:grabbing}
+.fab.hidden{opacity:0;transform:translate(var(--dx),var(--dy)) scale(.8);pointer-events:none}
+/* 几秒没碰就淡下去，不抢上课的注意力；鼠标移上去恢复 */
+.fab.idle:not(:hover){opacity:.25;transform:translate(var(--dx),var(--dy)) scale(.8);box-shadow:none;transition:opacity .8s,transform .8s cubic-bezier(.2,.8,.2,1),box-shadow .8s}
+.fab .lbl{max-width:0;overflow:hidden;white-space:nowrap;font-size:13px;font-weight:600;transition:max-width .3s cubic-bezier(.2,.8,.2,1),margin .3s}
+.fab:hover .lbl,.fab.peek .lbl{max-width:80px;margin-right:8px}
+.fab .ring{width:18px;height:18px;border-radius:50%;border:2px solid rgba(255,255,255,.85);display:grid;place-items:center;flex:none}
+.fab .ring::after{content:"";width:8px;height:8px;border-radius:50%;background:#ff5a5f}
+.tag{display:inline-block;margin-left:6px;padding:0 6px;border-radius:6px;background:var(--surface-2);color:var(--muted);font-size:11px;font-weight:600;line-height:18px;vertical-align:1px}
+
+/* ---------- 通知 ---------- */
+.toast{position:absolute;top:40px;right:14px;width:360px;max-width:calc(100% - 28px);background:var(--surface);border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow);padding:12px 14px;z-index:35;
+  transition:transform .45s cubic-bezier(.2,.8,.2,1),opacity .3s}
+.toast.hidden{transform:translateX(120%);opacity:0;pointer-events:none}
+.toast .head{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted)}
+.toast .head .ago{margin-left:auto}
+.appicon{width:20px;height:20px;border-radius:6px;background:linear-gradient(135deg,#4c7dff,#2f56d9);display:grid;place-items:center;color:#fff;flex:none}
+.appicon svg{width:12px;height:12px}
+.toast h4{margin:8px 0 2px;font-size:14px}
+.toast p{margin:0;color:var(--muted);font-size:13px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.toast .actions{display:flex;gap:8px;margin-top:10px}
+.toast .actions button{flex:1;padding:7px;border-radius:9px;background:var(--surface-2);font-weight:600;font-size:13px}
+.toast .actions button.primary{background:var(--accent);color:#fff}
+.toast .feishu{margin-top:8px;font-size:11px;color:var(--faint)}
+
+/* ---------- 主窗口 ---------- */
+.win{position:absolute;left:50%;top:92px;transform:translateX(-50%);width:min(980px,calc(100% - 32px));height:calc(100% - 120px);max-height:620px;
+  background:var(--surface);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);display:grid;grid-template-rows:42px 1fr;overflow:hidden;z-index:20;
+  transition:opacity .25s,transform .3s cubic-bezier(.2,.8,.2,1)}
+.win.hidden{opacity:0;transform:translateX(-50%) scale(.97);pointer-events:none}
+.titlebar{display:flex;align-items:center;gap:8px;padding:0 14px;border-bottom:1px solid var(--line);background:var(--surface-2)}
+.lights{display:flex;gap:7px;margin-right:10px}
+.lights span{width:12px;height:12px;border-radius:50%;background:#d0d3d9}
+.lights .r{background:#ff5f57;cursor:pointer}.lights .y{background:#febc2e}.lights .g{background:#28c840}
+.titlebar .name{font-weight:600}
+.titlebar .who{margin-left:auto;font-size:12px;color:var(--muted)}
+.iconbtn{width:28px;height:28px;border-radius:8px;display:grid;place-items:center;color:var(--muted)}
+.iconbtn:hover{background:var(--line);color:var(--text)}
+.iconbtn svg{width:16px;height:16px}
+.body{display:grid;grid-template-columns:300px 1fr;min-height:0}
+.list{border-right:1px solid var(--line);overflow:auto;padding:6px 8px 16px}
+.group{display:flex;align-items:baseline;justify-content:space-between;padding:12px 8px 4px;font-size:12px;color:var(--faint);font-weight:600}
+.group .unsent{color:var(--rec);font-weight:600}
+.row{display:grid;grid-template-columns:18px 1fr auto;align-items:center;gap:10px;width:100%;text-align:left;padding:9px 8px;border-radius:10px}
+.row:hover{background:var(--surface-2)}
+.row.sel{background:var(--accent-soft)}
+.row .time{font-size:12px;color:var(--muted)}
+.row .title{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.row.cancelled .title{color:var(--faint);text-decoration:line-through}
+.row .side{font-size:12px;color:var(--faint);display:flex;align-items:center;gap:6px}
+.row .side.rec{color:var(--rec);font-weight:600}
+.unread{width:8px;height:8px;border-radius:50%;background:var(--rec);flex:none}
+.st{width:14px;height:14px;border-radius:50%;flex:none}
+.st.upcoming{border:2px solid var(--faint)}
+.st.recording{background:var(--rec);box-shadow:0 0 0 3px var(--rec-soft);animation:pulse 1.4s infinite}
+.st.processing{border:2px solid var(--line);border-top-color:var(--accent);animation:spin .8s linear infinite}
+.st.done{background:var(--ok);position:relative}
+.st.done::after{content:"";position:absolute;left:4px;top:2px;width:4px;height:7px;border:solid #fff;border-width:0 2px 2px 0;transform:rotate(45deg)}
+.st.cancelled{border:2px dashed var(--line)}
+
+.detail{overflow:auto;padding:26px 32px 40px}
+.detail h2{margin:0;font-size:22px;letter-spacing:-.2px}
+.meta{color:var(--muted);margin-top:4px;font-size:13px}
+.card{margin-top:22px;border:1px solid var(--line);border-radius:var(--radius);background:var(--surface)}
+.card-h{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--line);font-weight:600}
+.card-h small{font-weight:400;color:var(--faint);font-size:12px}
+.summary{display:block;width:100%;min-height:260px;border:0;resize:none;padding:14px 16px;background:transparent;color:var(--text);font:inherit;font-size:14px;line-height:1.75;outline:none}
+.card-f{display:flex;align-items:center;gap:10px;padding:10px 12px 12px 16px;border-top:1px solid var(--line);font-size:12px;color:var(--faint)}
+.card-f .sp{flex:1}
+.primary{background:var(--accent);color:#fff;padding:8px 18px;border-radius:10px;font-weight:600}
+.primary:hover{filter:brightness(1.08)}
+.primary.ok{background:var(--ok)}
+.ghost{background:var(--surface-2);padding:8px 16px;border-radius:10px;font-weight:600}
+a.primary{text-decoration:none;display:inline-flex;align-items:center;justify-content:center;gap:10px}
+.report-cta{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:20px}
+.report-cta h3{margin:0 0 4px;font-size:15px}
+.report-cta p{margin:0;color:var(--muted);font-size:13px}
+.report-cta a{flex:none}
+a:focus-visible,button:focus-visible{outline:3px solid var(--accent);outline-offset:4px}
+.hero{margin-top:22px;border-radius:var(--radius);padding:28px;text-align:center;border:1px solid var(--line)}
+.hero.rec{background:var(--rec-soft);border-color:transparent}
+.hero .big{font-size:44px;font-weight:700;letter-spacing:1px}
+.hero .big.red{color:var(--rec)}
+.hero .sub{color:var(--muted);margin-top:4px}
+.hero .chips{display:flex;justify-content:center;gap:8px;margin-top:16px;flex-wrap:wrap}
+.chip{font-size:12px;padding:4px 10px;border-radius:999px;background:var(--surface);color:var(--muted)}
+.chip.ok{color:var(--ok)}
+.hero .acts{margin-top:18px;display:flex;justify-content:center;gap:10px}
+.empty{color:var(--faint);margin-top:6px}
+
+/* 设置 */
+.sheet{position:absolute;inset:42px 0 0 0;background:rgba(0,0,0,.18);display:grid;place-items:start center;padding-top:40px;z-index:5}
+.sheet.hidden{display:none}
+.sheet .panel{width:min(420px,calc(100% - 32px));background:var(--surface);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);padding:6px 18px 16px}
+.set{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 0;border-bottom:1px solid var(--line)}
+.set:last-of-type{border-bottom:0}
+.set .lab b{display:block;font-weight:600}
+.set .lab span{font-size:12px;color:var(--faint)}
+.set select{background:var(--surface-2);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:6px 8px;font:inherit;font-size:13px}
+.meter{height:6px;border-radius:3px;background:var(--line);overflow:hidden;margin-top:8px;width:180px}
+.meter i{display:block;height:100%;background:var(--ok);width:10%;transition:width .12s}
+.switch{width:40px;height:24px;border-radius:12px;background:var(--ok);position:relative;flex:none}
+.switch::after{content:"";position:absolute;right:3px;top:3px;width:18px;height:18px;border-radius:50%;background:#fff;transition:right .2s}
+.switch.off{background:var(--line)}.switch.off::after{right:19px}
+.logout{color:var(--rec);font-weight:600}
+
+/* ---------- 演示控制 ---------- */
+.demo{min-height:116px;background:var(--surface);border-top:1px solid var(--line);padding:12px 16px;display:flex;flex-direction:column;gap:10px}
+.demo .top{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.demo .lbl{font-size:12px;color:var(--faint);font-weight:600;margin-right:4px}
+.scene{padding:6px 12px;border-radius:999px;background:var(--surface-2);font-size:13px;font-weight:600;color:var(--muted)}
+.scene.on{background:var(--text);color:var(--bg)}
+.auto{margin-left:auto;padding:6px 14px;border-radius:999px;background:var(--accent);color:#fff;font-size:13px;font-weight:600}
+.caption{font-size:14px;color:var(--text)}
+.caption b{color:var(--accent)}
+
+@media (max-width:760px){
+  .stage{height:auto;min-height:calc(100vh - 150px);padding-bottom:20px}
+  .win{position:relative;left:auto;top:auto;transform:none;margin:96px 16px 0;width:auto;height:auto;max-height:none}
+  .win.hidden{transform:scale(.97)}
+  .body{grid-template-columns:1fr}
+  .list{border-right:0;border-bottom:1px solid var(--line);max-height:240px}
+  .detail{padding:20px 16px 28px}
+  .menubar .hide-sm{display:none}
+  .demo{height:auto}
+  .auto{margin-left:0}
+  .report-cta{align-items:stretch;flex-direction:column}
+}
+</style>
+</head>
+<body>
+
+<div class="stage" id="stage">
+  <div class="menubar">
+    <span class="apple"></span><span class="hide-sm">Finder</span><span class="hide-sm">文件</span><span class="hide-sm">编辑</span>
+    <span class="spacer"></span>
+    <div class="tray" id="tray">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+      <span class="rec num" id="trayTimer">00:00</span>
+      <div class="traymenu" id="trayMenu"></div>
+    </div>
+    <span class="num" id="clock">周四 15:30</span>
+  </div>
+
+  <div class="pill hidden" id="pill"></div>
+
+  <button class="fab" id="fab" data-act="adhoc" aria-label="随时录制"><span class="lbl">随时录制</span><span class="ring"></span></button>
+
+  <div class="toast hidden" id="toast">
+    <div class="head"><span class="appicon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/></svg></span>菁仕课堂<span class="ago">现在</span></div>
+    <h4 id="toastTitle"></h4>
+    <p id="toastBody"></p>
+    <div class="actions"><button class="primary" id="toastCopy">复制总结</button><button id="toastView">查看</button></div>
+    <div class="feishu">同一段总结已发到你的飞书，手机上也能直接复制</div>
+  </div>
+
+  <div class="win" id="win">
+    <div class="titlebar">
+      <div class="lights"><span class="r" id="closeWin" title="关闭窗口（录制不受影响）"></span><span class="y"></span><span class="g"></span></div>
+      <span class="name">菁仕课堂</span>
+      <span class="who">王老师 · 飞书已登录</span>
+      <button class="iconbtn" id="openSet" title="设置"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></button>
+    </div>
+    <div class="body">
+      <div class="list" id="list"></div>
+      <div class="detail" id="detail"></div>
+    </div>
+    <div class="sheet hidden" id="sheet">
+      <div class="panel">
+        <div class="set"><div class="lab"><b>麦克风</b><span>说句话试试，绿条会跳</span><div class="meter"><i id="meter"></i></div></div>
+          <select><option>MacBook Pro 麦克风</option><option>AirPods Pro</option><option>USB 领夹麦</option></select></div>
+        <div class="set"><div class="lab"><b>悬浮录制按钮</b><span>不在课表里的会议、试讲也能随时录</span></div><button class="switch" id="fabSw"></button></div>
+        <div class="set"><div class="lab"><b>开机自动启动</b><span>关掉后，没打开 App 就不会自动录课</span></div><button class="switch" id="sw"></button></div>
+        <div class="set"><div class="lab"><b>王老师</b><span>飞书账号</span></div><button class="logout">退出登录</button></div>
+        <div style="text-align:right;margin-top:10px"><button class="ghost" id="closeSet">完成</button></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="demo">
+  <div class="top">
+    <span class="lbl">演示 · 一节课的一天</span>
+    <button class="scene" data-s="0">① 平时</button>
+    <button class="scene" data-s="1">② 课前 10 分钟</button>
+    <button class="scene" data-s="2">③ 自动开录</button>
+    <button class="scene" data-s="3">④ 麦克风异常</button>
+    <button class="scene" data-s="4">⑤ 下课后 5 分钟</button>
+    <button class="scene" data-s="5">⑥ 课后交付</button>
+    <span class="lbl" style="margin-left:8px">随时录制</span>
+    <button class="scene" data-s="6">⑦ 点一下就录</button>
+    <button class="scene" data-s="7">⑧ 结束填主题</button>
+    <button class="scene" data-s="8">⑨ 会议纪要</button>
+    <button class="auto" id="auto">▶ 自动播放</button>
+  </div>
+  <div class="caption" id="caption"></div>
+</div>
+
+<script src="mvp-data.js"></script>
+<script>
+const $ = s => document.querySelector(s);
+const pad = n => String(n).padStart(2,'0');
+const hms = s => `${pad(Math.floor(s/3600))}:${pad(Math.floor(s/60)%60)}:${pad(s%60)}`;
+const ms = s => `${Math.floor(s/60)}:${pad(s%60)}`;
+
+const S = {scene:0, clock:15*3600+30*60, rec:'idle', sec:0, endLeft:300, sel:'haoran', win:true, autoTimers:[], cur:'xiaoyu', fab:true, kind:'课程', topic:''};
+const target = () => lessons.find(l => l.id === S.cur);
+
+/* 随时录制：不在课表里，结束时由老师填主题、选类型 */
+const MEETING = `教研周会 · 10月15日 会议纪要
+
+【要点】
+1. IG 物理 3 个班进度正常，牛顿定律单元周五前讲完；
+2. 雅思口语组反馈：学生过去时错误比较集中；
+3. 课堂录制试用一周，老师们觉得家长总结基本可以直接发。
+
+【决定】
+1. 下周起所有 1 对 1 课默认开启自动录制；
+2. 口语组每周三 19:00 加一节语法小课。
+
+【待办】
+1. 王老师：周五前整理物理单元测试卷；
+2. 李老师：周二前发语法小课讲义；
+3. 教务：通知家长语法小课的时间。`;
+const TRIAL = `家长您好，今天（10月15日）的雅思口语试讲课向您汇报一下：
+
+【今天学了什么】
+1. 了解雅思口语三个部分的考法和评分标准；
+2. 练习 Part 1 家乡话题，用“回答—理由—例子”组织表达。
+
+【课堂表现】
+孩子表达意愿强，能完整回答问题；需要注意的是回答偏短，细节和例子还不够。
+
+【课后建议】
+每天选 2 道 Part 1 题录音 30 秒，练习补充理由和例子。`;
+const isAdhoc = l => l && l.id === 'adhoc';
+const textOf = id => id === 'adhoc' ? (target().kind === '会议' ? MEETING : TRIAL) : summaryOf(id);
+const unsentOf = l => l.status==='done' && !l.copied && !(isAdhoc(l) && l.kind==='会议'); // 会议纪要不发家长
+const kindTag = l => isAdhoc(l) && l.kind ? `<span class="tag">${l.kind === '会议' ? '会议' : '临时'}</span>` : '';
+
+/* ---------- 列表 ---------- */
+function renderList(){
+  const unsent = lessons.filter(unsentOf).length;
+  let html = '', last = '';
+  const order = ['今天','昨天'];
+  const sorted = [...lessons].sort((a,b) => {
+    const da = order.indexOf(a.day), db = order.indexOf(b.day);
+    if (da !== db) return (da<0?9:da) - (db<0?9:db);
+    return a.day==='今天' ? a.start.localeCompare(b.start) : b.start.localeCompare(a.start);
+  });
+  for (const l of sorted){
+    const grp = order.includes(l.day) ? l.day : '更早';
+    if (grp !== last){
+      html += `<div class="group"><span>${grp}</span>${grp==='今天' && unsent ? `<span class="unsent">${unsent} 节总结未发送</span>` : ''}</div>`;
+      last = grp;
+    }
+    let side = '';
+    if (l.status==='recording') side = `<span class="side rec num">${hms(S.sec)}</span>`;
+    else if (l.status==='processing') side = `<span class="side">整理中</span>`;
+    else if (l.status==='upcoming') side = `<span class="side">待开始</span>`;
+    else if (l.status==='cancelled') side = `<span class="side">临时取消</span>`;
+    else side = `<span class="side">${unsentOf(l) ? '<span class="unread" title="总结还没复制"></span>' : ''}</span>`;
+    html += `<button class="row ${l.id===S.sel?'sel':''} ${l.status}" data-id="${l.id}">
+      <span class="st ${l.status}"></span>
+      <span><div class="title">${l.title}${kindTag(l)}</div><div class="time num">${l.day!=='今天'&&grp==='更早'?l.day+' ':''}${l.time}</div></span>${side}</button>`;
+  }
+  $('#list').innerHTML = html;
+}
+
+/* ---------- 详情 ---------- */
+function renderDetail(){
+  const l = lessons.find(x => x.id === S.sel);
+  const head = `<h2>${l.title}${kindTag(l)}</h2><div class="meta num">${l.date.slice(5).replace('-','/')} · ${l.time}${l.topic?' · '+l.topic:''}</div>`;
+  let body = '';
+  if (l.status==='upcoming'){
+    body = `<div class="hero"><div class="big num">${l.start}</div><div class="sub">开课前 3 分钟自动开始录制，你什么都不用做</div>
+      <div class="acts"><button class="primary" data-act="start">现在开始录制</button></div></div>`;
+  } else if (l.status==='recording'){
+    const seg = Math.floor(S.sec/30)+1;
+    body = `<div class="hero rec"><div class="big red num">${hms(S.sec)}</div><div class="sub">${isAdhoc(l) ? '随时录制 · 结束时再填主题' : '正在录制 · 预计 17:10 自动停止'}</div>
+      <div class="chips"><span class="chip num">本机已保存 ${seg} 段</span><span class="chip num">已上传 ${Math.max(seg-1,0)} 段</span><span class="chip ok">● 网络正常</span></div>
+      <div class="acts"><button class="ghost" data-act="stop">结束录制</button></div></div>
+      <p class="empty">可以关掉这个窗口，录音会继续；屏幕顶部的胶囊会一直陪着你。</p>`;
+  } else if (l.status==='processing'){
+    body = `<div class="hero"><div class="sub" style="font-size:16px;color:var(--text)">正在整理这节课…</div><div class="sub">录音已全部上传，总结一般 10 分钟内好，好了会通知你</div></div>`;
+  } else if (l.status==='cancelled'){
+    body = `<div class="hero"><div class="sub" style="font-size:16px;color:var(--text)">这节课在课表上标了「临时取消」</div><div class="sub">不会自动录制</div></div>`;
+  } else {
+    const text = textOf(l.id);
+    const meeting = isAdhoc(l) && l.kind === '会议';
+    body = `<div class="card">
+        <div class="card-h">${meeting ? '会议纪要' : '家长总结'} <small>可以直接修改，复制的是改过的版本</small></div>
+        <textarea class="summary" id="sum" spellcheck="false">${text}</textarea>
+        <div class="card-f"><span class="num" id="cnt">${text.length} 字</span><span class="sp"></span>
+          ${l.copied ? '<span>已复制过</span>' : ''}<button class="primary" data-act="copy">${meeting ? '复制纪要' : '复制总结'}</button></div>
+      </div>
+      ${meeting ? '' : `<section class="card report-cta" aria-label="完整课堂学情报告">
+        <div><h3>完整课堂学情报告</h3><p>学习内容、掌握情况、易错点与课后建议 · 支持下载 PDF</p></div>
+        <a class="primary" href="classroom-report.html?lesson=${isAdhoc(l) ? 'zihan' : l.id}" target="_blank" rel="noopener">查看完整报告 <span aria-hidden="true">↗</span></a>
+      </section>`}`;
+  }
+  $('#detail').innerHTML = head + body;
+  const ta = $('#sum');
+  if (ta){ fit(ta); ta.oninput = () => { fit(ta); $('#cnt').textContent = ta.value.length + ' 字'; }; }
+}
+const fit = ta => { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 'px'; };
+
+/* ---------- 胶囊 ---------- */
+const WAVE = '<span class="wave" id="wave">' + '<i></i>'.repeat(9) + '</span>';
+function renderPill(){
+  const p = $('#pill');
+  const l = target();
+  p.classList.toggle('hidden', S.rec==='idle' || S.rec==='gone');
+  p.classList.toggle('warn', S.rec==='warn');
+  p.classList.toggle('form', S.rec==='name');
+  const adhoc = isAdhoc(l);
+  let h = '';
+  if (S.rec==='pre') h = `<span class="col"><span class="t1">16:00 ${l.title}</span><span class="t2">15:57 自动开始录制 · 麦克风正常</span></span>${WAVE.replace('wave"','wave green"')}<button class="btn" data-act="start">现在开始</button>`;
+  else if (S.rec==='recording') h = `<span class="dot"></span><span class="timer num" id="ptimer">${hms(S.sec)}</span>${WAVE.replace('wave"','wave red"')}<span class="more"><span class="t2">${adhoc ? '随时录制' : l.title+' · 17:10 自动停止'}</span><button class="btn red" data-act="stop">结束</button></span>`;
+  else if (S.rec==='confirm') h = `<span class="t1">${adhoc ? '结束这段录制？' : '结束这节课的录制？'}</span><button class="btn" data-act="resume">继续录</button><button class="btn red" data-act="end">结束</button>`;
+  else if (S.rec==='warn') h = `<span>⚠</span><span class="col"><span class="t1">没听到声音</span><span class="t2">录音仍在继续 · 检查一下麦克风</span></span>${WAVE.replace('wave"','wave flat"')}<select data-act="mic"><option>MacBook Pro 麦克风</option><option>切换到 AirPods Pro</option><option>切换到 USB 领夹麦</option></select>`;
+  else if (S.rec==='ending') h = `<span class="dot"></span><span class="col"><span class="t1 num" id="pend">${ms(S.endLeft)} 后自动停止</span><span class="t2 num">已录 ${hms(S.sec)}</span></span><button class="btn" data-act="extend">再录 15 分钟</button><button class="btn red" data-act="end">现在停止</button>`;
+  else if (S.rec==='name') h = `<span class="t1">这段录音是关于什么？</span>
+    <input id="topic" maxlength="30" placeholder="例如：教研周会、雅思口语试讲" value="${S.topic}">
+    <span class="seg">${['课程','会议'].map(k => `<button data-act="kind" data-v="${k}" class="${S.kind===k?'on':''}">${k}</button>`).join('')}</span>
+    <span class="foot"><span class="t2 num">已录 ${hms(S.sec)} · 录音已在上传</span><button class="btn red" data-act="save">完成</button></span>`;
+  else if (S.rec==='processing') h = `<span class="spin"></span><span class="col"><span class="t1">${adhoc ? '已结束，正在整理…' : '已结束，正在整理课堂…'}</span><span class="t2">好了会通知你，可以合上电脑了</span></span>`;
+  p.innerHTML = h;
+  renderFab();
+}
+let fabIdleT;
+function fabWake(){
+  const f = $('#fab');
+  f.classList.remove('idle'); clearTimeout(fabIdleT);
+  fabIdleT = setTimeout(() => { if (!f.matches(':hover') && !f.matches('.peek,.hidden')) f.classList.add('idle'); }, 4000);
+}
+function renderFab(){
+  const f = $('#fab'), hide = !S.fab || !['idle','gone'].includes(S.rec);
+  if (!hide && f.classList.contains('hidden')) fabWake(); // 重新出现时先完整显示几秒
+  f.classList.toggle('hidden', hide);
+  if (hide) f.classList.remove('idle');
+  $('#fabSw').classList.toggle('off', !S.fab);
+}
+
+/* ---------- 菜单栏 ---------- */
+function renderTray(){
+  const rec = ['recording','warn','ending','confirm'].includes(S.rec);
+  $('#tray').classList.toggle('recording', rec);
+  $('#trayTimer').textContent = hms(S.sec).replace(/^00:/,'');
+  const l = rec ? target() : lessons.find(x => x.id==='xiaoyu');
+  const status = rec ? `<b>● 录制中 ${hms(S.sec)}</b>${l.title}` : l.status==='upcoming' ? `<b>下一节 16:00</b>${l.title} · 自动录制` : `<b>今天的课都结束了</b>${lessons.filter(x=>x.status==='done'&&!x.copied).length} 节总结未发送`;
+  $('#trayMenu').innerHTML = `<div class="status">${status}</div><button data-act="openwin">打开菁仕课堂</button>${rec?'<button data-act="stop">结束录制…</button>':'<button data-act="adhoc">随时录制</button>'}<button data-act="set">设置…</button><button disabled>退出</button>`;
+}
+function renderClock(){
+  const c = S.clock % 86400;
+  $('#clock').textContent = `周四 ${pad(Math.floor(c/3600))}:${pad(Math.floor(c/60)%60)}`;
+}
+function renderAll(){ renderList(); renderDetail(); renderPill(); renderTray(); renderClock(); $('#win').classList.toggle('hidden', !S.win); }
+
+/* ---------- 动作 ---------- */
+function startRec(sec=0){ S.rec='recording'; S.sec=sec; target().status='recording'; S.sel=S.cur; hideToast(); renderAll(); }
+function askStop(){ S.rec='confirm'; renderAll(); }
+function startAdhoc(sec=0){
+  lessons.splice(0, lessons.length, ...lessons.filter(l => l.id !== 'adhoc'));
+  const c = S.clock % 86400, at = `${pad(Math.floor(c/3600))}:${pad(Math.floor(c/60)%60)}`;
+  lessons.push({id:'adhoc', day:'今天', date:'2026-10-15', time:`${at}–`, start:at, title:'随时录制', topic:'', status:'recording', copied:false, kind:''});
+  S.cur='adhoc'; S.topic=''; S.kind='课程'; startRec(sec);
+}
+function askName(){ S.rec='name'; renderAll(); setTimeout(() => $('#topic')?.focus(), 50); }
+function saveAdhoc(){
+  const l = target(), c = (S.clock+S.sec) % 86400;
+  l.title = S.topic.trim() || `随时录制 ${l.start}`; l.kind = S.kind; l.topic = '';
+  l.time = `${l.start}–${pad(Math.floor(c/3600))}:${pad(Math.floor(c/60)%60)}`;
+  endRec();
+}
+function endRec(){
+  S.rec='processing'; target().status='processing'; renderAll();
+  later(() => { S.rec='gone'; renderPill(); }, 2600);
+  later(() => { const l = target(); l.status='done'; l.copied=false; renderAll(); showToast(); }, 3600);
+}
+function showToast(){
+  const l = target(), meeting = isAdhoc(l) && l.kind==='会议';
+  $('#toastTitle').textContent = isAdhoc(l) ? `${l.title}的${meeting?'会议纪要':'课堂总结'}好了` : '小雨今天的课堂总结好了';
+  $('#toastBody').textContent = textOf(l.id).replace(/\n+/g,' ');
+  $('#toastCopy').textContent = meeting ? '复制纪要' : '复制总结';
+  $('#toast').classList.remove('hidden');
+}
+function hideToast(){ $('#toast').classList.add('hidden'); }
+async function copyText(t){
+  try { await navigator.clipboard.writeText(t); }
+  catch { const ta = Object.assign(document.createElement('textarea'),{value:t}); document.body.append(ta); ta.select(); document.execCommand('copy'); ta.remove(); }
+}
+async function copyLesson(id, btn){
+  const l = lessons.find(x => x.id===id);
+  const ta = $('#sum');
+  await copyText(ta && S.sel===id ? ta.value : textOf(id));
+  l.copied = true; renderList(); renderTray();
+  if (btn){ btn.textContent = '已复制 ✓'; btn.classList.add('ok'); }
+}
+
+document.addEventListener('click', e => {
+  const row = e.target.closest('.row');
+  if (row){ S.sel = row.dataset.id; renderList(); renderDetail(); return; }
+  const sc = e.target.closest('.scene');
+  if (sc){ stopAuto(); setScene(+sc.dataset.s); return; }
+  if (e.target.closest('#tray') && !e.target.closest('.traymenu')){ $('#tray').classList.toggle('open'); return; }
+  if (!e.target.closest('#tray')) $('#tray').classList.remove('open');
+  const a = e.target.closest('[data-act]');
+  if (!a || a.tagName==='SELECT') return;
+  const act = a.dataset.act;
+  $('#tray').classList.remove('open');
+  if (act==='start') startRec(0);
+  else if (act==='adhoc'){ if (fabMoved) return; stopAuto(); startAdhoc(0); caption(CAPTIONS[6]); }
+  else if (act==='kind'){ S.kind=a.dataset.v; renderPill(); }
+  else if (act==='save') saveAdhoc();
+  else if (act==='stop') askStop();
+  else if (act==='resume'){ S.rec='recording'; renderAll(); }
+  else if (act==='end') isAdhoc(target()) ? askName() : endRec();
+  else if (act==='extend'){ S.rec='recording'; renderAll(); caption('延长 15 分钟后，胶囊回到录制状态，17:25 再自动停止。'); }
+  else if (act==='copy') copyLesson(S.sel, a);
+  else if (act==='openwin'){ S.win=true; renderAll(); }
+  else if (act==='set'){ S.win=true; renderAll(); $('#sheet').classList.remove('hidden'); }
+});
+document.addEventListener('input', e => { if (e.target.id==='topic') S.topic = e.target.value; });
+document.addEventListener('keydown', e => { if (e.target.id==='topic' && e.key==='Enter') saveAdhoc(); });
+document.addEventListener('change', e => {
+  if (e.target.dataset.act==='mic'){ S.rec='recording'; renderAll(); caption('切换麦克风后声波恢复，胶囊变回红色。整个过程录音没有中断。'); }
+});
+$('#toastCopy').onclick = async () => { const t = $('#toastCopy').textContent; await copyLesson(S.cur); $('#toastCopy').textContent='已复制 ✓'; later(hideToast, 900); later(()=>{$('#toastCopy').textContent=t;},1400); caption('不用打开 App，在通知上点一下就复制好了。去微信粘贴给家长，列表上的红点也会消失。'); };
+$('#toastView').onclick = () => { S.sel=S.cur; S.win=true; hideToast(); renderAll(); };
+$('#closeWin').onclick = () => { S.win=false; renderAll(); caption('关掉窗口只是收进菜单栏，<b>录音和胶囊都不受影响</b>。点菜单栏的麦克风图标可以重新打开。'); };
+$('#openSet').onclick = () => $('#sheet').classList.remove('hidden');
+$('#closeSet').onclick = () => $('#sheet').classList.add('hidden');
+$('#sw').onclick = e => e.currentTarget.classList.toggle('off');
+$('#fabSw').onclick = () => { S.fab = !S.fab; renderFab(); };
+
+/* 胶囊拖动 */
+(() => {
+  const p = $('#pill'); let sx, sy, ox=0, oy=0, moved;
+  p.addEventListener('pointerdown', e => { if (e.target.closest('button,select,input') || p.classList.contains('form')) return; sx=e.clientX; sy=e.clientY; moved=false; p.setPointerCapture(e.pointerId); p.classList.add('dragging'); });
+  p.addEventListener('pointermove', e => { if (sx==null) return; const dx=ox+e.clientX-sx, dy=oy+e.clientY-sy; moved=true; p.style.setProperty('--dx',dx+'px'); p.style.setProperty('--dy',dy+'px'); });
+  p.addEventListener('pointerup', e => { if (sx==null) return; ox+=e.clientX-sx; oy+=e.clientY-sy; sx=null; p.classList.remove('dragging'); });
+})();
+
+/* 悬浮按钮拖动（拖过就不算点击） */
+let fabMoved = false;
+(() => {
+  const f = $('#fab'); let sx, sy, ox=0, oy=0;
+  f.addEventListener('pointerdown', e => { sx=e.clientX; sy=e.clientY; fabMoved=false; f.setPointerCapture(e.pointerId); });
+  f.addEventListener('pointermove', e => { if (sx==null) return; const dx=e.clientX-sx, dy=e.clientY-sy; if (Math.hypot(dx,dy)>4){ fabMoved=true; f.classList.add('dragging'); }
+    if (fabMoved){ f.style.setProperty('--dx',ox+dx+'px'); f.style.setProperty('--dy',oy+dy+'px'); } });
+  f.addEventListener('pointerup', e => { if (sx==null) return; if (fabMoved){ ox+=e.clientX-sx; oy+=e.clientY-sy; } sx=null; f.classList.remove('dragging'); });
+  f.addEventListener('mouseleave', () => { f.classList.remove('peek'); fabWake(); });
+})();
+
+/* ---------- 场景 ---------- */
+const CAPTIONS = [
+  '<b>平时</b>：App 只是菜单栏里的一个小图标，不打扰老师。主窗口就一个列表，<b>红点</b>表示这节课的总结还没发给家长。',
+  '<b>课前 10 分钟</b>：屏幕顶部浮出胶囊，告诉老师下一节课几点开始录。<b>声波在动就说明麦克风是好的</b>，不用单独试音。',
+  '<b>自动开录</b>：15:57 自动开始，胶囊变成红点和计时。鼠标移到胶囊上才会出现「结束」，平时不会误点。',
+  '<b>出问题才打扰</b>：开录后一直没声音，胶囊变黄，并且直接给出可以切换的麦克风。录音全程不中断。',
+  '<b>下课后 5 分钟</b>：胶囊开始倒计时，老师可以选「再录 15 分钟」或「现在停止」。不操作的话，17:10 自动停止。',
+  '<b>课后交付</b>：录音上传完自动整理，几分钟后弹出通知。点<b>「复制总结」</b>就能去微信发给家长；同一段话也发到了飞书。点<b>「查看完整报告」</b>打开学情报告网页，可下载 PDF。',
+  '<b>随时录制</b>：屏幕右侧的小圆钮，鼠标移上去展开「随时录制」，点一下就开始，<b>不需要课表</b>。<b>几秒不碰就淡成半透明</b>，不抢上课注意力，鼠标移上去恢复；可以拖到顺手的位置，设置里能关掉。',
+  '<b>结束时填主题</b>：点「结束」后胶囊展开成小卡片，填主题、选「课程」或「会议」。录音已在后台上传；10 分钟不填就按「课程」处理，不会卡住。',
+  '<b>会议纪要</b>：选「会议」的录音整理成会议纪要（要点、决定、待办），可以直接复制；选「课程」的和正式课一样，出家长总结和学情报告。列表里用小标签区分。',
+];
+function caption(h){ $('#caption').innerHTML = h; }
+function later(fn, ms){ const t = setTimeout(fn, ms); S.autoTimers.push(t); return t; }
+function clearLater(){ S.autoTimers.forEach(clearTimeout); S.autoTimers = []; }
+function setScene(n){
+  clearLater();
+  S.scene = n;
+  lessons.splice(0, lessons.length, ...lessons.filter(x => x.id !== 'adhoc')); S.cur='xiaoyu';
+  document.querySelectorAll('.scene').forEach(b => b.classList.toggle('on', +b.dataset.s===n));
+  const l = target();
+  hideToast(); $('#sheet').classList.add('hidden'); $('#fab').classList.remove('peek'); fabWake();
+  if (n>=6){ l.status='upcoming'; S.win=true; }
+  if (n===0){ S.clock=15*3600+30*60; S.rec='idle'; S.sec=0; l.status='upcoming'; l.copied=false; S.sel='haoran'; S.win=true; }
+  if (n===1){ S.clock=15*3600+50*60; S.rec='pre'; S.sec=0; l.status='upcoming'; l.copied=false; S.sel='xiaoyu'; }
+  if (n===2){ S.clock=15*3600+57*60; startRec(0); }
+  if (n===3){ S.clock=16*3600+12*60; startRec(15*60); S.rec='warn'; }
+  if (n===4){ S.clock=17*3600+5*60; startRec(68*60); S.rec='ending'; S.endLeft=300; }
+  if (n===5){ S.clock=17*3600+10*60; S.sec=73*60; l.status='recording'; S.sel='xiaoyu'; endRec(); }
+  if (n===6){ S.clock=15*3600+5*60; S.rec='idle'; S.sec=0; S.sel='haoran'; $('#fab').classList.add('peek'); later(() => { $('#fab').classList.remove('peek'); startAdhoc(0); }, 2600); }
+  if (n===7){ S.clock=15*3600+5*60; startAdhoc(22*60+14); askName();
+    later(() => { S.topic='教研周会'; renderPill(); }, 1100); later(() => { S.kind='会议'; renderPill(); }, 2000); }
+  if (n===8){ S.clock=15*3600+5*60; startAdhoc(22*60+14); S.topic='教研周会'; S.kind='会议'; saveAdhoc(); }
+  caption(CAPTIONS[n]);
+  renderAll();
+}
+let autoOn = false, autoT;
+function stopAuto(){ autoOn=false; clearTimeout(autoT); $('#auto').textContent='▶ 自动播放'; }
+$('#auto').onclick = () => {
+  if (autoOn) return stopAuto();
+  autoOn = true; $('#auto').textContent='■ 停止';
+  const step = n => { if (!autoOn) return; setScene(n); if (n<8) autoT = setTimeout(() => step(n+1), 5200); else stopAuto(); };
+  step(0);
+};
+
+/* ---------- 时钟 ---------- */
+setInterval(() => {
+  S.clock++;
+  if (S.clock % 60 === 0) renderClock();
+  if (['recording','warn','ending','confirm'].includes(S.rec)){
+    S.sec++;
+    const t = $('#ptimer'); if (t) t.textContent = hms(S.sec);
+    $('#trayTimer').textContent = hms(S.sec).replace(/^00:/,'');
+    const row = document.querySelector(`.row[data-id="${S.cur}"] .side.rec`); if (row) row.textContent = hms(S.sec);
+    if (S.sel===S.cur && target().status==='recording' && !$('#sum')) renderDetail();
+    if (S.rec==='ending'){ S.endLeft--; const pe = $('#pend'); if (pe) pe.textContent = ms(S.endLeft)+' 后自动停止'; if (S.endLeft<=0) endRec(); }
+  }
+
+}, 1000);
+
+/* 声波 + 设置页音量条 */
+setInterval(() => {
+  const w = $('#wave');
+  if (w) w.querySelectorAll('i').forEach((b,i) => {
+    const flat = w.classList.contains('flat');
+    b.style.height = (flat ? 3 : 4 + Math.abs(Math.sin(Date.now()/180 + i*0.9)) * 10 + Math.random()*5) + 'px';
+  });
+  $('#meter').style.width = (12 + Math.random()*55) + '%';
+}, 120);
+
+setScene(0);
+</script>
+</body>
+</html>

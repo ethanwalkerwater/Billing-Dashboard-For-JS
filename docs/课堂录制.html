@@ -1,0 +1,578 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>课堂录制产品方案</title>
+<style>
+:root {
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --surface-2: #f1f3f6;
+  --text: #16181d;
+  --muted: #5d6573;
+  --faint: #8a919e;
+  --line: #e3e6eb;
+  --accent: #2f6bff;
+  --accent-soft: #e8efff;
+  --rec: #e5484d;
+  --rec-soft: #fdecec;
+  --ok: #1f9d63;
+  --ok-soft: #e5f6ee;
+  --warn: #b7791f;
+  --warn-soft: #fbf3e2;
+  --radius: 14px;
+  --shadow: 0 1px 2px rgba(16,24,40,.04), 0 6px 20px rgba(16,24,40,.06);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1115; --surface: #171a20; --surface-2: #1f232b; --text: #eceef2;
+    --muted: #a3aab6; --faint: #7a828f; --line: #2a2f38; --accent: #6b95ff;
+    --accent-soft: #1b2540; --rec: #ff6b6f; --rec-soft: #3a1c1e; --ok: #3ccf8e;
+    --ok-soft: #14301f; --warn: #e3a945; --warn-soft: #332810;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 6px 20px rgba(0,0,0,.25);
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1115; --surface: #171a20; --surface-2: #1f232b; --text: #eceef2;
+  --muted: #a3aab6; --faint: #7a828f; --line: #2a2f38; --accent: #6b95ff;
+  --accent-soft: #1b2540; --rec: #ff6b6f; --rec-soft: #3a1c1e; --ok: #3ccf8e;
+  --ok-soft: #14301f; --warn: #e3a945; --warn-soft: #332810;
+  --shadow: 0 1px 2px rgba(0,0,0,.3), 0 6px 20px rgba(0,0,0,.25);
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
+  font-size: 15px; line-height: 1.7;
+}
+.wrap { max-width: 1040px; margin: 0 auto; padding: 0 16px 96px; }
+header.hero { padding: 56px 0 28px; }
+.eyebrow { font-size: 13px; color: var(--accent); font-weight: 600; letter-spacing: .04em; }
+h1 { font-size: 34px; line-height: 1.25; margin: 8px 0 12px; letter-spacing: -.01em; }
+.lead { font-size: 17px; color: var(--muted); max-width: 760px; margin: 0; }
+.meta-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+.pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; padding: 3px 10px; border-radius: 999px; background: var(--surface); border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+.pill.rec { background: var(--rec-soft); color: var(--rec); border-color: transparent; }
+.pill.ok { background: var(--ok-soft); color: var(--ok); border-color: transparent; }
+.pill.acc { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
+.pill.warn { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
+.dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; display: inline-block; }
+
+nav.toc { position: sticky; top: 0; z-index: 5; background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); margin: 0 -16px 8px; padding: 10px 16px; overflow-x: auto; white-space: nowrap; scrollbar-width: none; }
+nav.toc::-webkit-scrollbar { display: none; }
+nav.toc a { color: var(--muted); text-decoration: none; font-size: 13.5px; margin-right: 18px; }
+nav.toc a:hover { color: var(--accent); }
+
+section { padding-top: 48px; scroll-margin-top: 48px; }
+h2 { font-size: 24px; margin: 0 0 6px; letter-spacing: -.01em; }
+h2 .num { color: var(--accent); margin-right: 8px; font-variant-numeric: tabular-nums; }
+.sub { color: var(--muted); margin: 0 0 22px; }
+h3 { font-size: 17px; margin: 28px 0 10px; }
+p { margin: 0 0 12px; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 20px; box-shadow: var(--shadow); }
+.grid { display: grid; gap: 14px; }
+.g2 { grid-template-columns: repeat(2, minmax(0,1fr)); }
+.g3 { grid-template-columns: repeat(3, minmax(0,1fr)); }
+.g4 { grid-template-columns: repeat(4, minmax(0,1fr)); }
+@media (max-width: 820px) { .g3, .g4 { grid-template-columns: repeat(2, minmax(0,1fr)); } }
+@media (max-width: 600px) { .g2, .g3, .g4 { grid-template-columns: 1fr; } h1 { font-size: 27px; } }
+.card h4 { margin: 0 0 6px; font-size: 15px; }
+.card p, .card li { color: var(--muted); font-size: 14px; }
+.card ul { margin: 0; padding-left: 18px; }
+.k { font-size: 12px; color: var(--faint); letter-spacing: .03em; }
+
+.tbl-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+table { width: 100%; border-collapse: collapse; font-size: 14px; min-width: 620px; }
+th, td { text-align: left; padding: 11px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-size: 12.5px; color: var(--faint); font-weight: 600; background: var(--surface-2); }
+tr:last-child td { border-bottom: 0; }
+td.old { color: var(--faint); }
+td.new { color: var(--text); font-weight: 500; }
+
+.callout { border-left: 3px solid var(--accent); background: var(--accent-soft); padding: 12px 16px; border-radius: 0 10px 10px 0; font-size: 14px; margin: 16px 0; }
+.callout.warn { border-color: var(--warn); background: var(--warn-soft); }
+.callout b { color: var(--text); }
+
+/* 流程 */
+.flow { display: grid; grid-template-columns: repeat(6, minmax(0,1fr)); gap: 10px; }
+@media (max-width: 820px) { .flow { grid-template-columns: repeat(2, minmax(0,1fr)); } }
+.step { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 14px; position: relative; }
+.step .n { font-size: 12px; font-weight: 700; color: var(--accent); }
+.step b { display: block; font-size: 14.5px; margin: 2px 0 4px; }
+.step span { font-size: 13px; color: var(--muted); line-height: 1.55; display: block; }
+
+/* 时间轴 */
+.timeline { position: relative; margin: 8px 0 4px; padding: 28px 0 8px; }
+.tl-bar { position: relative; height: 40px; border-radius: 10px; background: var(--surface-2); overflow: hidden; display: flex; }
+.tl-seg { height: 100%; display: flex; align-items: center; justify-content: center; font-size: 12.5px; font-weight: 600; white-space: nowrap; overflow: hidden; }
+.tl-pre { flex: 3; background: var(--accent-soft); color: var(--accent); }
+.tl-class { flex: 60; background: var(--rec-soft); color: var(--rec); }
+.tl-post { flex: 10; background: var(--warn-soft); color: var(--warn); }
+.tl-marks { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); margin-top: 8px; font-variant-numeric: tabular-nums; gap: 8px; }
+.tl-marks span { flex: 1; }
+.tl-marks span:nth-child(2) { text-align: center; }
+.tl-marks span:last-child { text-align: right; }
+
+/* App mockups */
+.mock-row { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 16px; }
+@media (max-width: 900px) { .mock-row { grid-template-columns: 1fr; max-width: 420px; } }
+.mock-cap { font-size: 13px; color: var(--muted); margin-top: 10px; }
+.mock-cap b { color: var(--text); }
+.win { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); overflow: hidden; font-size: 13px; }
+.win-bar { display: flex; align-items: center; gap: 6px; padding: 10px 12px; border-bottom: 1px solid var(--line); background: var(--surface-2); }
+.win-bar i { width: 10px; height: 10px; border-radius: 50%; background: var(--line); display: inline-block; }
+.win-bar .t { margin-left: 8px; font-size: 12px; color: var(--faint); }
+.win-tabs { display: flex; gap: 4px; padding: 10px 12px 0; }
+.win-tabs span { padding: 5px 10px; border-radius: 8px; font-size: 12.5px; color: var(--muted); }
+.win-tabs span.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.win-body { padding: 12px; }
+.next { border-radius: 12px; padding: 14px; background: var(--accent-soft); margin-bottom: 10px; }
+.next .k { color: var(--accent); }
+.next .big { font-size: 18px; font-weight: 700; margin: 2px 0; }
+.next .row { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; gap: 8px; }
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; border-radius: 9px; padding: 6px 12px; font-size: 12.5px; font-weight: 600; border: 1px solid var(--line); background: var(--surface); color: var(--text); white-space: nowrap; }
+.btn.primary { background: var(--accent); color: #fff; border-color: transparent; }
+.btn.danger { background: var(--rec); color: #fff; border-color: transparent; }
+.lesson { display: flex; align-items: center; justify-content: space-between; padding: 9px 2px; border-bottom: 1px solid var(--line); gap: 8px; }
+.lesson:last-child { border-bottom: 0; }
+.lesson .tm { font-variant-numeric: tabular-nums; color: var(--faint); font-size: 12px; }
+.lesson b { font-size: 13px; font-weight: 600; }
+.rec-panel { text-align: center; padding: 18px 8px 8px; }
+.rec-timer { font-size: 38px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: .02em; margin: 6px 0 2px; }
+.level { display: flex; align-items: flex-end; justify-content: center; gap: 3px; height: 34px; margin: 10px 0; }
+.level i { width: 4px; border-radius: 2px; background: var(--rec); opacity: .8; display: block; }
+.up { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); margin: 6px 0 4px; }
+.prog { height: 6px; border-radius: 3px; background: var(--surface-2); overflow: hidden; }
+.prog i { display: block; height: 100%; background: var(--ok); }
+.sumbox { background: var(--surface-2); border-radius: 10px; padding: 10px 12px; font-size: 12.5px; color: var(--muted); line-height: 1.65; margin: 8px 0 10px; }
+.btn-row { display: flex; gap: 6px; flex-wrap: wrap; }
+
+/* 报告示例 */
+.report-demo { display: grid; grid-template-columns: 1.05fr 1fr; gap: 16px; align-items: start; }
+@media (max-width: 860px) { .report-demo { grid-template-columns: 1fr; } }
+.wechat { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px; box-shadow: var(--shadow); }
+.wechat pre { white-space: pre-wrap; word-break: break-word; font-family: inherit; font-size: 14px; line-height: 1.8; margin: 10px 0 0; color: var(--text); }
+.wc-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.copy-btn { cursor: pointer; }
+.modules { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 10px; }
+@media (max-width: 520px) { .modules { grid-template-columns: 1fr; } }
+.mod { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 13px 14px; }
+.mod .n { font-size: 12px; color: var(--accent); font-weight: 700; }
+.mod b { display: block; font-size: 14px; margin: 1px 0 3px; }
+.mod span { font-size: 12.5px; color: var(--muted); line-height: 1.55; display: block; }
+
+.bars { display: flex; flex-direction: column; gap: 7px; margin-top: 10px; }
+.bar { display: grid; grid-template-columns: 76px 1fr 30px; gap: 8px; align-items: center; font-size: 12.5px; color: var(--muted); }
+.bar .tr { height: 8px; background: var(--surface-2); border-radius: 4px; overflow: hidden; }
+.bar .tr i { display: block; height: 100%; background: var(--accent); border-radius: 4px; }
+.bar em { font-style: normal; text-align: right; font-variant-numeric: tabular-nums; }
+
+ol.qs { padding-left: 20px; margin: 0; }
+ol.qs li { margin-bottom: 12px; }
+ol.qs li b { display: block; }
+ol.qs li span { color: var(--muted); font-size: 14px; }
+footer { margin-top: 64px; color: var(--faint); font-size: 13px; border-top: 1px solid var(--line); padding-top: 18px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <div class="eyebrow">菁仕教育 · 产品方案 v2.0 草案</div>
+  <h1>课堂录制与 AI 教评</h1>
+  <p class="lead">老师在自己的电脑上装一个 App。系统读取飞书课表，到点自动开始录课，边录边上传。下课后，老师会收到两样东西：一段可以直接复制发到家长微信的课堂总结，以及一份结构化的完整课堂报告（有网页链接，也能下载 PDF）。</p>
+  <div class="meta-row">
+    <span class="pill acc">基于 jingshi-vocal v1.3 改版</span>
+    <span class="pill">Mac + Windows 一套代码</span>
+    <span class="pill">2026-10-15</span>
+  </div>
+</header>
+
+<nav class="toc" aria-label="目录">
+  <a href="#changes">改版要点</a>
+  <a href="#journey">一节课的流程</a>
+  <a href="#record">1 录制逻辑</a>
+  <a href="#upload">2 稳定上传</a>
+  <a href="#app">3 老师端 App</a>
+  <a href="#delivery">4 报告承载</a>
+  <a href="#content">5 报告内容</a>
+  <a href="#backend">后台能力</a>
+  <a href="#questions">待确认</a>
+</nav>
+
+<!-- 改版要点 -->
+<section id="changes">
+  <h2>和现版本相比改了什么</h2>
+  <p class="sub">现版本是装在教室里的 Windows 运维工具，新版本改成老师自己用的轻量 App。</p>
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr><th style="width:16%">项目</th><th style="width:38%">现版本 v1.3</th><th>新方案</th></tr></thead>
+      <tbody>
+        <tr><td>录音设备</td><td class="old">教室里一台固定的 Windows 电脑</td><td class="new">老师自己的电脑，Mac 和 Windows 都能用</td></tr>
+        <tr><td>开始录制</td><td class="old">课表开课前 3 分钟，或检测到有人说话时自动开录</td><td class="new">课表开课前 3 分钟自动开录，老师也可以手动点“开始录制”</td></tr>
+        <tr><td>停止录制</td><td class="old">课表下课时间一到就停，或安静一段时间后自动停</td><td class="new">课表下课后 10 分钟自动停，老师也可以随时手动停</td></tr>
+        <tr><td>老师身份</td><td class="old">在控制台下拉框里手动选老师，忘了选就只存档、不出报告</td><td class="new">用飞书登录，系统自动知道是谁，课表直接按这位老师显示</td></tr>
+        <tr><td>上传</td><td class="old">录完一段传一段，失败了要靠补传脚本</td><td class="new">边录边传：本机先保存，上传进度断电重启后也不丢，最后核对录音是否完整</td></tr>
+        <tr><td>密钥安全</td><td class="old">腾讯云的密钥保存在教室电脑上</td><td class="new">老师电脑上不保存任何密钥，只用十几分钟就失效的临时上传凭证</td></tr>
+        <tr><td>报告交付</td><td class="old">txt 和 PDF 放在云端文件夹里，飞书群里只发一句“教评完成”</td><td class="new">App 里直接收到报告，提供网页链接和 PDF 下载</td></tr>
+        <tr><td>报告内容</td><td class="old">上课内容（约 400 字）＋知识小结</td><td class="new">给家长的短总结（可一键复制）＋多维度的完整报告</td></tr>
+        <tr><td>操作界面</td><td class="old">6 个页面的运维控制台（麦克风校准、提示词、云端……）</td><td class="new">老师端只留 3 个页面，运维和提示词功能挪到管理后台</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- 流程 -->
+<section id="journey">
+  <h2>一节课的完整流程</h2>
+  <p class="sub">正常情况下，老师从头到尾只需要做一件事：下课后复制总结、发给家长。</p>
+  <div class="flow">
+    <div class="step"><div class="n">01</div><b>同步课表</b><span>App 每 5 分钟读取一次飞书课表，课程的新增、改时间、取消都会实时更新</span></div>
+    <div class="step"><div class="n">02</div><b>提醒</b><span>开课前 10 分钟弹出系统通知，提示即将开始录制，并检查麦克风</span></div>
+    <div class="step"><div class="n">03</div><b>自动开录</b><span>开课前 3 分钟开始录。老师也可以提前手动开始</span></div>
+    <div class="step"><div class="n">04</div><b>边录边传</b><span>每 30 秒切成一小段，先存本机再上传，断网也不影响录音</span></div>
+    <div class="step"><div class="n">05</div><b>停止并核对</b><span>下课后 10 分钟自动停，或老师手动停。云端核对录音齐全后开始处理</span></div>
+    <div class="step"><div class="n">06</div><b>收到报告</b><span>通常 15 分钟内，App 和飞书都会收到通知：短总结可以复制，长报告有链接和 PDF</span></div>
+  </div>
+</section>
+
+<!-- 1 录制 -->
+<section id="record">
+  <h2><span class="num">1</span>录制逻辑</h2>
+  <p class="sub">规则是“课表自动为主，老师手动兜底”：开始和停止都各有一个自动触发和一个手动触发，哪个先到就按哪个执行。</p>
+
+  <div class="card">
+    <div class="k">以一节 16:00–17:00 的课为例</div>
+    <div class="timeline">
+      <div class="tl-bar">
+        <div class="tl-seg tl-pre">提前</div>
+        <div class="tl-seg tl-class">上课中 · 录制</div>
+        <div class="tl-seg tl-post">+10′</div>
+      </div>
+      <div class="tl-marks"><span>15:57 自动开始</span><span>17:05 弹出提醒</span><span>17:10 自动停止</span></div>
+    </div>
+  </div>
+
+  <div class="grid g2" style="margin-top:14px">
+    <div class="card">
+      <h4>开始录制</h4>
+      <ul>
+        <li><b>自动</b>：开课前 3 分钟。前提是 App 在运行、老师已登录、麦克风可用</li>
+        <li><b>手动</b>：在今日课表里点某节课的“开始录制”，最早可以提前 30 分钟</li>
+        <li><b>没排课的录音</b>：点“临时录制”。录音先放进“待归属”，老师事后关联到某节课，系统才会生成报告</li>
+        <li>课表上标了“临时取消”的课不会自动开录</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4>停止录制</h4>
+      <ul>
+        <li><b>自动</b>：课表下课时间之后 10 分钟</li>
+        <li><b>手动</b>：点“结束录制”后会二次确认，避免误点导致一节课被截断</li>
+        <li>下课后第 5 分钟提醒老师：“5 分钟后自动停止”，可以选择“立即停止”或“延长 15 分钟”</li>
+        <li>不提供“暂停”：怕老师忘记恢复。课间休息照常录，云端会自动识别出静音的部分</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3>特殊情况怎么处理</h3>
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr><th style="width:30%">场景</th><th>处理方式</th></tr></thead>
+      <tbody>
+        <tr><td>连堂：下一节课在上一节结束后 10 分钟内就开始</td><td>在下一节课开录的时间点（开课前 3 分钟）自动切换：上一节停止并上传，下一节接着录，中间不漏录</td></tr>
+        <tr><td>录制中，这节课在飞书上被取消或改了时间</td><td>正在进行的录制不会被自动中断，只弹出提示让老师决定是否停止</td></tr>
+        <tr><td>开录 2 分钟后仍然几乎没有声音</td><td>弹通知：“没有检测到声音，请检查麦克风”，同时列出可以切换的麦克风</td></tr>
+        <tr><td>麦克风断开（例如蓝牙耳机没电）</td><td>自动切换到系统默认麦克风继续录，并通知老师</td></tr>
+        <tr><td>电脑睡眠或合盖</td><td>录制期间阻止系统自动睡眠。Mac 合盖会被系统强制睡眠，所以录制中窗口和菜单栏会显示提醒；电脑唤醒后，如果还在上课时间内，会自动续录，并记录中间断了多久</td></tr>
+        <tr><td>关掉窗口或 App 崩溃</td><td>关窗口只是缩到菜单栏/托盘，录音继续。如果 App 崩溃，会自动重启并续录，之前录好的部分不会丢</td></tr>
+        <tr><td>开课时没开电脑或没开 App</td><td>打开 App 时，如果还在上课时间内，会马上提示“这节课正在进行，是否开始录制？”。后台也会收到“这节课未录制”的提醒</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- 2 上传 -->
+<section id="upload">
+  <h2><span class="num">2</span>边录边传，保证稳定</h2>
+  <p class="sub">核心原则：<b>先保存到本机，再上传；云端确认收到之前，本机的录音一律不删。</b>不管断网、断电还是 App 崩溃，最坏的结果只是报告晚一点出来，录音不会丢。</p>
+
+  <div class="card">
+    <h4>参考了这些成熟产品的做法</h4>
+    <div class="grid g4" style="margin-top:10px">
+      <div><div class="k">LOOM</div><p style="margin:2px 0 0;font-size:13.5px">一边录一边分块上传，所以停止录制后几秒就能出链接；崩溃后可以恢复录到一半的内容</p></div>
+      <div><div class="k">飞书妙记 / 腾讯会议云录制</div><p style="margin:2px 0 0;font-size:13.5px">云端先确认录音完整，再开始转写和生成纪要</p></div>
+      <div><div class="k">Dropbox / OneDrive</div><p style="margin:2px 0 0;font-size:13.5px">待上传的文件记在本机，重启后接着传；失败后间隔越来越长地重试</p></div>
+      <div><div class="k">tus / 分块上传</div><p style="margin:2px 0 0;font-size:13.5px">文件切成小块，每块单独上传、单独校验，坏了只重传那一块</p></div>
+    </div>
+  </div>
+
+  <h3>具体机制</h3>
+  <div class="grid g3">
+    <div class="card"><h4>① 每 30 秒切一段</h4><p>录音不断写入本机硬盘，每 30 秒切成一个小文件。一小时的课大约 15–30 MB，用手机热点上传也够。</p></div>
+    <div class="card"><h4>② 上传记录写在本机</h4><p>每段是否已上传都记在本机的小数据库里。断网、重启、崩溃之后，从断掉的地方继续，不会从头再传。</p></div>
+    <div class="card"><h4>③ 每段都有校验值</h4><p>每段附带序号和校验值，云端收到后核对内容是否一致。同一段重复上传只会覆盖，不会出现两份。</p></div>
+    <div class="card"><h4>④ 失败后逐步拉长间隔重试</h4><p>等 1 秒、2 秒、4 秒……最长 5 分钟再试一次。网络一恢复马上重试，不用等到下一轮。</p></div>
+    <div class="card"><h4>⑤ 结束时上传一份清单</h4><p>停止录制后，App 上传一份清单，写明总共几段、每段的校验值和起止时间。云端对照清单，确认齐全后才开始处理；缺哪段就让 App 补传哪段。</p></div>
+    <div class="card"><h4>⑥ 本机延后删除</h4><p>云端确认收到后，本机还会再保留 7 天。硬盘剩余空间不足 2 GB 时提醒老师清理。</p></div>
+  </div>
+
+  <div class="callout"><b>兜底：</b>下课 2 小时后如果还有段没传上来，就用已经收到的部分先生成报告，并在报告里注明“录音缺失约 X 分钟”，同时提醒管理后台。补传成功后，报告会自动重新生成。</div>
+  <div class="callout"><b>安全：</b>App 向后台申请一个 15 分钟内有效的上传凭证，直接把录音传到对象存储，不经过业务服务器。老师电脑上不保存任何云服务密钥。现版本把腾讯云密钥存在本机，这次一并修掉。</div>
+  <div class="callout"><b>看得见的状态：</b>App 每分钟向后台报告一次状态，后台能看到“哪位老师课上到一半掉线了”。老师在 App 里只看到一行字，比如“已上传 118/120 段 · 网络正常”，或者“网络断开，录音保存在本机，恢复后会自动上传”。</div>
+</section>
+
+<!-- 3 App -->
+<section id="app">
+  <h2><span class="num">3</span>老师端 App</h2>
+  <p class="sub">装在老师自己的电脑上，Mac 和 Windows 用同一套代码，一次开发同时发布两个平台。只做三件事：控制录制、查看课表、接收报告。</p>
+
+  <h3>技术选型：推荐 Electron</h3>
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr><th style="width:18%">方案</th><th style="width:18%">两个平台共用代码</th><th>评价</th></tr></thead>
+      <tbody>
+        <tr><td><b>Electron（推荐）</b></td><td>是</td><td>浏览器自带录音能力，可以直接录成体积小的音频格式，不需要另装 ffmpeg；窗口最小化后照样能录。自动更新、开机自启、阻止睡眠、菜单栏/托盘图标都有现成方案。飞书桌面端、Notion、Slack 都是用它做的。缺点是安装包约 100 MB</td></tr>
+        <tr><td>Tauri</td><td>是</td><td>安装包只有 10 MB 左右。但 Mac 上自带的网页引擎在后台录音、音频编码方面限制比较多，需要额外写原生代码补上，风险更高。等第一版稳定后可以再评估</td></tr>
+        <tr><td>原生开发（Swift + C#）</td><td>否</td><td>需要写两套代码、配两个人维护，不符合“一次开发两端发布”的要求，不采用</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p style="margin-top:12px;color:var(--muted);font-size:14px">发布要求：Mac 需要 Apple 开发者证书并完成公证，否则系统会提示“无法打开”；Windows 需要代码签名证书，否则会弹出“未知发布者”警告。App 启动时自动检查更新，老师不需要手动重装。</p>
+
+  <h3>界面示意</h3>
+  <div class="mock-row">
+    <div>
+      <div class="win" aria-label="今日课表界面示意">
+        <div class="win-bar"><i></i><i></i><i></i><span class="t">菁仕课堂</span></div>
+        <div class="win-tabs"><span class="on">今天</span><span>报告</span><span>设置</span></div>
+        <div class="win-body">
+          <div class="next">
+            <div class="k">下一节 · 16:00–17:00</div>
+            <div class="big">IG 物理 · 小雨</div>
+            <div style="color:var(--muted);font-size:12px">牛顿第二定律 · 线下 3 号教室</div>
+            <div class="row"><span style="font-size:12px;color:var(--accent);font-weight:600">15:57 自动开始录制</span><span class="btn primary">现在开始</span></div>
+          </div>
+          <div class="lesson"><div><div class="tm">10:00–11:30</div><b>雅思口语 · 子涵</b></div><span class="pill ok">报告已生成</span></div>
+          <div class="lesson"><div><div class="tm">13:30–15:00</div><b>IG 数学 · 浩然</b></div><span class="pill warn">处理中</span></div>
+          <div class="lesson"><div><div class="tm">18:00–19:00</div><b>A-Level 化学 · 一诺</b></div><span class="pill">待开始</span></div>
+          <div class="lesson"><div><div class="tm">19:30–20:30</div><b>IG 物理 · 晨曦</b></div><span class="pill">已取消</span></div>
+        </div>
+      </div>
+      <div class="mock-cap"><b>今天</b>：最上方是下一节课和倒计时，下面是今天的全部课程，每节课的状态一目了然。</div>
+    </div>
+
+    <div>
+      <div class="win" aria-label="录制中界面示意">
+        <div class="win-bar"><i></i><i></i><i></i><span class="t">菁仕课堂</span></div>
+        <div class="win-tabs"><span class="on">今天</span><span>报告</span><span>设置</span></div>
+        <div class="win-body">
+          <div class="rec-panel">
+            <span class="pill rec"><span class="dot"></span>录制中</span>
+            <div class="rec-timer">00:42:18</div>
+            <div style="color:var(--muted);font-size:12.5px">IG 物理 · 小雨 · 预计 17:10 自动停止</div>
+            <div class="level" aria-hidden="true">
+              <i style="height:30%"></i><i style="height:55%"></i><i style="height:80%"></i><i style="height:45%"></i><i style="height:90%"></i><i style="height:60%"></i><i style="height:35%"></i><i style="height:70%"></i><i style="height:50%"></i><i style="height:85%"></i><i style="height:40%"></i><i style="height:65%"></i><i style="height:30%"></i><i style="height:55%"></i>
+            </div>
+          </div>
+          <div class="up"><span>已上传 84/85 段</span><span style="color:var(--ok)">● 网络正常</span></div>
+          <div class="prog"><i style="width:98%"></i></div>
+          <div style="text-align:center;margin-top:16px"><span class="btn danger">■ 结束录制</span></div>
+          <div style="text-align:center;font-size:11.5px;color:var(--faint);margin-top:10px">MacBook 麦克风 · 录制中请勿合上电脑</div>
+        </div>
+      </div>
+      <div class="mock-cap"><b>录制中</b>：大号计时、音量跳动条、上传进度，加一个“结束录制”按钮。菜单栏/托盘的图标同时显示红点和计时。</div>
+    </div>
+
+    <div>
+      <div class="win" aria-label="报告界面示意">
+        <div class="win-bar"><i></i><i></i><i></i><span class="t">菁仕课堂</span></div>
+        <div class="win-tabs"><span>今天</span><span class="on">报告</span><span>设置</span></div>
+        <div class="win-body">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+            <b style="font-size:13.5px">雅思口语 · 子涵</b><span class="tm" style="font-size:12px;color:var(--faint)">10/15 10:00</span>
+          </div>
+          <div class="k" style="margin-top:8px">家长版总结 · 312 字 · 可编辑</div>
+          <div class="sumbox">子涵妈妈您好，今天的口语课主要练了 Part 2 “描述一个难忘的旅行”。子涵能完整讲满 2 分钟，细节比上周丰富……</div>
+          <div class="btn-row">
+            <span class="btn primary">复制总结</span>
+            <span class="btn">打开完整报告</span>
+            <span class="btn">下载 PDF</span>
+          </div>
+          <div class="lesson" style="margin-top:12px"><div><div class="tm">10/14</div><b>IG 数学 · 浩然</b></div><span class="pill ok">已发送</span></div>
+          <div class="lesson"><div><div class="tm">10/14</div><b>IG 物理 · 小雨</b></div><span class="pill acc">未复制</span></div>
+        </div>
+      </div>
+      <div class="mock-cap"><b>报告</b>：打开就能看到家长版总结，点一下就复制。复制过的报告标为“已发送”，方便老师知道还有哪节没发。</div>
+    </div>
+  </div>
+
+  <h3>设计原则</h3>
+  <div class="grid g4">
+    <div class="card"><h4>默认不用管</h4><p>装好、登录一次之后，日常完全自动。界面只在需要老师做决定时才打扰</p></div>
+    <div class="card"><h4>一屏一件事</h4><p>只有 3 个页面：今天 / 报告 / 设置。不显示任何技术术语</p></div>
+    <div class="card"><h4>状态要清楚</h4><p>每种状态都同时用颜色和文字表示：红色＝录制中，绿色＝已完成，黄色＝需要注意</p></div>
+    <div class="card"><h4>现代、克制</h4><p>使用系统字体，只用一个主色，圆角卡片，跟随系统的深色/浅色模式，留白充足</p></div>
+  </div>
+  <p style="margin-top:12px;color:var(--muted);font-size:14px">“设置”页里只有：麦克风选择和试音、开机自动启动、通知开关、退出登录。麦克风校准、提示词编辑、服务守护这些运维功能全部移到管理后台。</p>
+</section>
+
+<!-- 4 承载 -->
+<section id="delivery">
+  <h2><span class="num">4</span>报告的承载方式</h2>
+  <p class="sub">网页链接是主要形式，PDF 用于存档和打印。两者内容完全一样，都由服务器生成。</p>
+  <div class="grid g3">
+    <div class="card">
+      <h4>网页链接</h4>
+      <ul>
+        <li>优先适配手机：家长基本都在微信里打开</li>
+        <li>在微信里转发时，卡片会显示“课程名 · 日期”作为标题</li>
+        <li>链接包含一段无法猜到的随机码，老师可以随时让链接失效</li>
+        <li>报告重新生成后，链接不变，内容自动更新</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4>PDF 下载</h4>
+      <ul>
+        <li>A4 版式，图表是矢量的，打印也清晰</li>
+        <li>App 和网页上都能下载</li>
+        <li>文件名统一为：学生_课程_日期.pdf</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4>报告送达</h4>
+      <ul>
+        <li>报告生成后，App 弹出通知，同时发一条飞书消息给老师</li>
+        <li>App 的“报告”页按时间排列，并标记哪些还没发给家长</li>
+        <li>教研和管理人员在管理后台可以看到全部报告</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- 5 内容 -->
+<section id="content">
+  <h2><span class="num">5</span>报告内容：一短一长</h2>
+  <p class="sub">短的给家长看“今天上了什么”，长的给老师和教研看“这节课上得怎么样”。两份内容都由同一次 AI 分析生成，所以前后一致。</p>
+
+  <div class="report-demo">
+    <div>
+      <h3 style="margin-top:0">A. 家长版课堂总结（250–400 字）</h3>
+      <div class="wechat">
+        <div class="wc-head">
+          <span class="k">示例 · 纯文字，复制后可直接粘贴到微信</span>
+          <button class="btn primary copy-btn" type="button" id="copyDemo">复制</button>
+        </div>
+<pre id="demoText">子涵妈妈您好，今天（10月15日）的雅思口语课向您汇报一下：
+
+【今天学了什么】
+1. Part 2 话题“描述一次难忘的旅行”，练习按“时间—地点—经过—感受”四步来组织内容；
+2. 学了 6 个描述风景和感受的高分表达，例如 breathtaking、off the beaten track；
+3. Part 3 延伸讨论“旅游对当地的影响”，练习先说观点、再给理由。
+
+【课堂表现】
+子涵这次能完整讲满 2 分钟，细节比上周丰富很多，还主动用上了 2 个新学的表达。需要注意的是，过去时还有几处不稳，比如把 went 说成 go，老师已经当场纠正。
+
+【课后建议】
+请孩子每天用手机录一段 1 分钟的 Part 2 练习，重点检查过去时。下节课我们会练“描述一个人”。
+
+有任何问题欢迎随时联系我～</pre>
+      </div>
+      <div class="card" style="margin-top:12px">
+        <h4>写作规则</h4>
+        <ul>
+          <li>固定三段：<b>今天学了什么 / 课堂表现 / 课后建议</b>。开头带上称呼和日期</li>
+          <li>用家长能看懂的话写，不出现分数、“专注度”这类评判性数字，也不用教研术语</li>
+          <li>表现要写得具体、真实：先说进步，再说一个需要改进的地方，不空夸</li>
+          <li>只用纯文字和【】标题，不用 Markdown 格式，保证粘贴到微信后排版不乱</li>
+          <li>老师可以在 App 里修改后再复制，系统保留改过的版本，同时用来改进提示词</li>
+          <li>如果是班课，每个学生各生成一份</li>
+        </ul>
+      </div>
+    </div>
+
+    <div>
+      <h3 style="margin-top:0">B. 完整课堂报告（结构化、多维度）</h3>
+      <div class="modules">
+        <div class="mod"><div class="n">01</div><b>课堂概览</b><span>日期、时长、学生、课程、老师；一句话总结；3 个关键数字（学生发言占比、提问次数、知识点数）</span></div>
+        <div class="mod"><div class="n">02</div><b>教学流程时间轴</b><span>热身 → 讲授 → 练习 → 总结，每个环节的时长和内容，用横向时间条展示</span></div>
+        <div class="mod"><div class="n">03</div><b>知识点与掌握度</b><span>本课 3–6 个知识点，每个按 1–5 级评定掌握程度，并附上判断依据</span></div>
+        <div class="mod"><div class="n">04</div><b>学生表现</b><span>主动提问、回答情况、做得好的地方，每条都摘录学生原话并标注时间</span></div>
+        <div class="mod"><div class="n">05</div><b>错误与易错点</b><span>错误类型分布（概念、计算、审题、表达……），具体例子以及当场是怎么纠正的</span></div>
+        <div class="mod"><div class="n">06</div><b>课堂互动</b><span>师生发言占比、提问后学生的回应率、各时段的活跃度曲线（沿用现有的专注力规则来算）</span></div>
+        <div class="mod"><div class="n">07</div><b>课后建议</b><span>作业、复习重点、下节课计划，以及需要和家长沟通的事项</span></div>
+        <div class="mod"><div class="n">08</div><b>课堂原文</b><span>完整的转写稿，可按时间跳转；只对老师和教研可见</span></div>
+      </div>
+      <div class="card" style="margin-top:12px">
+        <div class="k">示例模块 · 知识点掌握度</div>
+        <div class="bars">
+          <div class="bar"><span>四步结构</span><div class="tr"><i style="width:80%"></i></div><em>4/5</em></div>
+          <div class="bar"><span>风景描述词</span><div class="tr"><i style="width:60%"></i></div><em>3/5</em></div>
+          <div class="bar"><span>过去时</span><div class="tr"><i style="width:40%"></i></div><em>2/5</em></div>
+          <div class="bar"><span>观点+理由</span><div class="tr"><i style="width:60%"></i></div><em>3/5</em></div>
+        </div>
+      </div>
+      <div class="callout"><b>可信度原则：</b>每一条结论都能追溯到课堂原话和时间点。AI 只根据录音内容下结论，不凭空推测；某个模块的数据不够时，直接写“本课数据不足”，不硬凑。</div>
+    </div>
+  </div>
+</section>
+
+<!-- 后台 -->
+<section id="backend">
+  <h2>后台能力（沿用现有系统并调整）</h2>
+  <p class="sub">老师看不到这一部分，但报告质量靠它保证。</p>
+  <div class="grid g3">
+    <div class="card"><h4>转写和区分说话人</h4><p>沿用腾讯云语音转写。录音是用老师自己的电脑录的，离麦克风最近的就是老师，所以识别老师的方式改成“声音最近、音量最稳定的那个人”，取代现在“谁说得最多谁是老师”的规则，口语课这类学生说得多的课也不会认反。</p></div>
+    <div class="card"><h4>匹配飞书课表</h4><p>老师用飞书登录，身份是确定的，课表直接匹配到具体某节课。没匹配上的录音进入“待归属”，不再像现在一样只存档、不出报告。</p></div>
+    <div class="card"><h4>专注力指标</h4><p>保留现有的四个规则分数（授课、活跃、专注、匹配），只放进完整报告和教研汇总表，不出现在家长版总结里。</p></div>
+    <div class="card"><h4>会议纪要</h4><p>课表上标为会议的录音，照常生成纪要和思维导图。</p></div>
+    <div class="card"><h4>提示词管理</h4><p>从教室控制台挪到管理后台，由教研统一编辑，改动从下一节课开始生效。老师在 App 里修改过的总结会作为参考样本。</p></div>
+    <div class="card"><h4>运营看板</h4><p>今天每节课的状态：已录 / 未录 / 缺段 / 报告失败；哪位老师的 App 离线了；转写和大模型的费用统计。</p></div>
+  </div>
+</section>
+
+<!-- 待确认 -->
+<section id="questions">
+  <h2>需要业务方确认的问题</h2>
+  <p class="sub">以下几点会影响设计方向，建议开发前先定下来。</p>
+  <div class="card">
+    <ol class="qs">
+      <li><b>线上课要不要录？</b><span>老师电脑的麦克风只能录到老师自己的声音，录不到腾讯会议或 Zoom 里学生的声音。如果要录线上课，还需要同时录下电脑播放的声音，Mac 上需要额外申请系统权限，工作量会明显增加。</span></li>
+      <li><b>完整报告要不要直接给家长看？</b><span>建议默认只给老师和教研看，由老师决定是否把链接发给家长。家长能看到的版本隐藏课堂原文和互动分数。</span></li>
+      <li><b>家长是否知情同意，录音保存多久？</b><span>录音里有未成年人的声音。建议入学时签署录音同意书，原始录音 90 天后自动删除，只保留文字稿和报告。</span></li>
+      <li><b>会不会有多位老师共用一台电脑？</b><span>如果有，需要支持在 App 里快速切换账号。</span></li>
+      <li><b>班课的家长总结怎么发？</b><span>是每个学生各一份，还是全班一份？这会影响生成方式和费用。</span></li>
+      <li><b>报告要求多快出来？</b><span>本方案默认下课后 15 分钟内。如果要更快，需要边录边转写，费用会更高。</span></li>
+    </ol>
+  </div>
+</section>
+
+<footer>
+  菁仕教育 · 课堂录制产品方案 v2.0 草案 · 基于 jingshi-vocal v1.3 改版 · 文中学生姓名和课堂内容均为示例
+</footer>
+</div>
+
+<script>
+(function () {
+  var btn = document.getElementById('copyDemo');
+  var src = document.getElementById('demoText');
+  if (!btn || !src) return;
+  btn.addEventListener('click', function () {
+    var text = src.textContent;
+    var done = function () { btn.textContent = '已复制'; setTimeout(function () { btn.textContent = '复制'; }, 1600); };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done, function () { fallback(text); done(); });
+    } else { fallback(text); done(); }
+  });
+  function fallback(text) {
+    var ta = document.createElement('textarea');
+    ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); } catch (e) {}
+    document.body.removeChild(ta);
+  }
+})();
+</script>
+</body>
+</html>

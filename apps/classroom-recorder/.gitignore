@@ -1,0 +1,8 @@
+dist/
+dist-report/
+dist-functions/
+node_modules/
+src-tauri/target/
+src-tauri/gen/
+server.env
+cloudbaserc.local.json

@@ -1,0 +1,19 @@
+{
+  "$schema": "https://static.cloudbase.net/cli/cloudbaserc.schema.json",
+  "version": "2.0",
+  "envId": "jingshi-test-d5gp401i44a0fa7a7",
+  "region": "ap-shanghai",
+  "functionRoot": "dist-functions",
+  "functions": [
+    {
+      "name": "classroom-api",
+      "timeout": 300,
+      "memorySize": 512,
+      "runtime": "Nodejs20.19",
+      "handler": "index.main",
+      "installDependency": false,
+      "description": "菁仕课堂：飞书登录、课表、录音上传，每分钟推进转写与课堂总结",
+      "triggers": [{ "name": "every-minute", "type": "timer", "config": "0 */1 * * * * *" }]
+    }
+  ]
+}

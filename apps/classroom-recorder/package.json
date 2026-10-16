@@ -1,0 +1,31 @@
+{
+  "name": "@jingshi/classroom-recorder",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "菁仕课堂：老师端 Mac/Windows 录课 App（Tauri）+ CloudBase 转写与课堂总结 + 完整报告网页。",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 4181",
+    "build": "tsc --noEmit && vite build",
+    "tauri": "tauri",
+    "app:dev": "tauri dev",
+    "app:build": "tauri build",
+    "test": "tsx --test tests/*.test.ts",
+    "build:report": "vite build --config vite.report.config.ts",
+    "deploy:functions": "node scripts/deploy-function.mjs",
+    "deploy:web": "npm run build:report && tcb hosting deploy dist-report /classroom -e jingshi-test-d5gp401i44a0fa7a7"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.8.0",
+    "@tauri-apps/plugin-autostart": "^2.5.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.8.0",
+    "@types/node": "^24.3.0",
+    "esbuild": "^0.28.2",
+    "tencentcloud-sdk-nodejs-asr": "^4.1.326",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2",
+    "vite": "^7.1.4"
+  }
+}
