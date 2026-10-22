@@ -140,7 +140,7 @@ pub async fn fetch_once(core: &Arc<Core>) -> Result<(), String> {
     Ok(())
 }
 
-/// 自动拉课表：启动时一次，之后按 engine::fetch_wait 等，或被 kick_fetch 叫醒（登录、打开主窗口、睡醒、录音提交完）。
+/// 自动拉课表：启动时一次，之后按 engine::fetch_wait 等（每天早上一次），或被 kick_fetch 叫醒（登录、打开主窗口、睡醒时错过了早上那次）。
 pub async fn fetch_loop(core: Arc<Core>) {
     loop {
         if core.lock().cfg.token.is_some() {
@@ -151,7 +151,7 @@ pub async fn fetch_loop(core: Arc<Core>) {
             let c = core.clone();
             let _ = tauri::async_runtime::spawn_blocking(move || c.refresh_mics()).await;
         }
-        let wait = crate::engine::fetch_wait(now_ms(), core.last_fetch.load(std::sync::atomic::Ordering::Relaxed), &core.lock().merged());
+        let wait = crate::engine::fetch_wait(now_ms(), core.last_fetch.load(std::sync::atomic::Ordering::Relaxed));
         tokio::select! {
             _ = tokio::time::sleep(Duration::from_millis(wait as u64)) => {}
             _ = core.kick_fetch.notified() => {}
@@ -285,9 +285,7 @@ async fn upload_lesson(core: &Arc<Core>, dir: &Path, id: &str) -> Result<(), Api
         }
     })
     .map_err(local)?;
-    if missing.is_empty() {
-        core.kick_fetch.notify_one(); // 进入处理，开始每 3 分钟看一次报告好了没
-    } else {
+    if !missing.is_empty() {
         core.shared.kick_upload.notify_one();
     }
     core.publish();

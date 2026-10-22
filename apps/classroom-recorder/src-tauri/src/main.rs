@@ -35,10 +35,16 @@ async fn logout(core: St<'_>) -> R {
     Ok(())
 }
 
-/// 设置里的「检查更新」：返回给老师看的一句话；有新版且没在录课时直接安装重启
+/// 设置里的「检查更新」：有新版就下载好，返回给老师看的一句话
 #[tauri::command]
 async fn check_update(core: St<'_>) -> R<String> {
-    update::check_now(core.inner()).await
+    update::check(core.inner()).await
+}
+
+/// 「重启更新」
+#[tauri::command]
+async fn install_update(core: St<'_>) -> R {
+    update::install(core.inner())
 }
 
 /// 手动刷新课表
@@ -201,11 +207,19 @@ async fn stop_level_preview(core: St<'_>) -> R {
     Ok(())
 }
 
+/// 打开主窗口（菜单栏 / 托盘、Dock、通知「查看」、重复启动）：顺带拉一次课表（10 分钟内拉过就不拉）、查一次更新（24 小时一次）
 fn show_main(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.unminimize();
         let _ = w.show();
         let _ = w.set_focus();
+    }
+    if let Some(core) = app.try_state::<Arc<Core>>() {
+        let last = core.last_fetch.load(std::sync::atomic::Ordering::Relaxed);
+        if last != 0 && engine::now_ms() - last > 10 * engine::MIN {
+            core.kick_fetch.notify_one();
+        }
+        update::on_open(core.inner());
     }
 }
 
@@ -266,6 +280,7 @@ fn main() {
             logout,
             refresh_lessons,
             check_update,
+            install_update,
             delete_lesson,
             start_recording,
             start_adhoc,
@@ -338,6 +353,7 @@ fn main() {
                 }
             });
             tauri::async_runtime::spawn(cloud::fetch_loop(core.clone()));
+            tauri::async_runtime::spawn(update::on_start(core.clone()));
             tauri::async_runtime::spawn(cloud::upload_loop(core));
             Ok(())
         })
@@ -346,14 +362,6 @@ fn main() {
             if let (WindowEvent::CloseRequested { api, .. }, "main") = (e, w.label()) {
                 api.prevent_close();
                 let _ = w.hide();
-            }
-            // 打开 / 切回主窗口时拉一次最新课表（5 分钟内拉过就不重复）
-            if let (WindowEvent::Focused(true), "main") = (e, w.label()) {
-                if let Some(core) = w.app_handle().try_state::<Arc<Core>>() {
-                    if engine::now_ms() - core.last_fetch.load(std::sync::atomic::Ordering::Relaxed) > 5 * engine::MIN {
-                        core.kick_fetch.notify_one();
-                    }
-                }
             }
         })
         .build(tauri::generate_context!())

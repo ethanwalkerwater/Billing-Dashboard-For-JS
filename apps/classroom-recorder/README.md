@@ -96,7 +96,7 @@ npm run app:build -w @jingshi/classroom-recorder   # 本机打包
 1. 改 `src-tauri/tauri.conf.json` 和 `src-tauri/Cargo.toml` 的 `version`（例如 0.1.3），提交。
 2. `git tag classroom-v0.1.3 && git push origin classroom-v0.1.3`：GitHub Actions 打 macOS（通用版）+ Windows 安装包，用 `TAURI_SIGNING_PRIVATE_KEY` 给更新包签名，产物留在这次构建里。此时老师端什么都不会发生。
 3. 构建成功后 `node apps/classroom-recorder/scripts/publish-release.mjs classroom-v0.1.3`（gh 要登录仓库管理员账号）：把安装包传到 CloudBase 静态托管 `https://app.jsjy.asia/downloads/classroom/`，最后传 `latest.json`（上线开关），再在 GitHub 建 Release 留档。
-4. App **不会自己定时检查**：老师在「设置 → 检查更新」手动点，有新版就下载、安装并重启（正在录课时不装，`src-tauri/src/update.rs`）。发版后要通知老师去点一下。0.1.3 / 0.1.4 还带每小时自动检查，它们会自动升到下一个发布的版本，之后就都是手动。
+4. 老师打开 App 时（启动、从菜单栏 / 托盘打开主窗口，24 小时最多一次）查 `latest.json`，有新版就在后台下载好，标题栏出现「新版本 x · 重启更新」，老师点了才装（录课中不能装）；设置里也能手动「检查更新」（`src-tauri/src/update.rs`）。`latest.json` 是静态文件，不花云函数资源点。0.1.3 / 0.1.4 还是每小时自动检查并静默安装，会自动升到下一个发布的版本。
 
 首次安装链接：`https://app.jsjy.asia/downloads/classroom/jingshi-classroom-mac.dmg`、`…/jingshi-classroom-windows-setup.exe`。
 签名私钥和密码在发版电脑的 `~/.tauri/jingshi-classroom.key(.password)`，同时存在 GitHub Secrets；**丢了私钥，已装的 App 就再也收不到更新**，只能让老师手动重装。

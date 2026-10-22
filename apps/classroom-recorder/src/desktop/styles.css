@@ -121,7 +121,11 @@ body.toast-page{padding:12px 20px 48px}
 .panel.ask h3{margin:0 0 6px;font-size:16px;word-break:break-all}
 .panel.ask p{margin:0;color:var(--muted);font-size:13px}
 .panel.ask .foot{display:flex;justify-content:flex-end;gap:10px;margin-top:18px}
-.ghost.sm{flex:none;padding:6px 12px;font-size:13px}
+.ghost.sm,.primary.sm{flex:none;padding:6px 12px;font-size:13px}
+.primary:disabled{opacity:.5;cursor:default;filter:none}
+.upchip{margin-left:6px;padding:4px 11px;border-radius:8px;background:var(--accent-soft);color:var(--accent);font-size:12px;font-weight:600}
+.upchip.hidden{display:none}
+.upchip:disabled{opacity:.6;cursor:default}
 .ghost:disabled{opacity:.5;cursor:default}
 .iconbtn{width:28px;height:28px;border-radius:8px;display:grid;place-items:center;color:var(--muted)}
 .iconbtn:hover{background:var(--line);color:var(--text)}
