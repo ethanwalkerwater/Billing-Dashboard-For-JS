@@ -1,8 +1,8 @@
 /**
- * classroom-api —— 菁仕课堂云端（HTTP 访问服务路径 /classroom-api，定时触发 every-minute 推进处理流水线）。
+ * classroom-api —— 菁仕课堂云端（HTTP 访问服务路径 /classroom-api，转写完成靠腾讯云回调推进，定时触发 every-30-minutes 兜底）。
  * 接口与数据结构见 docs/design.md；纯逻辑在 src/server/logic.ts。
  *
- *   定时触发（每分钟）                             runPipeline
+ *   定时触发（每 30 分钟，兜底：失败重试、回调丢失、App 没回来的课、清理过期录音） runPipeline
  *   tcb fn invoke {"action":"tick"}                 手动推进一次
  *   tcb fn invoke {"action":"tick","lessonId":"rec…"} 只推进某节课
  */
@@ -441,6 +441,8 @@ async function runStep(doc: LessonDoc, step: L.Step): Promise<Partial<LessonDoc>
     const task = await asrApi().CreateRecTask({
       EngineModelType: process.env.ASR_ENGINE?.trim() || "16k_zh_en_2.0", ChannelNum: 1, SourceType: 0, Url: url,
       SpeakerDiarization: 1, SpeakerNumber: 0, ResTextFormat: 2, ConvertNumMode: 1,
+      // 转完腾讯云回调 /asr/callback 接着出总结，不用定时器每分钟去问
+      CallbackUrl: `${requireEnv("API_BASE_URL")}/asr/callback?lesson=${encodeURIComponent(doc._id)}`,
     });
     if (!task.Data?.TaskId) throw new Error("腾讯云录音识别任务提交失败");
     return { stage: "transcribing", mergedFileId: fileID, asrTaskId: task.Data.TaskId, gapMinutes: step.gapMinutes };
@@ -512,6 +514,28 @@ async function processLesson(id: string, deadline: number) {
   } finally {
     await pg("PATCH", LESSONS, `_id=${eq(id)}`, { lockedUntil: 0 }, "return=minimal");
   }
+}
+
+/**
+ * 腾讯云录音识别转完的回调。不信回调里的内容，只按 URL 里的课程编号接着处理：processLesson 会自己调
+ * DescribeTaskStatus 确认真的转完了，伪造的请求最多让我们多查一次。必须回 code 0，否则腾讯云会重试；
+ * 出总结要一两分钟，腾讯云等不及重试时，这节课已经不在 transcribing，直接回成功。
+ * 回调丢了也不怕：每 30 分钟的定时器会兜底去问。
+ */
+async function asrCallback(query: Record<string, string>) {
+  const id = query.lesson ?? "";
+  if (!/^(rec[A-Za-z0-9]+|adhoc-[0-9a-f]{16})$/.test(id)) return json(200, { code: 0, message: "成功" });
+  for (let i = 0; i < 12; i++) {
+    const doc = await getLesson(id);
+    if (doc?.stage !== "transcribing") break;
+    if (doc.lockedUntil < Date.now()) {
+      await processLesson(id, Date.now() + 170_000);
+      break;
+    }
+    // 很短的录音会比 finish 那次请求先转完，它还拿着锁：等它放手再接着做，免得要等定时器
+    await new Promise((resolve) => setTimeout(resolve, 5000));
+  }
+  return json(200, { code: 0, message: "成功" });
 }
 
 /** 录音保留 30 天：删分段和 merged.mp3，转写、总结、报告保留。每分钟最多处理 20 节，远大于每天新增的课数 */
@@ -698,7 +722,8 @@ async function adminRoute(method: string, path: string, event: HttpEvent, query:
   let m = path.match(/^\/admin\/lessons\/(rec[A-Za-z0-9]+|adhoc-[0-9a-f]{16})(\/retry)?$/);
   if (m && method === "GET" && !m[2]) return adminLesson(m[1]);
   if (m && method === "POST" && m[2]) {
-    await pg("PATCH", LESSONS, `_id=${eq(m[1])}&stage=eq.failed`, { attempts: 0 }, "return=minimal"); // 定时器下一分钟从失败的那一步重跑
+    await pg("PATCH", LESSONS, `_id=${eq(m[1])}&stage=eq.failed`, { attempts: 0 }, "return=minimal");
+    await processLesson(m[1], Date.now() + 40_000); // 从失败的那一步立刻重跑；没跑完的交给回调 / 定时器
     return json(200, { ok: true });
   }
   m = path.match(/^\/admin\/uploads\/([A-Za-z0-9_-]{8,40})\/(\d{1,2}|finish)$/);
@@ -730,6 +755,7 @@ export async function main(event: HttpEvent) {
     if (method === "GET" && path === "/auth/callback") return await authCallback(query);
     if (method === "GET" && path === "/auth/poll") return await authPoll(query.state ?? "");
     if (method === "GET" && path === "/report") return await getReport(query.t ?? "");
+    if (method === "POST" && path === "/asr/callback") return await asrCallback(query);
     if (method === "GET" && path === "/admin/login") return redirect((await authorizeUrl("admin")).url);
     if (path.startsWith("/admin/")) {
       const admin = await authenticateAdmin(event);
