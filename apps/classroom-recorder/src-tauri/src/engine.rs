@@ -628,6 +628,7 @@ impl Core {
             "fab": !g.cfg.hide_fab,
             "toast": g.toast,
             "selectedLessonId": g.selected,
+            "version": self.app.package_info().version.to_string(),
         })
     }
 

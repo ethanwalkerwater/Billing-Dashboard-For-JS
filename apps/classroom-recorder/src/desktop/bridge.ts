@@ -28,6 +28,8 @@ export interface AppState {
   fab: boolean;
   toast: { lessonId: string; title: string; body: string } | null;
   selectedLessonId: string | null;
+  /** App 版本号（设置里显示） */
+  version?: string;
 }
 
 export interface Backend {

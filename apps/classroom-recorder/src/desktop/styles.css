@@ -104,11 +104,25 @@ body.toast-page{padding:12px 20px 48px}
 /* ---------- 主窗口 ---------- */
 #app.main{height:100%;display:grid;grid-template-rows:42px 1fr;position:relative;overflow:hidden}
 .titlebar{display:flex;align-items:center;gap:8px;padding:0 14px;border-bottom:1px solid var(--line);background:var(--surface-2);user-select:none;-webkit-user-select:none}
-.titlebar.mac{padding-left:78px}
+.titlebar.mac{padding-left:92px} /* 红黄绿三个按钮占到约 76px，留出间距 */
 .titlebar .name{font-weight:600}
 .titlebar .who{margin-left:auto;font-size:12px;color:var(--muted)}
 .titlebar .who.err{color:var(--rec)}
 .iconbtn.busy svg{animation:spin .8s linear infinite}
+.recbtn{display:inline-flex;align-items:center;gap:6px;margin-left:6px;padding:4px 11px;border-radius:8px;background:var(--rec-soft);color:var(--rec);font-size:12px;font-weight:600}
+.recbtn i{width:8px;height:8px;border-radius:50%;background:currentColor}
+.recbtn:hover{filter:brightness(1.05)}
+.recbtn.on i{border-radius:2px;animation:pulse 1.4s infinite}
+.ctx{position:fixed;z-index:10;min-width:120px;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:4px;box-shadow:0 4px 14px rgba(16,24,40,.1)}
+.ctx.hidden{display:none}
+.ctx button{display:block;width:100%;text-align:left;padding:6px 10px;border-radius:7px;font-size:13px;color:var(--rec)}
+.ctx button:hover{background:var(--rec-soft)}
+.panel.ask{padding:18px 20px 16px}
+.panel.ask h3{margin:0 0 6px;font-size:16px;word-break:break-all}
+.panel.ask p{margin:0;color:var(--muted);font-size:13px}
+.panel.ask .foot{display:flex;justify-content:flex-end;gap:10px;margin-top:18px}
+.ghost.sm{flex:none;padding:6px 12px;font-size:13px}
+.ghost:disabled{opacity:.5;cursor:default}
 .iconbtn{width:28px;height:28px;border-radius:8px;display:grid;place-items:center;color:var(--muted)}
 .iconbtn:hover{background:var(--line);color:var(--text)}
 .iconbtn svg{width:16px;height:16px}
@@ -140,10 +154,7 @@ body.toast-page{padding:12px 20px 48px}
 .st.cancelled{border:2px dashed var(--line)}
 
 .detail{overflow:auto;padding:26px 32px 40px}
-.detail h2{margin:0;font-size:22px;letter-spacing:-.2px;min-width:0}
-.dhead{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
-.del{flex:none;margin-top:3px;padding:4px 10px;border-radius:8px;font-size:12px;color:var(--faint)}
-.del:hover{background:var(--rec-soft);color:var(--rec)}
+.detail h2{margin:0;font-size:22px;letter-spacing:-.2px}
 .primary.danger{background:var(--rec)}
 .replace{position:fixed;z-index:10;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:4px;box-shadow:0 4px 14px rgba(16,24,40,.1);font-size:13px}
 .replace.hidden{display:none}
@@ -151,8 +162,8 @@ body.toast-page{padding:12px 20px 48px}
 .replace > button:hover{background:var(--accent-soft)}
 .replace form{display:flex;align-items:center;gap:8px;margin:0;padding:4px 4px 4px 8px}
 .replace label{color:var(--muted);white-space:nowrap;max-width:220px;overflow:hidden;text-overflow:ellipsis}
-.replace input{width:140px;background:var(--surface);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:5px 8px;font:inherit;outline:none}
-.replace input:focus{border-color:var(--accent)}
+.replace input,.replace textarea{width:160px;resize:none;background:var(--surface);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:5px 8px;font:inherit;outline:none}
+.replace input:focus,.replace textarea:focus{border-color:var(--accent)}
 .replace .primary{padding:5px 12px;border-radius:8px}
 .meta{color:var(--muted);margin-top:4px;font-size:13px}
 .card{margin-top:22px;border:1px solid var(--line);border-radius:var(--radius);background:var(--surface)}

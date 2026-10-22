@@ -20,7 +20,8 @@ let saveTimer = 0;
 let saving: Promise<unknown> = Promise.resolve();
 const inOrder = (cmd: string, args: Record<string, unknown>) => (saving = saving.catch(() => {}).then(() => call(cmd, args)));
 let note: { id: string; text: string } | null = null; // 手动开录失败的原因，显示在按钮下
-let delAsk: string | null = null; // 正在确认删除的课
+let delAsk: string | null = null; // 右键删除、正在确认的课
+let updMsg = ''; // 设置里「检查更新」的结果
 let refreshing = false;
 let topErr = ''; // 刷新 / 删除失败的原因，在标题栏显示 5 秒
 const showErr = (text: string) => {
@@ -28,7 +29,7 @@ const showErr = (text: string) => {
   render();
   setTimeout(() => { if (topErr === text) { topErr = ''; render(); } }, 5000);
 };
-const last = { shell: '', list: '', detail: '', sheet: '' };
+const last = { shell: '', list: '', detail: '', sheet: '', ask: '' };
 
 const $ = <T extends HTMLElement>(s: string) => app.querySelector<T>(s);
 const lessonOf = (id: string | null) => S?.lessons.find(l => l.id === id);
@@ -44,7 +45,8 @@ function render() {
   const titlebar = (who: string) => `<div class="titlebar${mac ? ' mac' : ''}" data-tauri-drag-region><span class="name" data-tauri-drag-region>菁仕课堂</span>${who}</div>`;
   if (!s.teacher) {
     sheetOpen = false;
-    last.list = last.detail = last.sheet = '';
+    last.list = last.detail = last.sheet = last.ask = '';
+    delAsk = null;
     swap('shell', app, `${titlebar('')}<div class="login"><div class="login-card"><span class="appicon lg">${MIC_SVG}</span><h1>菁仕课堂</h1><p>用飞书登录后，课表会自动同步，到点自动录课</p>${
       s.loggingIn
         ? '<div class="waiting" role="status"><span class="spin dark"></span>已在浏览器打开飞书授权，完成后会自动回来</div>'
@@ -52,9 +54,9 @@ function render() {
     }</div></div>`);
     return;
   }
-  if (swap('shell', app, `${titlebar(`<span class="who" data-tauri-drag-region>${esc(s.teacher.name)} · 飞书已登录</span><button class="iconbtn" data-act="refresh" title="刷新课表" aria-label="刷新课表">${REFRESH}</button><button class="iconbtn" data-act="settings" title="设置" aria-label="设置">${GEAR}</button>`)}
-    <div class="body"><div class="list" id="list"></div><div class="detail" id="detail"></div></div><div class="sheet hidden" id="sheet"></div>`)) {
-    last.list = last.detail = last.sheet = '';
+  if (swap('shell', app, `${titlebar(`<span class="who" data-tauri-drag-region>${esc(s.teacher.name)} · 飞书已登录</span><button class="recbtn" data-act="rec" title="不在课表里的课、会议也能随时录"><i></i><span>开始录制</span></button><button class="iconbtn" data-act="refresh" title="刷新课表" aria-label="刷新课表">${REFRESH}</button><button class="iconbtn" data-act="settings" title="设置" aria-label="设置">${GEAR}</button>`)}
+    <div class="body"><div class="list" id="list"></div><div class="detail" id="detail"></div></div><div class="sheet hidden" id="sheet"></div><div class="sheet hidden" id="ask"></div>`)) {
+    last.list = last.detail = last.sheet = last.ask = '';
   }
 
   const rows = ordered(s.lessons, shanghaiToday());
@@ -69,9 +71,16 @@ function render() {
   const who = $('.who');
   if (who) who.textContent = topErr || `${s.teacher.name} · 飞书已登录`;
   who?.classList.toggle('err', !!topErr);
+  const recBtn = $('[data-act="rec"]');
+  if (recBtn) {
+    recBtn.classList.toggle('on', recording());
+    recBtn.querySelector('span')!.textContent = recording() ? '结束录制' : '开始录制';
+  }
+  if (sheetOpen || delAsk) hidePop(); // 弹窗盖住了总结
   renderList(rows);
   renderDetail(lessonOf(sel));
   renderSheet();
+  renderAsk();
   tick(s.rec, at);
 }
 
@@ -108,14 +117,9 @@ function renderList(rows: ReturnType<typeof ordered>) {
 function renderDetail(l: Lesson | undefined) {
   const s = S!;
   if (!l) return void swap('detail', $('#detail'), '<p class="empty">最近 7 天和明天都没有课</p>');
-  const head = `<div class="dhead"><h2>${esc(l.title)}${tag(l)}</h2>${l.needsName ? '' : '<button class="del" data-act="delete">删除</button>'}</div><div class="meta num">${l.date.slice(5).replace('-', '/')} · ${esc(l.start)}–${esc(l.end)}${l.topic ? ` · ${esc(l.topic)}` : ''}</div>`;
+  const head = `<h2>${esc(l.title)}${tag(l)}</h2><div class="meta num">${l.date.slice(5).replace('-', '/')} · ${esc(l.start)}–${esc(l.end)}${l.topic ? ` · ${esc(l.topic)}` : ''}</div>`;
   let body = '';
-  if (delAsk === l.id) {
-    const rec = l.status === 'recording' || l.status === 'processing';
-    body = `<div class="hero"><div class="sub lead">从菁仕课堂删除这节课？</div><div class="sub">只在 App 里删除，不会改课表${
-      l.status === 'recording' ? '；录音会立即停止并丢弃，不会生成总结' : rec ? '；录音和正在生成的总结都会放弃' : ''}</div>
-      <div class="acts"><button class="ghost" data-act="delete-cancel">取消</button><button class="primary danger" data-act="delete-ok">删除</button></div></div>`;
-  } else if (l.needsName) {
+  if (l.needsName) {
     body = `<div class="card"><div class="card-h">这段录音是关于什么？ <small>10 分钟不填按「课程」处理</small></div>
       <form class="name-form" data-name="${esc(l.id)}"><input name="topic" maxlength="30" placeholder="例如：教研周会、雅思口语试讲" autocomplete="off" aria-label="主题">
         <span class="seg" role="radiogroup" aria-label="类型"><button type="button" data-kind="adhoc" class="on">课程</button><button type="button" data-kind="meeting">会议</button></span>
@@ -182,8 +186,27 @@ function renderSheet() {
       <select data-act="mic" aria-label="麦克风">${s.mics.map(m => `<option value="${esc(m)}"${m === s.mic ? ' selected' : ''}>${esc(m)}</option>`).join('')}</select></div>
     <div class="set"><div class="lab"><b>悬浮录制按钮</b><span>不在课表里的会议、试讲也能随时录</span></div><button class="switch${s.fab ? '' : ' off'}" data-act="fab" role="switch" aria-checked="${s.fab}" aria-label="悬浮录制按钮"></button></div>
     <div class="set"><div class="lab"><b>开机自动启动</b><span>关掉后，没打开 App 就不会自动录课</span></div><button class="switch${s.autostart ? '' : ' off'}" data-act="autostart" role="switch" aria-checked="${s.autostart}" aria-label="开机自动启动"></button></div>
+    <div class="set"><div class="lab"><b>版本 ${esc(s.version ?? '')}</b><span>${esc(updMsg || '有新版本时，会在没课的时候自动安装并重启，不用手动操作')}</span></div><button class="ghost sm" data-act="update"${updMsg === '正在检查…' ? ' disabled' : ''}>检查更新</button></div>
     <div class="set"><div class="lab"><b>${esc(s.teacher!.name)}</b><span>飞书账号</span></div><button class="logout" data-act="logout">退出登录</button></div>
     <div class="foot"><button class="ghost" data-act="close-settings">完成</button></div>
+  </div>`);
+}
+
+const recording = () => ['recording', 'confirm', 'warn', 'ending'].includes(S?.rec.mode ?? '');
+
+/** 右键「删除」后的确认框 */
+function renderAsk() {
+  const el = $('#ask');
+  const l = lessonOf(delAsk);
+  if (!l) delAsk = null;
+  el?.classList.toggle('hidden', !l);
+  if (!l) return;
+  const extra = l.status === 'recording' ? '正在录的音会立即停止并丢弃，不会生成总结。'
+    : l.status === 'processing' ? '录音和正在生成的总结都会放弃。' : '';
+  swap('ask', el, `<div class="panel ask" role="alertdialog" aria-label="删除确认">
+    <h3>删除「${esc(l.title)}」？</h3>
+    <p>只从菁仕课堂里删除，不会改课表。${extra}删除后不能恢复。</p>
+    <div class="foot"><button class="ghost" data-act="delete-cancel">取消</button><button class="primary danger" data-act="delete-ok">删除</button></div>
   </div>`);
 }
 
@@ -212,6 +235,7 @@ app.addEventListener('click', e => {
     delAsk = null;
     return render();
   }
+  if (t.id === 'ask') { delAsk = null; return render(); }
   if (t.classList.contains('sheet')) return setSheet(false);
   const act = t.closest<HTMLElement>('[data-act]')?.dataset.act;
   if (!act || !S) return;
@@ -225,12 +249,21 @@ app.addEventListener('click', e => {
     render();
     call('refresh_lessons').catch(err => showErr(String(err))).finally(() => { refreshing = false; render(); });
   }
-  else if (act === 'delete') { delAsk = lessonId; render(); }
   else if (act === 'delete-cancel') { delAsk = null; render(); }
   else if (act === 'delete-ok') {
+    const id = delAsk;
     delAsk = null;
-    if (lessonId) { clearTimeout(saveTimer); drafts.delete(lessonId); }
-    call('delete_lesson', { lessonId }).catch(err => showErr(String(err)));
+    render();
+    if (!id) return;
+    if (id === sel) clearTimeout(saveTimer);
+    drafts.delete(id);
+    call('delete_lesson', { lessonId: id }).catch(err => showErr(String(err)));
+  }
+  else if (act === 'rec') void call(recording() ? 'request_stop' : 'start_adhoc').catch(err => showErr(String(err)));
+  else if (act === 'update') {
+    updMsg = '正在检查…';
+    render();
+    call<string>('check_update').then(m => { updMsg = m; }, err => { updMsg = String(err); }).finally(render);
   }
   else if (act === 'close-settings') setSheet(false);
   else if (act === 'autostart') void call('set_autostart', { enabled: !S.autostart });
@@ -282,21 +315,44 @@ const pop = document.body.appendChild(document.createElement('div'));
 pop.className = 'replace hidden';
 let picked = '';
 const hidePop = () => { picked = ''; pop.classList.add('hidden'); };
+const short = (t: string) => (t.length > 12 ? `${t.slice(0, 12)}…` : t).replace(/\n/g, '↵');
 
-app.addEventListener('mouseup', e => {
-  const ta = e.target as HTMLTextAreaElement;
-  if (ta.id !== 'sum') return;
-  setTimeout(() => {
-    const text = ta.value.slice(ta.selectionStart, ta.selectionEnd);
-    if (!text.trim() || text.length > 50 || text.includes('\n')) return hidePop();
-    picked = text;
-    const n = ta.value.split(text).length - 1;
-    pop.innerHTML = `<button data-r="open">全文替换 · ${n} 处</button>`;
-    pop.classList.remove('hidden');
-    pop.style.left = `${Math.max(8, Math.min(e.clientX - 20, innerWidth - pop.offsetWidth - 8))}px`;
-    pop.style.top = `${Math.min(e.clientY + 14, innerHeight - pop.offsetHeight - 8)}px`;
-  });
-});
+/** textarea 里某个字符位置在屏幕上的坐标（镜像一个同样排版的 div 量出来） */
+function caretXY(ta: HTMLTextAreaElement, pos: number) {
+  const cs = getComputedStyle(ta);
+  const m = document.body.appendChild(document.createElement('div'));
+  for (const k of ['font', 'fontSize', 'fontFamily', 'fontWeight', 'lineHeight', 'letterSpacing', 'padding', 'border', 'boxSizing', 'wordBreak', 'overflowWrap'] as const) m.style[k] = cs[k];
+  Object.assign(m.style, { position: 'fixed', visibility: 'hidden', whiteSpace: 'pre-wrap', width: `${ta.offsetWidth}px`, left: '0', top: '0' });
+  m.textContent = ta.value.slice(0, pos);
+  const mark = m.appendChild(document.createElement('span'));
+  mark.textContent = '​';
+  const r = ta.getBoundingClientRect();
+  const xy = { x: r.left + mark.offsetLeft, y: r.top + mark.offsetTop + mark.offsetHeight - ta.scrollTop };
+  m.remove();
+  return xy;
+}
+
+function place(el: HTMLElement, x: number, y: number) {
+  el.style.left = `${Math.max(8, Math.min(x, innerWidth - el.offsetWidth - 8))}px`;
+  el.style.top = `${Math.max(8, Math.min(y, innerHeight - el.offsetHeight - 8))}px`;
+}
+
+/** 鼠标拖选、双击、Shift+方向键、全选，只要总结里有选中的字就弹出 */
+function checkPick() {
+  const ta = $<HTMLTextAreaElement>('#sum');
+  if (!ta || document.activeElement !== ta) return;
+  const text = ta.value.slice(ta.selectionStart, ta.selectionEnd);
+  if (!text.trim()) return hidePop();
+  if (text === picked && !pop.classList.contains('hidden')) return;
+  picked = text;
+  pop.innerHTML = `<button data-r="open">全部替换 · ${ta.value.split(text).length - 1} 处</button>`;
+  pop.classList.remove('hidden');
+  const { x, y } = caretXY(ta, ta.selectionEnd);
+  place(pop, x - 20, y + 6);
+}
+document.addEventListener('mouseup', () => setTimeout(checkPick));
+app.addEventListener('keyup', e => { if ((e.target as HTMLElement).id === 'sum') checkPick(); });
+app.addEventListener('select', e => { if ((e.target as HTMLElement).id === 'sum') checkPick(); }, true);
 
 pop.addEventListener('mousedown', e => { if ((e.target as HTMLElement).tagName === 'BUTTON') e.preventDefault(); }); // 不让 textarea 丢掉选区
 pop.addEventListener('click', e => {
@@ -305,9 +361,10 @@ pop.addEventListener('click', e => {
   if (!ta || !picked) return hidePop();
   if (r === 'open') {
     const n = ta.value.split(picked).length - 1;
-    pop.innerHTML = `<form><label>把 ${n} 处「${esc(picked)}」改成</label><input value="${esc(picked)}" aria-label="替换成"><button class="primary" data-r="go">全部替换</button></form>`;
-    const input = pop.querySelector('input')!;
-    pop.style.left = `${Math.max(8, Math.min(pop.offsetLeft, innerWidth - pop.offsetWidth - 8))}px`;
+    const field = picked.includes('\n') ? `<textarea rows="3" aria-label="替换成">${esc(picked)}</textarea>` : `<input value="${esc(picked)}" aria-label="替换成">`;
+    pop.innerHTML = `<form><label>把 ${n} 处「${esc(short(picked))}」改成</label>${field}<button class="primary" data-r="go">全部替换</button></form>`;
+    const input = pop.querySelector<HTMLInputElement>('input,textarea')!;
+    place(pop, pop.offsetLeft, pop.offsetTop);
     input.focus();
     input.select();
   }
@@ -315,7 +372,7 @@ pop.addEventListener('click', e => {
 pop.addEventListener('submit', e => {
   e.preventDefault();
   const ta = $<HTMLTextAreaElement>('#sum');
-  const to = pop.querySelector('input')!.value;
+  const to = pop.querySelector<HTMLInputElement>('input,textarea')!.value;
   if (ta && picked && to !== picked) replaceAll(ta, picked, to);
   hidePop();
 });
@@ -337,11 +394,40 @@ function replaceAll(ta: HTMLTextAreaElement, from: string, to: string) {
   for (const [b, top] of boxes) b.scrollTop = top;
 }
 
-document.addEventListener('mousedown', e => { if (!pop.contains(e.target as Node)) hidePop(); });
-app.addEventListener('input', e => { if ((e.target as HTMLElement).id === 'sum') hidePop(); });
-document.addEventListener('scroll', () => { if (!pop.contains(document.activeElement)) hidePop(); }, true);
+// ---------- 右键课程 → 删除 ----------
+const menu = document.body.appendChild(document.createElement('div'));
+menu.className = 'ctx hidden';
+menu.innerHTML = '<button data-m="delete">删除</button>';
+let menuId: string | null = null;
+const hideMenu = () => { menuId = null; menu.classList.add('hidden'); };
+app.addEventListener('contextmenu', e => {
+  const row = (e.target as HTMLElement).closest<HTMLElement>('.row');
+  if (!row) return;
+  e.preventDefault();
+  menuId = row.dataset.id!;
+  menu.classList.remove('hidden');
+  place(menu, e.clientX, e.clientY);
+});
+menu.addEventListener('click', () => {
+  delAsk = menuId;
+  hideMenu();
+  render();
+});
 
-document.addEventListener('keydown', e => { if (e.key === 'Escape') { hidePop(); setSheet(false); } });
+document.addEventListener('mousedown', e => {
+  if (!pop.contains(e.target as Node)) hidePop();
+  if (!menu.contains(e.target as Node)) hideMenu();
+});
+app.addEventListener('input', e => { if ((e.target as HTMLElement).id === 'sum') hidePop(); });
+document.addEventListener('scroll', () => { hideMenu(); if (!pop.contains(document.activeElement)) hidePop(); }, true);
+
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape') return;
+  hidePop();
+  hideMenu();
+  if (delAsk) { delAsk = null; render(); }
+  setSheet(false);
+});
 window.addEventListener('beforeunload', () => { if (sel) flushSave(sel); });
 
 subscribe(s => {
