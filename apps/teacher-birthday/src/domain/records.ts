@@ -9,7 +9,7 @@ export const TEACHER_FIELDS = {
 } as const;
 
 export const WISH_FIELDS = {
-  teacher: "老师", year: "年份", name: "你的名字", role: "身份", text: "最想对 ta 说的话", files: "图片 / 表情包", hidden: "隐藏",
+  teacher: "老师", time: "祝福时间", name: "你的名字", role: "身份", text: "最想对 ta 说的话", files: "图片 / 表情包", hidden: "隐藏",
 } as const;
 
 export interface Wish { name: string; role: string; text: string; files: Array<{ token: string; name: string; mime: string }> }

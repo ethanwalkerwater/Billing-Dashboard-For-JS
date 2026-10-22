@@ -55,7 +55,7 @@ function fillText(data: PageData) {
     }),
   );
   const n = data.wishes.length;
-  $("hero-sub").textContent = n > 0 ? `${n} 位同学和同事给你写了祝福` : "大家的祝福正在路上";
+  $("hero-sub").textContent = "有些感谢和祝福，想在今天说给你听";
   $("to-wall").textContent = n > 0 ? "看看大家说了什么" : "往下看";
 
   if (data.photoUrl) {

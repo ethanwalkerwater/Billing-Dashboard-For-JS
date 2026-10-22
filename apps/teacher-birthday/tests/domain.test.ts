@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { chooseBlessing, templateBlessing } from "../src/domain/blessing";
 import { askCard, celebrateCard, wishFormUrl } from "../src/domain/cards";
 import { ymdToMs } from "../src/domain/dates";
-import { parseTeacher, parseWish } from "../src/domain/records";
+import { parseTeacher, parseWish, WISH_FIELDS } from "../src/domain/records";
 import { scheduleStats } from "../src/domain/stats";
 import { signPageToken, verifyPageToken } from "../src/server/token";
 
@@ -76,15 +76,18 @@ test("寄语：手写优先，其次 AI，再次模板", () => {
   assert.match(templateBlessing("汤朔"), /汤朔/);
 });
 
-test("问卷链接预填并隐藏老师与年份；卡片带链接与 @", () => {
-  const url = new URL(wishFormUrl("https://x.feishu.cn/share/base/form/shrA", "汤朔", 2026));
-  assert.equal(url.searchParams.get("prefill_老师"), "汤朔");
-  assert.equal(url.searchParams.get("hide_年份"), "1");
+test("问卷链接只预填并隐藏老师；祝福字段不依赖年份；卡片带链接与 @", () => {
+  const url = new URL(wishFormUrl("https://x.feishu.cn/share/base/form/shrA", "汤朔"));
+  assert.deepEqual(Object.fromEntries(url.searchParams), { prefill_老师: "汤朔", hide_老师: "1" });
+  assert.equal(Object.values(WISH_FIELDS).join(",").includes("年份"), false);
   const ask = JSON.stringify(askCard({ teacherName: "汤朔", date: { y: 2026, m: 10, d: 12 }, daysLeft: 3, formUrl: url.href, wishCount: 0 }));
   assert.match(ask, /10\/12/);
   assert.ok(ask.includes(url.href));
-  assert.match(JSON.stringify(celebrateCard({ teacherName: "汤朔", openId: "ou_x", pageUrl: "https://p", wishCount: 5 })), /<at id=ou_x><\/at>/);
-  assert.doesNotMatch(JSON.stringify(celebrateCard({ teacherName: "汤朔", openId: null, pageUrl: "https://p", wishCount: 0 })), /<at/);
+  const celebration = JSON.stringify(celebrateCard({ teacherName: "汤朔", openId: "ou_x", pageUrl: "https://p" }));
+  assert.match(celebration, /<at id=ou_x><\/at>/);
+  assert.match(celebration, /专属生日礼物/);
+  assert.doesNotMatch(celebration, /\d+.*(?:条祝福|位同学)/);
+  assert.doesNotMatch(JSON.stringify(celebrateCard({ teacherName: "汤朔", openId: null, pageUrl: "https://p" })), /<at/);
 });
 
 test("parseTeacher: 飞书数字字段返回字符串（实测单条 GET 为 \"267\"）也要读成数字，否则已发年份失效会每天重复发送", () => {

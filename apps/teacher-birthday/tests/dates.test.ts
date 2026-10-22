@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { dueActions, nextBirthday, shanghaiYmd, tenure, ymdToMs } from "../src/domain/dates";
+import { dueActions, nextBirthday, shanghaiYmd, tenure, wishWindow, ymdToMs } from "../src/domain/dates";
 import type { TeacherRow } from "../src/domain/dates";
 
 const at = (y: number, m: number, d: number, hour = 9) => ymdToMs({ y, m, d }) + hour * 3600_000;
@@ -46,6 +46,15 @@ test("dueActions: 已发年份防重复，跨年按生日所在年份记", () =>
 
 test("dueActions: 没生日、不在职的老师跳过", () => {
   assert.deepEqual(dueActions([teacher({ birthMs: null }), teacher({ active: false })], at(2026, 10, 12)), []);
+});
+
+test("wishWindow: 从生日前 3 天到下次收集前，覆盖跨年、闰日和未填生日", () => {
+  const jan = ymdToMs({ y: 1990, m: 1, d: 2 });
+  const window = wishWindow(jan, 2027);
+  assert.deepEqual(window, { fromMs: at(2026, 12, 30, 0), toMs: at(2027, 12, 30, 0) });
+  assert.equal(window.toMs, wishWindow(jan, 2028).fromMs);
+  assert.deepEqual(wishWindow(null, 2026), { fromMs: at(2026, 1, 1, 0), toMs: at(2027, 1, 1, 0) });
+  assert.deepEqual(wishWindow(ymdToMs({ y: 2000, m: 2, d: 29 }), 2027), { fromMs: at(2027, 2, 25, 0), toMs: at(2028, 2, 26, 0) });
 });
 
 test("tenure: 第 N 天与蜡烛数（至少 1 根，最多 12 根）", () => {

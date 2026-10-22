@@ -52,6 +52,16 @@ export function nextBirthday(today: Ymd, birth: Ymd): { date: Ymd; daysLeft: num
   return { date, daysLeft: dayIndex(date) - dayIndex(today) };
 }
 
+/** 本次收集从生日前 3 天开始，到下一次收集前结束；跨年提交也归到同一次生日。 */
+export function wishWindow(birthMs: number | null, year: number): { fromMs: number; toMs: number } {
+  if (birthMs === null) return { fromMs: ymdToMs({ y: year, m: 1, d: 1 }), toMs: ymdToMs({ y: year + 1, m: 1, d: 1 }) };
+  const birth = shanghaiYmd(birthMs);
+  return {
+    fromMs: ymdToMs(birthdayIn(year, birth)) - ASK_DAYS_BEFORE * DAY,
+    toMs: ymdToMs(birthdayIn(year + 1, birth)) - ASK_DAYS_BEFORE * DAY,
+  };
+}
+
 /** 今天或之前最近的一次生日，以及过去了几天 */
 function lastBirthday(today: Ymd, birth: Ymd): { date: Ymd; daysSince: number } {
   let date = birthdayIn(today.y, birth);

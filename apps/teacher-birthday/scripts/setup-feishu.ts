@@ -43,7 +43,8 @@ const teacherSpecs: Spec[] = [
   [T.asked, 2, { formatter: "0" }], [T.celebrated, 2, { formatter: "0" }],
 ];
 const wishSpecs: Spec[] = [
-  [W.year, 2, { formatter: "0" }], [W.name, 1], [W.role, 3, select("学生", "家长", "同事")],
+  [W.time, 5, { date_formatter: "yyyy/MM/dd HH:mm", auto_fill: true }],
+  [W.name, 1], [W.role, 3, select("学生", "家长", "同事")],
   [W.text, 1], [W.files, 17], [W.hidden, 7],
 ];
 
@@ -89,7 +90,7 @@ const { items: formFields } = await call<{ items: Array<{ field_id: string; titl
   "GET", `/bitable/v1/apps/${APP}/tables/${wishTable}/forms/${formId}/fields`);
 const formRules: Record<string, { required: boolean; visible: boolean; description?: string }> = {
   [W.teacher]: { required: true, visible: true },
-  [W.year]: { required: true, visible: true },
+  [W.time]: { required: false, visible: false },
   [W.name]: { required: true, visible: true, description: "学生请写学生姓名" },
   [W.role]: { required: true, visible: true },
   [W.text]: { required: true, visible: true },

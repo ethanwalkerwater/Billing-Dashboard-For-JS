@@ -30,7 +30,7 @@ function deps(): BirthdayDeps {
     wishFormUrl: requireEnv("WISH_FORM_URL"),
     scheduleAppToken: requireEnv("SCHEDULE_APP_TOKEN"),
     scheduleTableId: requireEnv("SCHEDULE_TABLE_ID"),
-    academicOpenIds: requireEnv("BIRTHDAY_ACADEMIC_OPEN_IDS").split(",").map((s) => s.trim()).filter(Boolean),
+    academicChatId: requireEnv("BIRTHDAY_ACADEMIC_CHAT_ID"),
     groupChatId: requireEnv("BIRTHDAY_GROUP_CHAT_ID"),
     pageBaseUrl: requireEnv("PAGE_BASE_URL"),
     pepper: requireEnv("PAGE_TOKEN_PEPPER"),
@@ -44,14 +44,13 @@ function deps(): BirthdayDeps {
       listTeachers: () => client.listAllRecords(teacherTable),
       getTeacher: (recordId) => client.getRecord({ ...teacherTable, recordId }),
       updateTeacher: async (recordId, fields) => { await client.updateRecord({ ...teacherTable, recordId, fields }); },
-      listWishes: (teacherName, year) =>
+      listWishes: (teacherName) =>
         client.searchRecords({
           appToken: config.teacherAppToken,
           tableId: config.wishTableId,
           fieldNames: Object.values(WISH_FIELDS),
           filter: { conjunction: "and", conditions: [
             { field_name: WISH_FIELDS.teacher, operator: "is", value: [teacherName] },
-            { field_name: WISH_FIELDS.year, operator: "is", value: [String(year)] },
           ] },
         }),
       listLessons: (scheduleName, todayMs) =>

@@ -1,5 +1,11 @@
 # 老师生日祝福 Implementation Plan
 
+> 历史实施方案，保留原始步骤与代码草案；复选框未随开发同步，不能作为当前完成度清单。当前代码、测试、CloudBase 和 demo 核对结果见 [应用 README](../../apps/teacher-birthday/README.md#当前开发状态2026-10-15-更新)。当前网页已改为 3D 派对 → 祝福墙 → 手写信笺，不再使用下文早期的吹蜡烛 / 星座方案。
+
+> 2026-10-15 更新：业务已取消祝福表「年份」及问卷中的年份预填，当前改用自动记录的「祝福时间」，按老师和生日收集周期筛选；下文涉及祝福年份的代码属于历史草案，不应照抄或重新建列。老师档案的已发年份与网页 token 年份仍保留。
+
+> 2026-10-15 收件方式更新：提前三天提醒改发「教务群 - 生日」（`BIRTHDAY_ACADEMIC_CHAT_ID`），生日当天祝福发「菁仕教育大群」（`BIRTHDAY_GROUP_CHAT_ID`）。下文教务个人私信方案和 `BIRTHDAY_ACADEMIC_OPEN_IDS` 已不再使用。老师网页与生日群卡片不显示祝福人数。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 飞书老师档案 + 生日前 3 天私信教务预填问卷 + 生日当天 9:00 群卡片 + 3D 生日祝福网站，全程可在测试群演练。
