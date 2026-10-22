@@ -6,6 +6,8 @@ export interface FeishuEventEnvelope {
   token?: string;
   header?: { token?: string; event_type?: string };
   event?: {
+    /** drive.file.bitable_record_changed_v1：变更发生在哪张表 */
+    table_id?: string;
     action_list?: Array<{ record_id?: string; action?: string }>;
     [key: string]: unknown;
   };
@@ -55,21 +57,26 @@ export function verifyFeishuEvent(input: {
 }): VerifyResult {
   if (!input.body) return { ok: false, reason: "EMPTY_BODY" };
 
-  // 配了 Encrypt Key 就必须验签，否则任何人都能伪造答卷事件。
-  if (input.encryptKey) {
-    const timestamp = headerValue(input.headers, "x-lark-request-timestamp");
-    const nonce = headerValue(input.headers, "x-lark-request-nonce");
-    const signature = headerValue(input.headers, "x-lark-signature");
-    if (!timestamp || !nonce || !signature) return { ok: false, reason: "MISSING_SIGNATURE" };
-    const expected = feishuSignature({ timestamp, nonce, encryptKey: input.encryptKey, body: input.body });
-    if (!safeEqual(expected, signature)) return { ok: false, reason: "BAD_SIGNATURE" };
-  }
-
   let parsed: FeishuEventEnvelope & { encrypt?: string };
   try {
     parsed = JSON.parse(input.body);
   } catch {
     return { ok: false, reason: "BAD_JSON" };
+  }
+
+  // 配了 Encrypt Key 就必须能证明是飞书发的，否则任何人都能伪造答卷事件：
+  // 带了签名头就验签；飞书保存请求地址时的 url_verification 不一定带签名头，这时要求报文是加密的——
+  // 用 Encrypt Key 解得开、里面的 Verification Token 又对得上，只有飞书做得到。
+  if (input.encryptKey) {
+    const timestamp = headerValue(input.headers, "x-lark-request-timestamp");
+    const nonce = headerValue(input.headers, "x-lark-request-nonce");
+    const signature = headerValue(input.headers, "x-lark-signature");
+    if (timestamp && nonce && signature) {
+      const expected = feishuSignature({ timestamp, nonce, encryptKey: input.encryptKey, body: input.body });
+      if (!safeEqual(expected, signature)) return { ok: false, reason: "BAD_SIGNATURE" };
+    } else if (!parsed.encrypt || !input.verificationToken) {
+      return { ok: false, reason: "MISSING_SIGNATURE" };
+    }
   }
 
   if (parsed.encrypt) {

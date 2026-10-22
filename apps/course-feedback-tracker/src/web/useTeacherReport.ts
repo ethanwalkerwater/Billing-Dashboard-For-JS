@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { EXCLUDED_TEACHERS_TABLE, SCORE_RESULTS_TABLE } from "@/shared/rdb";
+import { shiftMonth } from "@/domain";
 import { callFeedbackApi, db } from "./cloudbase";
+import { feedbackIsStale } from "./SyncStatus";
 import type { DetailRow, MonthReport } from "./report-types";
 
 export function currentCollectionMonth(): string {
@@ -22,8 +24,8 @@ interface ResultRow {
  * 老师评分数据：直接读 feedback_score_results（每月算好存着），切月份、切标签、改累计范围都不调云函数。
  * 逐条明细（文字评价、老师抽屉要用，每月一两百 KB）按月份懒加载，读过就缓存。
  *
- * 打开页面时在后台刷新一次本月答卷：答卷有变化，云函数会重算本月并存库，刷新完再读一次表。
- * 答卷没变（最常见）就不会触发计算。
+ * 打开页面时，本月课程这一轮的答卷 10 分钟内没同步过才在后台对账一次（所有还在收集的轮次）：
+ * 答卷有变化，云函数会重算并存库，刷新完再读一次表。答卷没变（最常见）就不会触发计算。
  */
 export function useTeacherReport() {
   const [months, setMonths] = useState<MonthReport[] | null>(null);
@@ -66,8 +68,7 @@ export function useTeacherReport() {
   const sync = useCallback(async () => {
     setSyncing(true);
     try {
-      const collectionMonth = currentCollectionMonth();
-      const result = await callFeedbackApi<{ scores?: Record<string, string> }>({ action: "sync-responses", collectionMonth });
+      const result = await callFeedbackApi<{ scores?: Record<string, string> }>({ action: "sync-responses" });
       await load();
       // 重算过的月份，明细也换成新的
       for (const [month, outcome] of Object.entries(result.scores ?? {})) {
@@ -86,7 +87,9 @@ export function useTeacherReport() {
     if (started.current) return;
     started.current = true;
     load().catch((cause) => setError(cause instanceof Error ? cause.message : String(cause)));
-    void sync();
+    void feedbackIsStale(shiftMonth(currentCollectionMonth(), 1)).then((stale) => {
+      if (stale) void sync();
+    });
   }, [load, sync]);
 
   return { months, excluded, details, loadDetail, syncing, error, sync };

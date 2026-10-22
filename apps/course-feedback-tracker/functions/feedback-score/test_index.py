@@ -41,6 +41,13 @@ class FeedbackScoreTest(unittest.TestCase):
         self.assertEqual(5.0, by_teacher["Valentina Lin"]["variants"]["learning_effect"]["student"])
         self.assertEqual(3, len(result["detail"]))
 
+    def test_counts_feedback_submitted_inside_the_course_month(self):
+        # 月中提前评价：9 月课程的答卷 9 月就交了（快照已按反馈课程月份筛好），不能因为不是 10 月提交就丢掉
+        early = FEEDBACK.replace("2026-10-01", "2026-09-20").replace("2026-10-02", "2026-09-21")
+        result = index.main({**BASE, "feedbackCsv": early})
+        self.assertTrue(result["ok"], result.get("error"))
+        self.assertEqual(3, len(result["detail"]))
+
     def test_history_overlay_keeps_published_totals_and_adds_breakdowns(self):
         # 历史表里存的已经是课表写法（导入时换过名）
         published = {"teacher": "Valentina Lin", "hours": 100, "responses": 9, "matchedResponses": 9, "coverage": 0.5,

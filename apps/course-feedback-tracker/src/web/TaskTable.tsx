@@ -3,8 +3,9 @@ import { ArrowDown, ArrowUp, ChevronsUpDown, QrCode } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { TASK_STATUS_LABELS } from "@/domain";
+import { TASK_OWNERS, TASK_STATUS_LABELS } from "@/domain";
 import type { TaskStatus } from "@/domain";
 import { cn } from "@/lib/utils";
 import type { StoredFeedbackTask } from "@/server/tasks/types";
@@ -75,6 +76,7 @@ export function TaskTable({
   onToggle,
   onToggleAll,
   onOpen,
+  onOwnerChange,
   sortKey,
   sortAsc,
   onSort,
@@ -85,6 +87,7 @@ export function TaskTable({
   onToggle: (taskId: string) => void;
   onToggleAll: () => void;
   onOpen: (task: StoredFeedbackTask) => void;
+  onOwnerChange: (taskId: string, owner: string) => void;
   sortKey: SortKey;
   sortAsc: boolean;
   onSort: (key: SortKey) => void;
@@ -101,6 +104,7 @@ export function TaskTable({
           <col className="w-[18%]" />
           <col className="w-[13%]" />
           <col />
+          <col className="w-28" />
           <col className="w-24" />
           <col className="w-36" />
           <col className="w-44" />
@@ -118,6 +122,7 @@ export function TaskTable({
             <SortableHead label="学生" sortKey="student" active={sortKey} asc={sortAsc} onSort={onSort} />
             <SortableHead label="老师" sortKey="teacher" active={sortKey} asc={sortAsc} onSort={onSort} />
             <TableHead>课程</TableHead>
+            <TableHead>负责人</TableHead>
             <SortableHead label="状态" sortKey="status" active={sortKey} asc={sortAsc} onSort={onSort} />
             <TableHead>谁评了</TableHead>
             <SortableHead label="最近动作" sortKey="activity" active={sortKey} asc={sortAsc} onSort={onSort} />
@@ -152,6 +157,26 @@ export function TaskTable({
                   </div>
                 </TableCell>
                 <TableCell>
+                  <Select value={task.owner ?? ""} onValueChange={(owner) => onOwnerChange(task.taskId, owner)}>
+                    <SelectTrigger
+                      size="sm"
+                      // 沿用之前月份的设定显示成灰色；在这个月改了就从这个月起生效
+                      className={cn("h-7 w-full", task.owner && task.ownerFromMonth !== task.courseMonth && "text-muted-foreground")}
+                      title={task.owner && task.ownerFromMonth !== task.courseMonth ? `沿用 ${Number(task.ownerFromMonth!.slice(5))} 月的设置，在这里改会从本月起生效` : undefined}
+                      aria-label={`${task.studentName} 的负责人`}
+                    >
+                      <SelectValue placeholder="未分配" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {TASK_OWNERS.map((owner) => (
+                        <SelectItem key={owner} value={owner}>
+                          {owner}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </TableCell>
+                <TableCell>
                   <Badge variant={STATUS_VARIANT[task.status]}>{TASK_STATUS_LABELS[task.status]}</Badge>
                 </TableCell>
                 <TableCell>
@@ -174,14 +199,14 @@ export function TaskTable({
           })}
           {!loading && tasks.length === 0 ? (
             <TableRow>
-              <TableCell colSpan={8} className="text-muted-foreground h-24 text-center whitespace-normal">
+              <TableCell colSpan={9} className="text-muted-foreground h-24 text-center whitespace-normal">
                 当前筛选没有任务。先选择月份，再点「生成名单」。
               </TableCell>
             </TableRow>
           ) : null}
           {loading ? (
             <TableRow>
-              <TableCell colSpan={8} className="text-muted-foreground h-24 text-center">
+              <TableCell colSpan={9} className="text-muted-foreground h-24 text-center">
                 正在读取…
               </TableCell>
             </TableRow>

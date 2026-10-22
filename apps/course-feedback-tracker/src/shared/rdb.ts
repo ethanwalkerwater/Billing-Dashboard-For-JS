@@ -40,6 +40,7 @@ export const SNAPSHOTS_TABLE = "feedback_source_snapshots";
 export const SCORE_HISTORY_TABLE = "feedback_score_history";
 export const SCORE_RESULTS_TABLE = "feedback_score_results";
 export const COURSE_TYPE_RULES_TABLE = "feedback_course_type_rules";
+export const OWNER_ASSIGNMENTS_TABLE = "feedback_owner_assignments";
 
 function unwrap<T>(result: PostgrestResult<T>, context: string): T[] {
   if (result.error) throw new Error(`${context}失败：${result.error.message}`);
@@ -71,6 +72,15 @@ export class RdbFeedbackTaskRepository implements FeedbackTaskRepository {
       .eq("public_token", publicToken)
       .limit(1);
     return unwrap(result, "按短链接读取任务").map(rowToTask)[0] ?? null;
+  }
+
+  async listResponseMonths(responseRecordIds: string[]): Promise<string[]> {
+    if (responseRecordIds.length === 0) return [];
+    const result = await this.db
+      .from(RESPONSES_TABLE)
+      .select<{ collection_month: string | null }>("collection_month")
+      .in("response_record_id", responseRecordIds);
+    return [...new Set(unwrap(result, "读取答卷轮次").flatMap((row) => (row.collection_month ? [row.collection_month] : [])))];
   }
 
   async listCourseTypeOverrides(): Promise<Map<string, boolean>> {

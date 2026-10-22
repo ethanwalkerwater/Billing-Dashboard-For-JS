@@ -1,5 +1,6 @@
-import { classifyLesson, isWithinMonthInShanghai } from "../../domain";
-import { readLinkIds } from "../feishu/parsers";
+import { classifyLesson, isWithinMonthInShanghai, nameMatchKey, responseCollectionMonth } from "../../domain";
+import type { LessonRow } from "../../domain";
+import { readFeedbackCourseMonth, readLinkIds } from "../feishu/parsers";
 import type { FeishuRecord } from "../feishu/types";
 
 /**
@@ -50,7 +51,8 @@ function cellText(value: unknown): string {
   return "";
 }
 
-export const SCHEDULE_CSV_HEADERS = ["上课时间", "老师", "学生", "课程时长", "课程类型", "授课类型", "临时取消"];
+// 「记录ID」是飞书课表的 record_id：已定稿任务的课时按它替换（applyFrozenLessons）。评分脚本按列名读，多一列不影响。
+export const SCHEDULE_CSV_HEADERS = ["上课时间", "老师", "学生", "课程时长", "课程类型", "授课类型", "临时取消", "记录ID"];
 
 export function buildScheduleCsv(input: {
   records: FeishuRecord[];
@@ -66,7 +68,17 @@ export function buildScheduleCsvWithCount(input: {
   courseMonth: string;
   studentNamesByRecordId: ReadonlyMap<string, string>;
 }): { csv: string; rows: number } {
-  const rows: Array<Record<string, unknown>> = [];
+  const rows = scheduleRows(input);
+  return { csv: toCsv(SCHEDULE_CSV_HEADERS, rows), rows: rows.length };
+}
+
+/** 课程月份内的每节课一行，列同 SCHEDULE_CSV_HEADERS。任务的 lessons 也存这个形状。 */
+export function scheduleRows(input: {
+  records: FeishuRecord[];
+  courseMonth: string;
+  studentNamesByRecordId: ReadonlyMap<string, string>;
+}): LessonRow[] {
+  const rows: LessonRow[] = [];
   for (const record of input.records) {
     const startsAt = record.fields["上课时间"];
     const formatted = formatShanghai(startsAt);
@@ -81,9 +93,34 @@ export function buildScheduleCsvWithCount(input: {
       课程类型: cellText(record.fields["课程类型"]),
       授课类型: cellText(record.fields["授课类型"]),
       临时取消: cellText(record.fields["临时取消"]),
+      记录ID: record.record_id,
     });
   }
-  return { csv: toCsv(SCHEDULE_CSV_HEADERS, rows), rows: rows.length };
+  return rows;
+}
+
+/**
+ * 有人评价过的任务课时定稿：评分用的课表里，这对学生-老师的课换成任务上存的那几行（评价时的课表），
+ * 之后课表再加课、取消、改时长都不影响这位学生的权重。
+ * 换法：去掉定稿行（按记录ID）和这对学生-老师的其他单人单师行（后来新加的课），再补上定稿行。
+ * 多人课（学生列是「A、B」）在评分脚本里本来就对不上任何答卷，只按记录ID去重。
+ */
+export function applyFrozenLessons(
+  scheduleCsv: string,
+  frozen: ReadonlyArray<{ studentName: string; teacherName: string; lessons: readonly LessonRow[] }>,
+): string {
+  if (frozen.length === 0) return scheduleCsv;
+  const [header, ...cells] = parseCsv(scheduleCsv);
+  if (!header) return scheduleCsv;
+  const pair = (student: string, teacher: string) => `${nameMatchKey(student)}\u001f${nameMatchKey(teacher)}`;
+  const frozenPairs = new Set(frozen.map((task) => pair(task.studentName, task.teacherName)));
+  const frozenRows = new Map<string, LessonRow>();
+  for (const task of frozen) for (const lesson of task.lessons) frozenRows.set(lesson["记录ID"] ?? "", lesson);
+  const live = cells
+    .map((row) => Object.fromEntries(header.map((name, index) => [name, row[index] ?? ""])))
+    .filter((row) => !frozenRows.has(row["记录ID"] ?? "") && !frozenPairs.has(pair(row["学生"] ?? "", row["老师"] ?? "")));
+  const columns = [...new Set([...header, ...SCHEDULE_CSV_HEADERS])];
+  return toCsv(columns, [...live, ...frozenRows.values()]);
 }
 
 /**
@@ -100,7 +137,9 @@ export function buildFeedbackCsvWithCount(input: { records: FeishuRecord[]; coll
   const rows: Array<Record<string, unknown>> = [];
   for (const record of input.records) {
     const submittedAt = formatShanghai(record.fields["提交时间"] ?? record.created_time);
-    if (!submittedAt || !submittedAt.startsWith(input.collectionMonth)) continue;
+    if (!submittedAt) continue;
+    // 和对账同一个归属规则：有「反馈课程月份」按它，没有按提交月份。
+    if (responseCollectionMonth(readFeedbackCourseMonth(record.fields), submittedAt.slice(0, 7)) !== input.collectionMonth) continue;
     const row: Record<string, unknown> = {};
     for (const header of headers) row[header] = cellText(record.fields[header]);
     row["提交时间"] = submittedAt;

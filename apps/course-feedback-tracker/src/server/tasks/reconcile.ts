@@ -10,6 +10,11 @@ function normalizeList(values: string[]): string[] {
   return [...new Set(values)].sort((left, right) => left.localeCompare(right, "zh-CN"));
 }
 
+/** 有人评价过、且存了当时的课 → 课时定稿，再生成名单也不改它的课程和课时。 */
+export function isFrozen(task: StoredFeedbackTask): boolean {
+  return Boolean((task.studentResponseId || task.parentResponseId) && task.lessons?.length);
+}
+
 export async function buildTaskSyncPlan(input: {
   existing: StoredFeedbackTask[];
   drafts: FeedbackTaskDraft[];
@@ -41,22 +46,19 @@ export async function buildTaskSyncPlan(input: {
     }
 
     const unchanged =
-      existing.studentName === draft.studentName &&
-      existing.teacherSourceName === draft.teacherSourceName &&
-      existing.teacherCanonicalName === draft.teacherCanonicalName &&
-      equalStringArrays(existing.courseNames, courseNames) &&
-      equalStringArrays(existing.scheduleRecordIds, scheduleRecordIds);
+      isFrozen(existing) ||
+      (existing.studentName === draft.studentName &&
+        existing.teacherSourceName === draft.teacherSourceName &&
+        existing.teacherCanonicalName === draft.teacherCanonicalName &&
+        equalStringArrays(existing.courseNames, courseNames) &&
+        equalStringArrays(existing.scheduleRecordIds, scheduleRecordIds) &&
+        JSON.stringify(existing.lessons ?? null) === JSON.stringify(draft.lessons ?? null));
+    // 定稿的任务课程和课时保持评价时的样子。
     if (unchanged) {
       plan.unchanged.push(existing);
       continue;
     }
-    plan.update.push({
-      ...existing,
-      ...draft,
-      courseNames,
-      scheduleRecordIds,
-      updatedAt: now,
-    });
+    plan.update.push({ ...existing, ...draft, courseNames, scheduleRecordIds, updatedAt: now });
   }
 
   // 这次没再生成的旧任务（课程类型改判为非课程、或课表里的课被删了）：

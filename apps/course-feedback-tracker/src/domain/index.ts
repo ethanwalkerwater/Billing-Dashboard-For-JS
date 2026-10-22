@@ -2,6 +2,7 @@ export * from "./form-url";
 export * from "./identity";
 export * from "./lesson-kind";
 export * from "./month";
+export * from "./owners";
 export * from "./status";
 export * from "./tasks";
 export * from "./types";

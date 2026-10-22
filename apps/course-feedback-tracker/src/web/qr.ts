@@ -24,11 +24,12 @@ export const FOOTER_LINE = "反馈完全匿名，你的善意会帮助老师变�
  * 答卷已按姓名匹配回任务，中间那一跳（/t/<token> → 302）没有任何作用，
  * 只剩冷启动延迟和腾讯默认域名的拦截页。旧端点保留，已印出去的码不失效。
  */
-export function taskFormUrl(task: Pick<StoredFeedbackTask, "studentName" | "teacherCanonicalName">): string {
+export function taskFormUrl(task: Pick<StoredFeedbackTask, "studentName" | "teacherCanonicalName" | "courseMonth">): string {
   return buildPrefilledFormUrl({
     baseUrl: feishuFormUrl(),
     teacherName: task.teacherCanonicalName,
     studentName: task.studentName,
+    courseMonth: task.courseMonth,
   });
 }
 
@@ -36,16 +37,20 @@ export function taskFormUrl(task: Pick<StoredFeedbackTask, "studentName" | "teac
  * 用 `scale`（每个模块整数像素）而不是 `width`。
  * `width` 会把二维码缩放到指定像素，模块边缘出现抗锯齿灰边，颜色数从 2 涨到上千，
  * PNG 直接压不动——实测单张 67 KB，换成整数 scale 后降到约 10 KB。
- * 代价是最终像素随链接长度（二维码版本）浮动，所以画的时候按自然尺寸居中。
+ * scale 按模块数算出来、刚好放进 boxPx：链接加了月份后二维码从 65 格变成 77 格，
+ * 写死 scale 要么超出卡片上的方框，要么（以前抽屉里传的 480）画布 3.9 万像素宽、浏览器直接画不出来。
  */
+const QR_MARGIN = 2;
 export async function taskQrDataUrl(
-  task: Pick<StoredFeedbackTask, "studentName" | "teacherCanonicalName">,
-  scale = 6,
+  task: Pick<StoredFeedbackTask, "studentName" | "teacherCanonicalName" | "courseMonth">,
+  boxPx = 420,
 ): Promise<string> {
-  return QRCode.toDataURL(taskFormUrl(task), {
+  const url = taskFormUrl(task);
+  const modules = QRCode.create(url, { errorCorrectionLevel: "M" }).modules.size + QR_MARGIN * 2;
+  return QRCode.toDataURL(url, {
     errorCorrectionLevel: "M",
-    margin: 2,
-    scale,
+    margin: QR_MARGIN,
+    scale: Math.max(1, Math.floor(boxPx / modules)),
     color: { dark: "#18181b", light: "#ffffff" },
   });
 }
@@ -135,7 +140,8 @@ export async function renderQrCard(task: StoredFeedbackTask): Promise<Blob> {
 
   context.fillStyle = "#71717a";
   context.font = `400 27px ${SANS}`;
-  context.fillText(fitText(context, `学生：${task.studentName}`, maxTextW), centerX, cardY + 279);
+  // 每个月的码不一样（预填了反馈课程月份），卡片上写明是哪个月的，免得学生扫错上个月的。
+  context.fillText(fitText(context, `学生：${task.studentName} · ${cardMonthLabel(task.courseMonth)}`, maxTextW), centerX, cardY + 279);
 
   // 二维码在一个固定的 420px 方框里居中：自然尺寸随版本在 390–420 之间浮动，
   // 固定框保证下面那两行文字的位置不跟着抖。不缩放，保持模块是纯黑白。
@@ -164,6 +170,11 @@ export async function renderQrCard(task: StoredFeedbackTask): Promise<Blob> {
   return new Promise((resolve, reject) => {
     canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("生成 PNG 失败"))), "image/png");
   });
+}
+
+/** 「10月课程」 */
+export function cardMonthLabel(courseMonth: string): string {
+  return `${Number(courseMonth.slice(5))}月课程`;
 }
 
 function safeName(value: string): string {
