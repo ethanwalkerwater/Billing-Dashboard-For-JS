@@ -3,6 +3,7 @@
 mod cloud;
 mod engine;
 mod recorder;
+mod update;
 
 use engine::Core;
 use serde_json::Value;
@@ -237,6 +238,7 @@ fn main() {
         .plugin(tauri_plugin_single_instance::init(|app, _, _| show_main(app)))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec!["--autostart"])))
         .invoke_handler(tauri::generate_handler![
             get_state,
@@ -313,6 +315,7 @@ fn main() {
                 }
             });
             tauri::async_runtime::spawn(cloud::fetch_loop(core.clone()));
+            tauri::async_runtime::spawn(update::update_loop(core.clone()));
             tauri::async_runtime::spawn(cloud::upload_loop(core));
             Ok(())
         })
@@ -321,6 +324,14 @@ fn main() {
             if let (WindowEvent::CloseRequested { api, .. }, "main") = (e, w.label()) {
                 api.prevent_close();
                 let _ = w.hide();
+            }
+            // 打开 / 切回主窗口时拉一次最新课表（5 分钟内拉过就不重复）
+            if let (WindowEvent::Focused(true), "main") = (e, w.label()) {
+                if let Some(core) = w.app_handle().try_state::<Arc<Core>>() {
+                    if engine::now_ms() - core.last_fetch.load(std::sync::atomic::Ordering::Relaxed) > 5 * engine::MIN {
+                        core.kick_fetch.notify_one();
+                    }
+                }
             }
         })
         .build(tauri::generate_context!())

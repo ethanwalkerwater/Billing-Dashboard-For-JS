@@ -364,6 +364,23 @@ export function parseTeacher(raw: string, transcript: string): number[] {
   return teacher.length && teacher.length < ids.size ? teacher : [];
 }
 
+/**
+ * 登录认人：先按老师档案的「飞书账号」；没绑过飞书账号的，按飞书姓名对「姓名 / 课表名」。
+ * 名字只在全表唯一、且那一行还没绑人时才认（同名不猜，已绑的行不让别人顶替），认上后由调用方写回「飞书账号」。
+ */
+export function matchTeacher<T extends { name: string; scheduleName: string; openId: string | null }>(
+  teachers: T[],
+  openId: string,
+  feishuName: string,
+): { teacher: T; bind: boolean } | null {
+  const bound = teachers.find((row) => row.openId === openId);
+  if (bound) return { teacher: bound, bind: false };
+  const key = feishuName.trim();
+  if (!key) return null;
+  const hits = teachers.filter((row) => row.name.trim() === key || row.scheduleName.trim() === key);
+  return hits.length === 1 && !hits[0].openId ? { teacher: hits[0], bind: true } : null;
+}
+
 /** 「[说话人N 」→「[老师 」/「[学生 」；没判断出来就原样返回 */
 export function labelSpeakers(transcript: string, teacher: number[]): string {
   if (!teacher.length) return transcript;

@@ -51,7 +51,7 @@ Storage 桶 `classroom`（私有）：分段 `{lessonId}/{seq}.mp3`（转写入�
 1. 安全设置 → 重定向 URL 加入 `https://app.jsjy.asia/classroom-api/auth/callback`。
 2. 开通网页应用登录（用户身份）与「获取用户基本信息」权限；机器人发消息（`im:message:send_as_bot`）；多维表格读取（课表、老师档案）。改完发布新版本。
 3. 应用可用范围要覆盖所有老师，否则收不到私信。
-4. 老师档案里每位老师都要填「飞书账号」，课表「老师」写法和姓名不同时填「课表名」，否则登录会提示「没有在老师档案里找到你的飞书账号，请联系教务」。
+4. 老师档案里每位老师要有一行（姓名和飞书姓名一致，课表「老师」写法不同时填「课表名」）。「飞书账号」可以不填：老师第一次登录时按姓名唯一匹配，自动写回「飞书账号」；同名或对不上会提示「老师档案里还没有你」，并私信 `ADMIN_OPEN_IDS` 里的管理员。
 
 **腾讯云**：开通「录音文件识别」，建一个只授 `QcloudASRFullAccess` 的子账号密钥。
 
@@ -89,8 +89,18 @@ npm run deploy:web -w @jingshi/classroom-recorder         # 报告网页 + 后�
 # 桌面 App
 npm run app:dev -w @jingshi/classroom-recorder     # 本地调试
 npm run app:build -w @jingshi/classroom-recorder   # 本机打包
-git tag classroom-v0.1.0 && git push origin classroom-v0.1.0   # GitHub Actions 打 macOS + Windows 安装包
 ```
+
+### 发版与自动更新
+
+1. 改 `src-tauri/tauri.conf.json` 和 `src-tauri/Cargo.toml` 的 `version`（例如 0.1.2），提交。
+2. `git tag classroom-v0.1.2 && git push origin classroom-v0.1.2`：GitHub Actions 打 macOS（通用版）+ Windows 安装包，用 `TAURI_SIGNING_PRIVATE_KEY` 给更新包签名，生成**草稿** Release。此时老师端什么都不会发生。
+3. `node apps/classroom-recorder/scripts/publish-release.mjs classroom-v0.1.2`：把安装包传到 CloudBase 静态托管 `https://app.jsjy.asia/downloads/classroom/`，最后传 `latest.json`（上线开关），再把草稿转正式。
+4. 老师的 App 开机 1 分钟后、之后每小时查一次 `latest.json`，有新版就下载，**只在空闲时**（没在录、前后 30 分钟没课）安装并重启（`src-tauri/src/update.rs`）。
+
+首次安装链接：`https://app.jsjy.asia/downloads/classroom/jingshi-classroom-mac.dmg`、`…/jingshi-classroom-windows-setup.exe`。
+签名私钥和密码在发版电脑的 `~/.tauri/jingshi-classroom.key(.password)`，同时存在 GitHub Secrets；**丢了私钥，已装的 App 就再也收不到更新**，只能让老师手动重装。
+发现新版有问题：先重传上一版的 `latest.json`（`downloads/classroom/<旧版本>/` 里的包还在），挡住还没更新的老师；已经更新的老师要用旧代码打一个**更高版本号**再发一次（更新器只往高版本升）。
 
 在 Mac 上直接打 Windows 安装包（不走 CI）：`brew install llvm lld nsis nasm cmake`、`cargo install cargo-xwin`、`rustup target add x86_64-pc-windows-msvc`。
 mp3lame-sys 按「编译机」而不是「目标机」选构建方式，在 Mac 上会走 autotools 失败：复制一份 `~/.cargo/registry/src/*/mp3lame-sys-0.1.11`，把 build.rs 里 `#[cfg(unix)]` 改成 `#[cfg(any())]`、`#[cfg(windows)]` 改成 `#[cfg(all())]`，Cargo.toml 的 `cc` 改成无条件 build-dependency，然后：

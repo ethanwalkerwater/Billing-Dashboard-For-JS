@@ -118,6 +118,35 @@ pub fn pre_lesson<'a>(now: i64, lessons: &'a [Lesson], ended: &HashSet<String>) 
         .min_by_key(|l| l.start_at)
 }
 
+/// 下次拉课表要等多久（ms）。拉课表每次要花云函数约 2 秒，老师的 App 常年挂着，所以按需拉而不是死循环：
+/// 报告生成中 30 秒（等状态变化）；否则每 30 分钟兜底，晚 23 点到早 7 点（北京时间）不拉；
+/// 每节课开录前再拉一次（开课前 10 分钟），保证自动开录用的是最新课表。打开窗口、登录、睡醒另有立即拉取。
+pub fn fetch_wait(now: i64, lessons: &[Lesson], processing: bool) -> i64 {
+    const IDLE: i64 = 30 * MIN;
+    const HOUR: i64 = 60 * MIN;
+    if processing {
+        return MIN / 2;
+    }
+    let hour = (now + 8 * HOUR).rem_euclid(24 * HOUR) / HOUR;
+    let mut next = if (7..23).contains(&hour) {
+        now + IDLE
+    } else {
+        // 夜里直接等到早上 7 点
+        now + (7 * HOUR - (now + 8 * HOUR).rem_euclid(24 * HOUR)).rem_euclid(24 * HOUR)
+    };
+    let empty = HashSet::new();
+    if let Some(l) = lessons.iter().filter(|l| eligible(l, &empty) && l.start_at - PRE > now).min_by_key(|l| l.start_at) {
+        next = next.min(l.start_at - PRE);
+    }
+    (next - now).max(MIN)
+}
+
+/// 现在能不能自动更新（更新会重启 App）：没在录，且前后 30 分钟内没有要自动录的课。
+pub fn update_idle(now: i64, lessons: &[Lesson], recording: bool) -> bool {
+    let empty = HashSet::new();
+    !recording && !lessons.iter().any(|l| eligible(l, &empty) && now >= l.start_at - 30 * MIN && now < l.end_at + AUTO_STOP)
+}
+
 // ---------- 状态 ----------
 
 #[derive(Serialize, Deserialize, Default)]
@@ -240,6 +269,8 @@ pub struct Core {
     pub rec: Sender<Msg>,
     pub shared: Arc<Shared>,
     pub kick_fetch: tokio::sync::Notify,
+    /// 上次拉课表的时间（ms），主窗口获得焦点时据此节流
+    pub last_fetch: std::sync::atomic::AtomicI64,
     ui: Mutex<TrayUi>,
 }
 
@@ -304,7 +335,7 @@ impl Core {
         }
         let api = std::env::var("CLASSROOM_API").unwrap_or_else(|_| "https://app.jsjy.asia/classroom-api".into());
         let http = reqwest::Client::builder().connect_timeout(Duration::from_secs(10)).timeout(Duration::from_secs(90)).build()?;
-        let core = Arc::new(Core { app, dir, api, http, inner: Mutex::new(g), rec, shared, kick_fetch: Default::default(), ui: Default::default() });
+        let core = Arc::new(Core { app, dir, api, http, inner: Mutex::new(g), rec, shared, kick_fetch: Default::default(), last_fetch: Default::default(), ui: Default::default() });
         core.save_cfg(&core.lock().cfg);
         Ok(core)
     }
@@ -850,10 +881,6 @@ impl Core {
         }
         self.publish();
     }
-
-    pub fn any_processing(&self) -> bool {
-        self.lock().merged().iter().any(|l| l.status == "processing")
-    }
 }
 
 fn clear_auth(g: &mut Inner) {
@@ -919,6 +946,34 @@ mod tests {
         assert!(pre_lesson(T0 - 5 * MIN, std::slice::from_ref(&adhoc), &none).is_none());
         assert_eq!(stop_at_of(&adhoc), T0 + 180 * MIN);
         assert_eq!(stop_at_of(&ls[0]), T0 + 70 * MIN);
+    }
+
+    #[test]
+    fn fetch_schedule() {
+        // T0 是北京时间白天；课在 2 小时后 → 30 分钟兜底；课在 25 分钟后 → 开课前 10 分钟拉
+        let far = vec![lesson("a", T0 + 120 * MIN, 60, "upcoming")];
+        assert_eq!(fetch_wait(T0, &far, false), 30 * MIN);
+        let soon = vec![lesson("a", T0 + 25 * MIN, 60, "upcoming"), lesson("x", T0 + 12 * MIN, 60, "cancelled")];
+        assert_eq!(fetch_wait(T0, &soon, false), 15 * MIN);
+        // 刚在开课前 10 分钟拉过：不会对同一节课再拉，至少隔 1 分钟
+        assert_eq!(fetch_wait(T0 + 15 * MIN + 1, &soon, false), 30 * MIN);
+        assert_eq!(fetch_wait(T0, &soon, true), MIN / 2);
+        // 北京时间 23:30 → 等到 7:00；7:20 的课 7:00 就拉过了；6:50 的早课在 6:40 拉
+        let night = T0 - 16 * 60 * MIN + 23 * 60 * MIN + 30 * MIN;
+        assert_eq!(fetch_wait(night, &[], false), 450 * MIN);
+        assert_eq!(fetch_wait(night, &[lesson("m", night + 470 * MIN, 60, "upcoming")], false), 450 * MIN);
+        assert_eq!(fetch_wait(night, &[lesson("m", night + 440 * MIN, 60, "upcoming")], false), 430 * MIN);
+    }
+
+    #[test]
+    fn update_only_when_idle() {
+        let ls = vec![lesson("a", T0, 60, "upcoming"), lesson("c", T0 + 3 * 60 * MIN, 60, "cancelled")];
+        assert!(update_idle(T0 - 31 * MIN, &ls, false));
+        assert!(!update_idle(T0 - 29 * MIN, &ls, false));
+        assert!(!update_idle(T0 + 69 * MIN, &ls, false));
+        assert!(update_idle(T0 + 70 * MIN, &ls, false));
+        assert!(update_idle(T0 + 3 * 60 * MIN, &ls, false)); // 临时取消的课不挡更新
+        assert!(!update_idle(T0 - 2 * 60 * MIN, &ls, true)); // 正在随时录制
     }
 
     #[test]

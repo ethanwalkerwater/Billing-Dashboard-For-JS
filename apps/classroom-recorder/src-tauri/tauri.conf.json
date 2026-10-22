@@ -1,7 +1,7 @@
 {
   "$schema": "../../../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "菁仕课堂",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "identifier": "asia.jsjy.classroom",
   "build": {
     "devUrl": "http://127.0.0.1:4181",
@@ -106,6 +106,18 @@
       "entitlements": "Entitlements.plist",
       "minimumSystemVersion": "11.0",
       "signingIdentity": "-"
+    },
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDhDNTJGRTkzNkVCODA4RDMKUldUVENMaHVrLzVTakZDY01lMU1VbW5wVW5uU3ZLMldOVlNlQkRMNmhyUGF5YzR5TjFYbjVuRnAK",
+      "endpoints": [
+        "https://app.jsjy.asia/downloads/classroom/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
     }
   }
 }

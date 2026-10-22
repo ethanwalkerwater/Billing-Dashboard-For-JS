@@ -141,12 +141,16 @@ pub async fn fetch_loop(core: Arc<Core>) {
                 },
                 Err(e) => eprintln!("[lessons] {}", String::from(e)),
             }
+            core.last_fetch.store(now_ms(), std::sync::atomic::Ordering::Relaxed);
             let c = core.clone();
             let _ = tauri::async_runtime::spawn_blocking(move || c.refresh_mics()).await;
         }
-        let wait = if core.any_processing() { 30 } else { 300 };
+        let wait = {
+            let lessons = core.lock().merged();
+            crate::engine::fetch_wait(now_ms(), &lessons, lessons.iter().any(|l| l.status == "processing"))
+        };
         tokio::select! {
-            _ = tokio::time::sleep(Duration::from_secs(wait)) => {}
+            _ = tokio::time::sleep(Duration::from_millis(wait as u64)) => {}
             _ = core.kick_fetch.notified() => {}
         }
     }
