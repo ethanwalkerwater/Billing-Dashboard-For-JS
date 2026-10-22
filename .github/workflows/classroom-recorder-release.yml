@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
@@ -39,26 +39,22 @@ jobs:
 
       - run: npm ci
 
+      # 只打包和签名，不在这里建 Release：仓库默认 GITHUB_TOKEN 建不了 Release，
+      # 发布由本地 scripts/publish-release.mjs 完成（下载这里的产物 → 传 CloudBase → 建 GitHub Release 留档）。
+      # 没有 Apple 开发者证书，不要传 APPLE_* 环境变量（传空值会让签名步骤失败）。
       - uses: tauri-apps/tauri-action@v0
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # 以下签名/公证 secrets 可选：没配也能出未签名安装包
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: apps/classroom-recorder
-          tagName: ${{ github.ref_name }}
-          releaseName: 菁仕课堂 ${{ github.ref_name }}
-          releaseBody: 老师端录课 App（macOS / Windows）
-          # 草稿：CI 只负责打包和签名；老师端真正收到更新，要等本地跑 scripts/publish-release.mjs 把 latest.json 传到 app.jsjy.asia
-          releaseDraft: true
-          prerelease: false
-          includeUpdaterJson: true
-          updaterJsonPreferNsis: true
           args: ${{ matrix.args }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bundle-${{ matrix.platform }}
+          if-no-files-found: error
+          path: |
+            apps/classroom-recorder/src-tauri/target/*/release/bundle/macos/*.app.tar.gz*
+            apps/classroom-recorder/src-tauri/target/*/release/bundle/dmg/*.dmg
+            apps/classroom-recorder/src-tauri/target/release/bundle/nsis/*-setup.exe*

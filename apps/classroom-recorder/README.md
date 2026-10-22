@@ -93,9 +93,9 @@ npm run app:build -w @jingshi/classroom-recorder   # 本机打包
 
 ### 发版与自动更新
 
-1. 改 `src-tauri/tauri.conf.json` 和 `src-tauri/Cargo.toml` 的 `version`（例如 0.1.2），提交。
-2. `git tag classroom-v0.1.2 && git push origin classroom-v0.1.2`：GitHub Actions 打 macOS（通用版）+ Windows 安装包，用 `TAURI_SIGNING_PRIVATE_KEY` 给更新包签名，生成**草稿** Release。此时老师端什么都不会发生。
-3. `node apps/classroom-recorder/scripts/publish-release.mjs classroom-v0.1.2`：把安装包传到 CloudBase 静态托管 `https://app.jsjy.asia/downloads/classroom/`，最后传 `latest.json`（上线开关），再把草稿转正式。
+1. 改 `src-tauri/tauri.conf.json` 和 `src-tauri/Cargo.toml` 的 `version`（例如 0.1.3），提交。
+2. `git tag classroom-v0.1.3 && git push origin classroom-v0.1.3`：GitHub Actions 打 macOS（通用版）+ Windows 安装包，用 `TAURI_SIGNING_PRIVATE_KEY` 给更新包签名，产物留在这次构建里。此时老师端什么都不会发生。
+3. 构建成功后 `node apps/classroom-recorder/scripts/publish-release.mjs classroom-v0.1.3`（gh 要登录仓库管理员账号）：把安装包传到 CloudBase 静态托管 `https://app.jsjy.asia/downloads/classroom/`，最后传 `latest.json`（上线开关），再在 GitHub 建 Release 留档。
 4. 老师的 App 开机 1 分钟后、之后每小时查一次 `latest.json`，有新版就下载，**只在空闲时**（没在录、前后 30 分钟没课）安装并重启（`src-tauri/src/update.rs`）。
 
 首次安装链接：`https://app.jsjy.asia/downloads/classroom/jingshi-classroom-mac.dmg`、`…/jingshi-classroom-windows-setup.exe`。
