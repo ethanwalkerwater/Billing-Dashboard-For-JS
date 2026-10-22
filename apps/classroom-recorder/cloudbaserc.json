@@ -13,7 +13,7 @@
       "handler": "index.main",
       "installDependency": false,
       "description": "菁仕课堂：飞书登录、课表、录音上传，每分钟推进转写与课堂总结",
-      "triggers": [{ "name": "every-minute", "type": "timer", "config": "0 */1 * * * * *" }]
+      "triggers": [{ "name": "every-30-minutes", "type": "timer", "config": "0 0,30 * * * * *" }]
     }
   ]
 }

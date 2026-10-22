@@ -17,8 +17,8 @@ classroom-api（CloudBase HTTP 云函数，/classroom-api）
   ├─ 飞书网页登录 → 老师档案「飞书账号」→ 课表名
   ├─ /lessons：课表（最近 7 天 + 明天）+ 数据库处理状态
   ├─ 分段上传 → Storage 私有桶 classroom：{课表记录ID}/{seq}.mp3
-  └─ 每分钟定时器（finish 后也会立即推进一次）：
-       queued → 按序拼接 MP3 → 腾讯云录音文件识别（说话人分离）
+  └─ finish 时立即推进；转写完成由腾讯云回调 /asr/callback 推进；每 30 分钟定时器兜底（失败重试、回调丢失、App 没回来的课、清理过期录音）：
+       queued → 按序拼接 MP3 → 腾讯云录音文件识别（说话人分离，带 CallbackUrl）
        → transcribing → 大模型判断哪个说话人是老师，转写标成「老师 / 学生」，删掉分段只留 merged.mp3
        → summarizing → 大模型（超过 12000 字先分段摘要再汇总）
        → done：生成报告 token，飞书私信老师
@@ -117,7 +117,7 @@ cp /tmp/Cargo.lock.bak src-tauri/Cargo.lock
 | 部分 | 状态 |
 |---|---|
 | 纯逻辑 | 课表 → Lesson、状态映射、转写格式、大模型 JSON 校验、流水线推进（含 2 小时缺段兜底、App 没发 finish 的兜底）单元测试通过 |
-| 云端部署 | 已上线：云函数 `classroom-api`（每分钟定时器）、HTTP 访问 `/classroom-api`、静态托管 `/classroom`、4 张表与 Storage 桶 |
+| 云端部署 | 已上线：云函数 `classroom-api`（每 30 分钟兜底定时器 + 腾讯云转写回调）、HTTP 访问 `/classroom-api`、静态托管 `/classroom`、4 张表与 Storage 桶 |
 | 线上端到端 | 2026-10-16 用合成的师生对话（两段 MP3）挂在一节已上完的课上跑通：分段上传（HTTP 访问层 base64 + sha256 校验）→ finish → 合并 → 腾讯云识别 → DeepSeek 家长总结与报告 → `/lessons` 返回 done 与报告链接 → 手机宽度报告页正常。测试数据已全部删除 |
 | 课表 | 线上 `/lessons` 读到真实课表；会议 / 例会 /「空出」等没有学生的记录不当课（「空出」常是 00:00–23:00） |
 | 飞书登录 | 重定向 URL 与权限已在后台配置并发布；授权链接生成正确，**还没有老师真实登录过** |

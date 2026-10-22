@@ -528,7 +528,7 @@ document.addEventListener('click', (event) => {
   if (ds.copy) return void copy(ds.copy, '报告链接');
   if (id === 'retry') {
     return void post(`/admin/lessons/${detail!._id}/retry`, {})
-      .then(() => { toast('已重新排队，1 分钟内开始处理'); return showLesson(detail!._id); })
+      .then(() => { toast('已重新开始处理，几分钟内出结果'); return showLesson(detail!._id); })
       .catch((e: Error) => toast(e.message));
   }
   // 提示词

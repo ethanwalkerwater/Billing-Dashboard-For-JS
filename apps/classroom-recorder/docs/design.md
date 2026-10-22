@@ -13,7 +13,7 @@ UI / UX 唯一依据：`docs/MVP.html`（老师端，含「随时录制」三步
   - Web 层（Vite + 原生 TS，无框架）只负责渲染三个窗口：`main`（主窗口）、`pill`（顶部胶囊）、`toast`（右上角通知）。
   - 菜单栏 / 托盘用 Tauri 原生托盘菜单；macOS 菜单栏标题显示录制计时。
 - **云端：CloudBase（环境 `jingshi-test-d5gp401i44a0fa7a7`）**
-  - HTTP 云函数 `classroom-api`（路径 `https://app.jsjy.asia/classroom-api`）+ 每分钟定时触发推进处理流水线。
+  - HTTP 云函数 `classroom-api`（路径 `https://app.jsjy.asia/classroom-api`）+ 腾讯云转写完成回调推进处理流水线，每 30 分钟定时触发兜底。
   - PostgreSQL 表 `classroom_lessons`、`classroom_segments`、`classroom_sessions`、`classroom_auth`（本环境没有文档型数据库）；Storage 私有桶 `classroom` 放录音分段与合并后的 MP3。
   - 静态托管 `https://app.jsjy.asia/classroom/report.html?t=<token>` 承载完整报告。
 - **登录：飞书网页授权**（应用 = 机器人「课表分析」`cli_a93a4faca0f8dcb6`，与老师档案「飞书账号」同一应用，open_id 一致）。
@@ -48,7 +48,8 @@ UI / UX 唯一依据：`docs/MVP.html`（老师端，含「随时录制」三步
 |---|---|
 | `GET /admin/lessons?q&stage&before` | 课程列表，按上课时间倒序每页 50；`stage` = done / processing / recording / failed |
 | `GET /admin/lessons/:id` | 详情：转写、总结、`audioUrl`（6 小时签名链接）、`reportUrl` |
-| `POST /admin/lessons/:id/retry` | 失败的课把 `attempts` 清零，定时器下一分钟重跑 |
+| `POST /admin/lessons/:id/retry` | 失败的课把 `attempts` 清零并立刻重跑 |
+| `POST /asr/callback?lesson=` | 腾讯云录音识别转完的回调（不鉴权，只按编号推进，实际状态以 DescribeTaskStatus 为准） |
 | `GET /admin/prompts` | 最近 30 个版本，第一个是线上 |
 | `POST /admin/prompts` | `{ prompts, base }`，`base` 不是当前线上版本号时 409 |
 | `POST /admin/preview` | `{ prompts, lessonId }` 或 `{ prompts, transcript }` → `{ parentSummary, reportData }`，不写库 |
