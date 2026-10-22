@@ -30,6 +30,8 @@ export interface AppState {
   selectedLessonId: string | null;
   /** App 版本号（设置里显示） */
   version?: string;
+  /** 已下载好、等老师点「重启更新」的新版本号 */
+  updateReady?: string | null;
 }
 
 export interface Backend {

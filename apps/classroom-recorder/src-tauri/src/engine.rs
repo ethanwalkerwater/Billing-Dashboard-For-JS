@@ -128,13 +128,10 @@ pub fn next_morning(t: i64) -> i64 {
     if seven > t { seven } else { seven + DAY }
 }
 
-/// 下次自动拉课表要等多久（ms）。课表一般提前几周就排好，拉一次要花云函数约 2 秒，所以平时不轮询：
-/// 打开主窗口、登录、手动「刷新」时拉，另外每天早上 7 点（北京时间）拉一次；last_ok = 上次拉成功的时间。
-/// 刚下课、报告还在生成的 3 小时内每 3 分钟拉一次，报告好了好弹通知（云端也会飞书私信老师）。
-pub fn fetch_wait(now: i64, last_ok: i64, lessons: &[Lesson]) -> i64 {
-    if lessons.iter().any(|l| l.status == "processing" && now < l.end_at + 3 * HOUR) {
-        return 3 * MIN;
-    }
+/// 下次自动拉课表要等多久（ms）。课表一般提前几周就排好，拉一次要花云函数约 2 秒，所以不轮询：
+/// 启动、登录、打开主窗口、手动「刷新」时拉，另外每天早上 7 点（北京时间）拉一次兜底（老师不开窗口也能按最新课表自动录）。
+/// 报告好了云端会飞书私信老师，App 不盯着等；last_ok = 上次拉成功的时间。
+pub fn fetch_wait(now: i64, last_ok: i64) -> i64 {
     let due = next_morning(last_ok);
     if now >= due { 5 * MIN } else { due - now } // 上次没拉成功：5 分钟后再试
 }
@@ -190,6 +187,8 @@ pub struct Inner {
     pub online: bool,
     pub preview_ui: bool,
     preview_on: bool,
+    /// 已下载好、等老师点「重启更新」的新版本号
+    pub update_ready: Option<String>,
     retry_at: i64,
     last_tick: i64,
     last_json: String,
@@ -623,6 +622,7 @@ impl Core {
             "toast": g.toast,
             "selectedLessonId": g.selected,
             "version": self.app.package_info().version.to_string(),
+            "updateReady": g.update_ready,
         })
     }
 
@@ -985,16 +985,12 @@ mod tests {
     #[test]
     fn fetch_schedule() {
         // T0 = 北京时间 16:00：刚拉过 → 等到明早 7:00（15 小时）
-        assert_eq!(fetch_wait(T0, T0, &[]), 15 * 60 * MIN);
+        assert_eq!(fetch_wait(T0, T0), 15 * 60 * MIN);
         // 昨天 16:00 拉过、今早 7:00 没拉成（关机）→ 已过期，5 分钟后重试
-        assert_eq!(fetch_wait(T0, T0 - 24 * 60 * MIN, &[]), 5 * MIN);
+        assert_eq!(fetch_wait(T0, T0 - 24 * 60 * MIN), 5 * MIN);
         // 北京时间 6:00 拉过 → 当天 7:00 还要再拉一次
         assert_eq!(next_morning(T0 - 10 * 60 * MIN), T0 - 9 * 60 * MIN);
         assert_eq!(next_morning(T0 - 9 * 60 * MIN), T0 + 15 * 60 * MIN);
-        // 刚下课在出报告：每 3 分钟；下课 3 小时后还没好（多半失败了）不再盯
-        let p = vec![lesson("a", T0 - 60 * MIN, 50, "processing")];
-        assert_eq!(fetch_wait(T0, T0, &p), 3 * MIN);
-        assert_eq!(fetch_wait(T0 + 3 * 60 * MIN, T0 + 3 * 60 * MIN, &p), 12 * 60 * MIN);
     }
 
     #[test]

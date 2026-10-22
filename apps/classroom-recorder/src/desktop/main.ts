@@ -22,6 +22,7 @@ const inOrder = (cmd: string, args: Record<string, unknown>) => (saving = saving
 let note: { id: string; text: string } | null = null; // 手动开录失败的原因，显示在按钮下
 let delAsk: string | null = null; // 右键删除、正在确认的课
 let updMsg = ''; // 设置里「检查更新」的结果
+let installing = false;
 let refreshing = false;
 let topErr = ''; // 刷新 / 删除失败的原因，在标题栏显示 5 秒
 const showErr = (text: string) => {
@@ -54,7 +55,7 @@ function render() {
     }</div></div>`);
     return;
   }
-  if (swap('shell', app, `${titlebar(`<span class="who" data-tauri-drag-region>${esc(s.teacher.name)} · 飞书已登录</span><button class="recbtn" data-act="rec" title="不在课表里的课、会议也能随时录"><i></i><span>开始录制</span></button><button class="iconbtn" data-act="refresh" title="刷新课表" aria-label="刷新课表">${REFRESH}</button><button class="iconbtn" data-act="settings" title="设置" aria-label="设置">${GEAR}</button>`)}
+  if (swap('shell', app, `${titlebar(`<span class="who" data-tauri-drag-region>${esc(s.teacher.name)} · 飞书已登录</span><button class="upchip hidden" data-act="install"></button><button class="recbtn" data-act="rec" title="不在课表里的课、会议也能随时录"><i></i><span>开始录制</span></button><button class="iconbtn" data-act="refresh" title="刷新课表" aria-label="刷新课表">${REFRESH}</button><button class="iconbtn" data-act="settings" title="设置" aria-label="设置">${GEAR}</button>`)}
     <div class="body"><div class="list" id="list"></div><div class="detail" id="detail"></div></div><div class="sheet hidden" id="sheet"></div><div class="sheet hidden" id="ask"></div>`)) {
     last.list = last.detail = last.sheet = last.ask = '';
   }
@@ -71,6 +72,13 @@ function render() {
   const who = $('.who');
   if (who) who.textContent = topErr || `${s.teacher.name} · 飞书已登录`;
   who?.classList.toggle('err', !!topErr);
+  const up = $<HTMLButtonElement>('[data-act="install"]');
+  if (up) {
+    up.classList.toggle('hidden', !s.updateReady);
+    up.disabled = recording() || installing;
+    up.textContent = installing ? '正在更新…' : recording() ? `新版本 ${s.updateReady} · 录完后可更新` : `新版本 ${s.updateReady} · 重启更新`;
+    up.title = '新版本已下载好，点一下 App 会重启（约 5 秒）';
+  }
   const recBtn = $('[data-act="rec"]');
   if (recBtn) {
     recBtn.classList.toggle('on', recording());
@@ -141,7 +149,7 @@ function renderDetail(l: Lesson | undefined) {
       <div class="acts"><button class="ghost" data-act="stop">结束录制</button></div></div>
       <p class="empty">可以关掉这个窗口，录音会继续；屏幕顶部的胶囊会一直陪着你。</p>`;
   } else if (l.status === 'processing') {
-    body = '<div class="hero"><div class="sub lead">正在整理这节课…</div><div class="sub">录音已全部上传，总结一般 10 分钟内好，好了会通知你</div></div>';
+    body = '<div class="hero"><div class="sub lead">正在整理这节课…</div><div class="sub">录音已全部上传，总结一般 10 分钟内好，好了会发到你的飞书；回到这里点右上角刷新也能看到</div></div>';
   } else if (l.status === 'cancelled') {
     body = '<div class="hero"><div class="sub lead">这节课在课表上标了「临时取消」</div><div class="sub">不会自动录制</div></div>';
   } else {
@@ -186,7 +194,9 @@ function renderSheet() {
       <select data-act="mic" aria-label="麦克风">${s.mics.map(m => `<option value="${esc(m)}"${m === s.mic ? ' selected' : ''}>${esc(m)}</option>`).join('')}</select></div>
     <div class="set"><div class="lab"><b>悬浮录制按钮</b><span>不在课表里的会议、试讲也能随时录</span></div><button class="switch${s.fab ? '' : ' off'}" data-act="fab" role="switch" aria-checked="${s.fab}" aria-label="悬浮录制按钮"></button></div>
     <div class="set"><div class="lab"><b>开机自动启动</b><span>关掉后，没打开 App 就不会自动录课</span></div><button class="switch${s.autostart ? '' : ' off'}" data-act="autostart" role="switch" aria-checked="${s.autostart}" aria-label="开机自动启动"></button></div>
-    <div class="set"><div class="lab"><b>版本 ${esc(s.version ?? '')}</b><span>${esc(updMsg || '点「检查更新」，有新版本会自动下载并重启 App')}</span></div><button class="ghost sm" data-act="update"${updMsg.startsWith('正在检查') ? ' disabled' : ''}>检查更新</button></div>
+    <div class="set"><div class="lab"><b>版本 ${esc(s.version ?? '')}</b><span>${esc(updMsg || '打开 App 时会自动检查，有新版本会提示你重启更新')}</span></div>${s.updateReady
+      ? `<button class="primary sm" data-act="install"${recording() || installing ? ' disabled' : ''}>重启更新到 ${esc(s.updateReady)}</button>`
+      : `<button class="ghost sm" data-act="update"${updMsg === '正在检查…' ? ' disabled' : ''}>检查更新</button>`}</div>
     <div class="set"><div class="lab"><b>${esc(s.teacher!.name)}</b><span>飞书账号</span></div><button class="logout" data-act="logout">退出登录</button></div>
     <div class="foot"><button class="ghost" data-act="close-settings">完成</button></div>
   </div>`);
@@ -261,9 +271,14 @@ app.addEventListener('click', e => {
   }
   else if (act === 'rec') void call(recording() ? 'request_stop' : 'start_adhoc').catch(err => showErr(String(err)));
   else if (act === 'update') {
-    updMsg = '正在检查，有新版本会下载并重启…';
+    updMsg = '正在检查…';
     render();
     call<string>('check_update').then(m => { updMsg = m; }, err => { updMsg = String(err); }).finally(render);
+  }
+  else if (act === 'install') {
+    installing = true;
+    render();
+    call('install_update').catch(err => { installing = false; showErr(String(err)); });
   }
   else if (act === 'close-settings') setSheet(false);
   else if (act === 'autostart') void call('set_autostart', { enabled: !S.autostart });

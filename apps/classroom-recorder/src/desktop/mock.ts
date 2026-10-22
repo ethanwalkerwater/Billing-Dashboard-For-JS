@@ -31,7 +31,8 @@ let s: AppState = {
   fab: true,
   toast: null,
   selectedLessonId: 'haoran',
-  version: '0.1.5',
+  version: '0.1.7',
+  updateReady: new URLSearchParams(location.search).has('update') ? '0.1.8' : null,
 };
 
 const listeners = new Map<string, Set<(p: never) => void>>();
@@ -115,6 +116,7 @@ const commands: Record<string, (a: Record<string, string & boolean>) => unknown>
   hide_toast: () => patch({ toast: null }),
   set_autostart: a => patch({ autostart: a.enabled }),
   check_update: () => new Promise(r => setTimeout(() => r('已是最新版本'), 800)),
+  install_update: () => new Promise(r => setTimeout(r, 1500)),
   refresh_lessons: () => new Promise(r => setTimeout(r, 800)),
   delete_lesson: a => patch({ lessons: s.lessons.filter(l => l.id !== a.lessonId) }),
 };
