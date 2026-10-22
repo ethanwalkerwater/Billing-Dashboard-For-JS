@@ -36,3 +36,4 @@ apps/teacher-income-report/web/assets/payroll-core.js
 apps/teacher-income-report/web/assets/vendor/
 .vercel
 .gstack/
+.playwright-mcp/
