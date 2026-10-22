@@ -18,7 +18,7 @@ export type VerifyResult =
   | { ok: true; challenge?: undefined; payload: FeishuEventEnvelope }
   | { ok: false; reason: string };
 
-function headerValue(headers: Record<string, string>, name: string): string {
+export function headerValue(headers: Record<string, string>, name: string): string {
   const match = Object.entries(headers).find(([key]) => key.toLowerCase() === name);
   return match?.[1] ?? "";
 }
@@ -43,7 +43,7 @@ export function feishuSignature(input: {
     .digest("hex");
 }
 
-function safeEqual(left: string, right: string): boolean {
+export function safeEqual(left: string, right: string): boolean {
   const a = Buffer.from(left);
   const b = Buffer.from(right);
   return a.length === b.length && timingSafeEqual(a, b);

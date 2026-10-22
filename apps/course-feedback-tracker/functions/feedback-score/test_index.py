@@ -90,6 +90,30 @@ class FeedbackScoreTest(unittest.TestCase):
         result = index.main({**BASE, "feedbackCsv": feedback, "priorDetails": [streak, broken, streak]})
         self.assertEqual(4.0, {row["teacher"]: row["scores"] for row in result["teachers"]}["邓老师(地理)"]["learning_effect"])
 
+    def test_preferences_weighted_by_student_hours(self):
+        schedule = SCHEDULE + "\n2026-09-04 10:00:00,Valentina Lin,王同学,1,IG数学,1v1,"
+        great = "帮助非常大，进步明显,是的，始终如此，非常满意,非常出色，深深吸引我投入学习"
+        both = '"高效紧凑型 — 知识点覆盖全面、推进迅速、稳扎稳打型 — 讲解细致充分、循序渐进"'
+        feedback = "提交时间,老师姓名,学生姓名,身份,【学生】学习提升效果,【学生】责任心与服务态度,【学生】个人魅力,上课风格,教学节奏,课堂互动\n" + "\n".join(
+            [
+                f"2026-10-01 10:00:00,Valentina 林,姚凯榕,学生本人,{great},风趣幽默型 — 课堂氛围轻松活跃,{both},其他",
+                f"2026-10-01 10:30:00,Valentina 林,姚凯榕,家长/监护人,{great},严谨专注型 — 讲解严密深入,,",
+                # 同一身份第二份：keep=first 不算
+                f"2026-10-02 10:00:00,Valentina 林,姚凯榕,学生本人,{great},严谨专注型 — 讲解严密深入,稳扎稳打型 — 讲解细致充分,",
+                f"2026-10-01 11:00:00,Valentina 林,王同学,学生本人,{great},严谨专注型 — 讲解严密深入,稳扎稳打型 — 讲解细致充分,",
+                # 课表里没有这对学生-老师：不计入
+                f"2026-10-01 12:00:00,Valentina 林,路人,学生本人,{great},严谨专注型 — 讲解严密深入,,",
+            ]
+        )
+        result = index.main({**BASE, "scheduleCsv": schedule, "feedbackCsv": feedback})
+        self.assertTrue(result["ok"], result.get("error"))
+        prefs = result["preferences"]["Valentina Lin"]
+        # 姚凯榕 2 小时：学生 0、家长 1 → 0.5；王同学 1 小时：1
+        self.assertEqual({"weighted": 2.0, "hours": 3.0, "responses": 3}, prefs["classStyle"])
+        # 姚凯榕两边都选算 0.5
+        self.assertEqual({"weighted": 2.0, "hours": 3.0, "responses": 2}, prefs["teachingPace"])
+        self.assertNotIn("classroomInteraction", prefs)
+
     def test_month_without_feedback_reports_error(self):
         result = index.main({**BASE, "feedbackCsv": "提交时间,老师姓名,学生姓名,身份\n"})
         self.assertFalse(result["ok"])
