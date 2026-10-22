@@ -36,6 +36,7 @@ function renderCourseRows(report) {
     <tr${line.isLeave ? ` class="is-leave"` : ""}>
       <td>
         <strong>${esc(line.courseType)}</strong>
+        ${report.months?.length > 1 && line.month ? `<span>${esc(line.month)}</span>` : ""}
         ${[line.teacher, line.teachingType].some(Boolean) ? `<span>${[line.teacher, line.teachingType].filter(Boolean).map(esc).join(" / ")}</span>` : ""}
         ${line.discountReason ? `<span class="bill-note">${esc(line.discountReason)}</span>` : ""}
       </td>
@@ -67,10 +68,10 @@ function renderTotalRow(report) {
   const owed = remaining < 0;
   return `
     <div class="total-row prepay-total">
-      <p>${owed ? "预付余额不足以抵扣本月课时费，<br />差额需补缴。" : "本月课时费已从预付余额中扣除，"}<br />折扣与临时请假已按规则计入本月费用。</p>
+      <p>${owed ? "预付余额不足以抵扣本期课时费，<br />差额需补缴。" : "本期课时费已从预付余额中扣除，"}<br />折扣与临时请假已按规则计入本期费用。</p>
       <dl class="prepay-summary">
         <div><dt>预付余额（扣费前）</dt><dd>${formatMoney(balance)}</dd></div>
-        <div><dt>本月课时费</dt><dd>− ${formatMoney(fee)}</dd></div>
+        <div><dt>本期课时费</dt><dd>− ${formatMoney(fee)}</dd></div>
         <div class="is-final${owed ? " is-owed" : ""}">
           <dt><span class="section-label">${owed ? "Amount Due" : "Prepaid Balance"}</span>${owed ? "需补缴" : "预付剩余"}</dt>
           <dd>${formatMoney(Math.abs(remaining))}</dd>
@@ -79,12 +80,12 @@ function renderTotalRow(report) {
     </div>`;
 }
 
-function renderCalendar(report) {
+function renderCalendar(calendar) {
   return `
     <div class="calendar-wrap">
       <div class="calendar">
-        ${report.calendar.weekdays.map((day) => `<div class="weekday">${esc(day)}</div>`).join("")}
-        ${report.calendar.cells.map((cell) => `
+        ${calendar.weekdays.map((day) => `<div class="weekday">${esc(day)}</div>`).join("")}
+        ${calendar.cells.map((cell) => `
           <div class="day ${cell.inMonth ? "" : "muted"} ${cell.lessons?.some((lesson) => lesson.isLeave) ? "has-leave" : ""}">
             <div class="day-num">${esc(cell.day)}</div>
             <div class="day-lessons">
@@ -132,6 +133,9 @@ export function renderStudentBillingReportHtml(report, teachers, options = {}) {
     report.activeTeacherNames,
     facultyOptions(options),
   );
+
+  const calendars = report.calendars || [{ ...report.calendar, monthLabel: report.monthLabel }];
+  const sectionCount = calendars.length + 3;
 
   return `<!doctype html>
 <html lang="zh-CN">
@@ -368,7 +372,7 @@ export function renderStudentBillingReportHtml(report, teachers, options = {}) {
           <div class="kicker">Billing Detail</div>
           <h2>课程明细</h2>
         </div>
-        <div class="page-num">01 / 04</div>
+        <div class="page-num">01 / ${String(sectionCount).padStart(2, "0")}</div>
       </header>
       <table>
         <thead>
@@ -386,20 +390,22 @@ export function renderStudentBillingReportHtml(report, teachers, options = {}) {
       ${renderTotalRow(report)}
     </section>
 
+    ${calendars.map((calendar, index) => `
     <section class="page">
       <header class="page-head">
         <div>
-          <div class="kicker">${esc(report.monthEnglish.split(" ")[0] || "Schedule")} Schedule</div>
-          <h2>${esc(report.monthLabel)}课表</h2>
+          <div class="kicker">Course Schedule</div>
+          <h2>${esc(calendar.monthLabel)}课表</h2>
         </div>
-        <div class="page-num">02 / 04</div>
+        <div class="page-num">${String(index + 2).padStart(2, "0")} / ${String(sectionCount).padStart(2, "0")}</div>
       </header>
-      ${renderCalendar(report)}
+      ${renderCalendar(calendar)}
       <div class="legend">
         <span><i></i>正常课程</span>
         <span class="leave"><i></i>请假 / 临时取消课程</span>
       </div>
     </section>
+    `).join("")}
 
     <section class="page">
       <header class="page-head">
@@ -407,7 +413,7 @@ export function renderStudentBillingReportHtml(report, teachers, options = {}) {
           <div class="kicker">Faculty Team</div>
           <h2>师资团队</h2>
         </div>
-        <div class="page-num">03 / 04</div>
+        <div class="page-num">${String(sectionCount - 1).padStart(2, "0")} / ${String(sectionCount).padStart(2, "0")}</div>
       </header>
 ${facultySections}
     </section>

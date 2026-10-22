@@ -747,7 +747,6 @@ textarea:focus-visible {
 }
 
 .preview-pane-head p {
-  max-width: 190px;
   margin: 5px 0 0;
   color: var(--muted);
   font-size: 11px;
@@ -777,6 +776,7 @@ textarea:focus-visible {
 }
 
 .preview-page {
+  container-type: inline-size;
   width: 100%;
   min-height: 350px;
   padding: clamp(20px, 2vw, 28px);
@@ -812,7 +812,8 @@ textarea:focus-visible {
   padding-bottom: 16px;
   border-bottom: 1px solid var(--line-strong);
   font-family: var(--serif);
-  font-size: clamp(34px, 4vw, 58px);
+  font-size: clamp(30px, 18cqi, 58px);
+  overflow-wrap: anywhere;
   font-weight: 500;
 }
 
@@ -823,23 +824,25 @@ textarea:focus-visible {
 }
 
 .preview-cover-bottom {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 16px;
+  display: grid;
+  gap: 12px;
   margin-top: 68px;
   padding-top: 15px;
   border-top: 1px solid var(--line);
 }
 
 .preview-cover-bottom span {
+  line-height: 1.6;
   color: var(--muted);
   font-size: 11px;
 }
 
 .preview-cover-bottom strong {
+  justify-self: end;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
   font-family: var(--serif);
-  font-size: clamp(25px, 3vw, 38px);
+  font-size: clamp(24px, 12cqi, 38px);
   font-weight: 500;
 }
 
@@ -862,17 +865,32 @@ textarea:focus-visible {
 
 .mini-bill-row {
   display: grid;
-  grid-template-columns: 1.5fr 0.5fr 0.75fr 0.8fr;
+  grid-template-columns: minmax(0, 1fr) 24px 48px 52px;
   gap: 8px;
   padding: 10px 0;
   border-bottom: 1px solid var(--line);
   font-size: 10px;
 }
 
-.mini-bill-row strong {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.mini-bill-course {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.mini-bill-course small {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.mini-bill-head {
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.mini-bill-head span:first-child {
+  text-align: left;
 }
 
 .mini-bill-row span {

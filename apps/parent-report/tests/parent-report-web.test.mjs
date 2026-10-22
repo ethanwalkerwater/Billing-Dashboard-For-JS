@@ -18,7 +18,7 @@ import {
 } from "../web/src/report-model.js";
 import {
   buildRawScheduleLookup,
-  buildStudentMonthReports,
+  buildStudentReports,
   parseCompleteBillingCsv,
 } from "../src/student-billing-batch-data.mjs";
 import {
@@ -44,7 +44,7 @@ Ivy-2488,2026-06,应雁心,Alevel数学,1v1,0h-70%,2,2,1000,70,,2000,1400,2`;
 function fixtureReport() {
   const rows = parseCompleteBillingCsv(billingCsv);
   const lookup = buildRawScheduleLookup(scheduleCsv);
-  return prepareReportForEditing(buildStudentMonthReports(rows, lookup)[0]);
+  return prepareReportForEditing(buildStudentReports(rows, lookup)[0]);
 }
 
 test("browser report model recalculates payable amount from edited summary values", () => {
@@ -73,7 +73,7 @@ test("manual payable override requires a reason before confirmation", () => {
 test("cancellation percentage follows billing-core cancellation semantics", () => {
   const rows = parseCompleteBillingCsv(cancelledBillingCsv);
   const lookup = buildRawScheduleLookup(scheduleCsv);
-  let report = prepareReportForEditing(buildStudentMonthReports(rows, lookup)[0]);
+  let report = prepareReportForEditing(buildStudentReports(rows, lookup)[0]);
 
   assert.equal(report.courseLines[0].cancellationPercent, 70);
   report = updateCourseLine(report, 0, "cancellationPercent", "50");
@@ -249,7 +249,7 @@ test("temporary PDF cleanup removes only stale owned sessions", async () => {
 
 test("missing teaching type placeholder from billing export is shown as empty and allowed", () => {
   const rows = parseCompleteBillingCsv(billingCsv.replace(",1v1,", ",未填写授课类型,"));
-  const report = prepareReportForEditing(buildStudentMonthReports(rows, buildRawScheduleLookup(scheduleCsv))[0]);
+  const report = prepareReportForEditing(buildStudentReports(rows, buildRawScheduleLookup(scheduleCsv))[0]);
   assert.equal(report.courseLines[0].teachingType, "");
   assert.deepEqual(validateReport(report).filter((issue) => issue.level === "error"), []);
   const html = renderStudentBillingReportHtml(buildConfirmedReport(report), [], { embedTeacherPhotos: false });
@@ -277,7 +277,7 @@ test("added and deleted course lines flow into totals and the PDF without errors
   assert.doesNotMatch(html, /Alevel数学<\/strong>/);
 });
 
-test("prepay mode shows this month's fee and the remaining prepaid balance", () => {
+test("prepay mode shows the billing period's fee and the remaining prepaid balance", () => {
   let report = updatePrepay(fixtureReport(), { enabled: true });
   assert.match(validateReport(report)[0].message, /扣费前预付余额/);
 
@@ -287,14 +287,14 @@ test("prepay mode shows this month's fee and the remaining prepaid balance", () 
   assert.equal(report.prepay.remaining, 7000);
   let html = renderStudentBillingReportHtml(buildConfirmedReport(report), [], { embedTeacherPhotos: false });
   assert.match(html, /预付余额（扣费前）<\/dt><dd>¥10,000/);
-  assert.match(html, /本月课时费<\/dt><dd>− ¥3,000/);
+  assert.match(html, /本期课时费<\/dt><dd>− ¥3,000/);
   assert.match(html, /预付剩余<\/dt>\s*<dd>¥7,000/);
 
   report = updatePrepay(report, { balanceBefore: "1000" });
   html = renderStudentBillingReportHtml(buildConfirmedReport(report), [], { embedTeacherPhotos: false });
   assert.match(html, /需补缴<\/dt>\s*<dd>¥2,000/);
 
-  // 金额向下取整显示时，剩余 = 取整后的余额 − 取整后的本月费用，三行能对上
+  // 金额向下取整显示时，剩余 = 取整后的余额 − 取整后的本期费用，三行能对上
   report = updatePrepay(report, { balanceBefore: "100000" });
   report = updateCourseLine(report, 0, "unitPrice", "1000.25");
   html = renderStudentBillingReportHtml(buildConfirmedReport(report), [], { embedTeacherPhotos: false });

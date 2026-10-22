@@ -1,7 +1,7 @@
 import teachersData from "../../data/teachers.json";
 import {
   buildRawScheduleLookup,
-  buildStudentMonthReports,
+  buildStudentReports,
   parseCompleteBillingCsv,
 } from "../../src/student-billing-batch-data.mjs";
 import { mergeTeacherScores } from "../../src/teacher-scores-core.mjs";
@@ -28,7 +28,7 @@ self.addEventListener("message", async (event) => {
     if (!billingRows.length) throw new Error("学生课时 CSV 中没有可用课程行");
 
     const scheduleLookup = buildRawScheduleLookup(scheduleFile.text);
-    const reports = buildStudentMonthReports(billingRows, scheduleLookup)
+    const reports = buildStudentReports(billingRows, scheduleLookup)
       .map(prepareReportForEditing)
       .sort((a, b) => (
         a.month.localeCompare(b.month)
