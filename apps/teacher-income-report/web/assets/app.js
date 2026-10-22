@@ -15,7 +15,9 @@ import {
   adjustedLessonAmounts,
   actualLessonAmount,
   effectiveLessonMultiplier,
+  expandRecurringAdjustments,
   lessonAmountFromUnitPrice,
+  recurringAdjustmentRows,
 } from "./income-calculations.js";
 import { buildIncomeWorkbook } from "./income-workbook.js";
 
@@ -28,7 +30,7 @@ const ADJUSTMENT_STORAGE_KEY = "jingshi.teacher-income.adjustments.v1";
 const ADJUSTMENT_KINDS = {
   extraAdjustments: {
     title: "额外收入与扣款",
-    hint: "正数计为额外收入，负数计为罚款；合计并入课时反馈奖金，参与 Bonus 计算。",
+    hint: "正数计为额外收入，负数计为罚款；合计并入课时反馈奖金，参与 Bonus 计算。自动沿用到后续月份，修改或删除从当前月起生效，不影响之前月份。",
     totalLabel: "额外收入与扣款合计",
     placeholder: "例如：临时代课补贴",
   },
@@ -637,7 +639,7 @@ function payrollInput() {
     nameAliases: state.master.nameAliases,
     taxSocial: state.monthly.taxSocial,
     reimbursements: state.monthly.reimbursements,
-    extraAdjustments: flatten("extraAdjustments"),
+    extraAdjustments: expandRecurringAdjustments(state.extraAdjustments, state.lessonReport?.months || []),
     netPayAdjustments: flatten("netPayAdjustments"),
     companyCostAdjustments: flatten("companyCostAdjustments"),
   };
@@ -683,7 +685,8 @@ function persistAdjustments() {
       payload[kind] = Object.fromEntries(
         Object.entries(state[kind])
           .map(([key, rows]) => [key, rows.filter((row) => cleanText(row.description) || cleanText(String(row.amount ?? "")))])
-          .filter(([, rows]) => rows.length > 0),
+          // 额外项目的空列表表示从该月起停止沿用，必须保留。
+          .filter(([, rows]) => kind === "extraAdjustments" || rows.length > 0),
       );
     }
     localStorage.setItem(ADJUSTMENT_STORAGE_KEY, JSON.stringify(payload));
@@ -1127,9 +1130,9 @@ function adjustmentKey(month, teacher) {
 }
 
 function adjustmentRows(kind, month, teacher) {
-  const key = adjustmentKey(month, teacher);
-  if (!state[kind][key]) state[kind][key] = [];
-  return state[kind][key];
+  return kind === "extraAdjustments"
+    ? recurringAdjustmentRows(state[kind], month, teacher)
+    : state[kind][adjustmentKey(month, teacher)] || [];
 }
 
 /** 额外收入与扣款 / 实发工资调整 / 公司成本调整 共用的编辑区：项目说明 + 调整金额，可增删 */
@@ -1171,28 +1174,33 @@ function renderAdjustmentEditor(kind, row, total) {
 function bindAdjustmentEditors(row) {
   els.ledgerPanel.querySelectorAll("[data-adjustment-kind]").forEach((section) => {
     const kind = section.dataset.adjustmentKind;
-    const rows = adjustmentRows(kind, state.month, row.teacher);
+    const rows = adjustmentRows(kind, state.month, row.teacher).map((entry) => ({ ...entry }));
+    const save = () => {
+      state[kind][adjustmentKey(state.month, row.teacher)] = rows;
+      persistAdjustments();
+    };
     section.querySelector("[data-adjust-add]")?.addEventListener("click", () => {
       rows.push({ description: "", amount: "" });
+      state[kind][adjustmentKey(state.month, row.teacher)] = rows;
       render();
     });
     section.querySelectorAll("[data-adjust-description]").forEach((input) => {
       input.addEventListener("change", () => {
         rows[Number(input.dataset.adjustDescription)].description = input.value;
-        persistAdjustments();
+        save();
       });
     });
     section.querySelectorAll("[data-adjust-amount]").forEach((input) => {
       input.addEventListener("change", () => {
         rows[Number(input.dataset.adjustAmount)].amount = input.value;
-        persistAdjustments();
+        save();
         render();
       });
     });
     section.querySelectorAll("[data-adjust-delete]").forEach((button) => {
       button.addEventListener("click", () => {
         rows.splice(Number(button.dataset.adjustDelete), 1);
-        persistAdjustments();
+        save();
         render();
       });
     });
