@@ -77,7 +77,7 @@ function compressionLabel(file) {
 }
 
 function reportLabel(report) {
-  return `${report.studentName} · ${report.month}`;
+  return `${report.studentName} · ${report.monthLabel}`;
 }
 
 function canProcess() {
@@ -89,7 +89,7 @@ const UPLOAD_FIELDS = [
     kind: "billing",
     icon: "ph-student",
     title: "学生课时情况 CSV",
-    hint: "每名学生的当月课时汇总（与课时账单模块使用同一份完整课时费导出），可一次多选",
+    hint: "每名学生的课时汇总，支持多个月份合并为一份账单（与课时账单模块使用同一份完整课时费导出），可一次多选",
     input: '<input id="billingFiles" type="file" accept=".csv,text/csv" multiple />',
   },
   {
@@ -173,8 +173,8 @@ function uploadScreen() {
 
       <section class="upload-form" aria-labelledby="upload-title">
         <p class="eyebrow">Step 01 · Upload</p>
-        <h2 id="upload-title">上传本月资料</h2>
-        <p>支持 UTF-8 CSV。学生课时情况可以一次选择多份，也可以上传包含多名学生的汇总文件。</p>
+        <h2 id="upload-title">上传账单资料</h2>
+        <p>支持 UTF-8 CSV。学生课时情况可以一次选择多份，也可以上传包含多名学生的汇总文件。同一学生的多个月份将合并为一份账单。</p>
 
         <div class="prep-notes" role="note" aria-label="资料准备说明">
           <div class="prep-notes-head">
@@ -182,8 +182,8 @@ function uploadScreen() {
             <strong>资料准备说明</strong>
           </div>
           <ol>
-            <li><strong>学生课时情况 CSV</strong>：当月学生课时汇总导出，可多选；也可直接使用包含多名学生的完整课时费汇总文件。</li>
-            <li><strong>完整课程 schedule.csv</strong>：排课系统导出的本月全量课表，用于交叉核对课时、单价与授课老师。</li>
+            <li><strong>学生课时情况 CSV</strong>：学生课时汇总导出，支持多个月份合并，可多选；也可直接使用包含多名学生的完整课时费汇总文件。</li>
+            <li><strong>完整课程 schedule.csv</strong>：排课系统导出的覆盖账单所有月份的全量课表，用于交叉核对课时、单价与授课老师。</li>
             <li><strong>老师历史累计评分 CSV</strong>：使用老师反馈模块 <code>cumulative/teacher_scores.csv</code>，用于更新师资卡上的三项累计评分。</li>
           </ol>
           <p>三份文件都需要是 UTF-8 编码的 CSV（用 Excel 另存时请选择「CSV UTF-8（逗号分隔）」）。</p>
@@ -769,6 +769,7 @@ function courseRows(report) {
       <div class="course-row${line._added ? " is-added" : ""}" data-course-row="${index}">
         <div class="course-cell">
           ${line._added ? '<span class="added-badge">新增</span>' : ""}
+          ${report.months?.length > 1 && line.month ? `<span class="original-value">${esc(line.month)}</span>` : ""}
           <div class="${fieldClass(line, "courseType")}">
             <input
               aria-label="第 ${index + 1} 行课程名称"
@@ -914,40 +915,50 @@ function issueStrip(report) {
   `;
 }
 
+function previewMoney(value) {
+  return formatMoney(Math.floor(Number(value || 0)));
+}
+
 function previewPages(report) {
   return `
     <div class="preview-pages">
       <article class="preview-page" aria-label="报告封面预览">
         <div class="preview-brand"><strong>菁仕</strong><span>KING'S ACADEMY</span></div>
         <h3 class="preview-cover-name">${esc(report.studentName)}</h3>
-        <div class="preview-cover-title">课时费用明细</div>
+        <div class="preview-cover-title">课时费明细</div>
         <div class="preview-cover-bottom">
           <span>${esc(report.monthLabel)}<br />TUITION DETAIL</span>
-          <strong>${esc(formatMoney(report.totals.payableAmount))}</strong>
+          <strong>${esc(previewMoney(report.totals.payableAmount))}</strong>
         </div>
       </article>
       <article class="preview-page" aria-label="课程明细预览">
         <div class="preview-brand"><strong>菁仕</strong><span>KING'S ACADEMY</span></div>
         <div class="preview-bill-title">
           <h3>课程明细</h3>
-          <span>01 / 04</span>
+          <span>01 / ${String((report.calendars?.length || 1) + 3).padStart(2, "0")}</span>
+        </div>
+        <div class="mini-bill-row mini-bill-head" aria-hidden="true">
+          <span>课程</span><span>课时</span><span>单价</span><span>应付</span>
         </div>
         ${report.courseLines.map((line) => `
           <div class="mini-bill-row">
-            <strong>${esc(line.courseType || "—")}</strong>
+            <div class="mini-bill-course">
+              <strong>${esc(line.courseType || "—")}</strong>
+              ${report.months?.length > 1 && line.month ? `<small>${esc(line.month)}</small>` : ""}
+            </div>
             <span>${line.duration == null ? "—" : `${esc(line.duration)}h`}</span>
             <span>${line.unitPrice == null ? "—" : esc(formatMoney(line.unitPrice))}</span>
-            <span>${esc(formatMoney(line.payableAmount))}</span>
+            <span>${esc(previewMoney(line.payableAmount))}</span>
           </div>
         `).join("")}
         <div class="mini-total">
           <span>TOTAL PAYABLE</span>
-          <strong>${esc(formatMoney(report.totals.payableAmount))}</strong>
+          <strong>${esc(previewMoney(report.totals.payableAmount))}</strong>
         </div>
         ${report.prepay?.enabled ? `
           <div class="mini-prepay">
-            <span>预付余额 ${esc(formatMoney(report.prepay.balanceBefore))}</span>
-            <strong>${esc(prepayRemainingLabel(report.prepay))}</strong>
+            <span>预付余额 ${esc(previewMoney(report.prepay.balanceBefore))}</span>
+            <strong>${esc(prepayRemainingLabel(report))}</strong>
           </div>
         ` : ""}
       </article>
@@ -955,11 +966,13 @@ function previewPages(report) {
   `;
 }
 
-function prepayRemainingLabel(prepay) {
-  if (prepay.remaining == null) return "预付剩余 —";
-  return prepay.remaining < 0
-    ? `需补缴 ${formatMoney(-prepay.remaining)}`
-    : `预付剩余 ${formatMoney(prepay.remaining)}`;
+function prepayRemainingLabel(report) {
+  const prepay = report.prepay;
+  if (prepay.balanceBefore == null) return "预付剩余 —";
+  const remaining = Math.floor(prepay.balanceBefore) - Math.floor(report.totals.payableAmount);
+  return remaining < 0
+    ? `需补缴 ${previewMoney(-remaining)}`
+    : `预付剩余 ${previewMoney(remaining)}`;
 }
 
 function prepayPanel(report) {
@@ -970,7 +983,7 @@ function prepayPanel(report) {
         <input id="prepayToggle" type="checkbox" ${prepay.enabled ? "checked" : ""} />
         <span>
           <strong>预付学员</strong>
-          <span>本月课时费从预付中扣除，PDF 显示本月费用与预付剩余</span>
+          <span>本期课时费从预付中扣除，PDF 显示本期费用与预付剩余</span>
         </span>
       </label>
       ${prepay.enabled ? `
@@ -979,7 +992,7 @@ function prepayPanel(report) {
             <span>扣费前预付余额</span>
             <input id="prepayBalance" type="number" min="0" step="1" placeholder="由教务填写" value="${esc(prepay.balanceBefore ?? "")}" />
           </label>
-          <div><span>本月费用</span><strong>${esc(formatMoney(report.totals.payableAmount))}</strong></div>
+          <div><span>本期费用</span><strong>${esc(formatMoney(report.totals.payableAmount))}</strong></div>
           <div class="${prepay.remaining < 0 ? "is-negative" : ""}"><span>${prepay.remaining < 0 ? "需补缴" : "预付剩余"}</span><strong>${prepay.remaining == null ? "—" : esc(formatMoney(Math.abs(prepay.remaining)))}</strong></div>
         </div>
       ` : ""}
@@ -1101,7 +1114,7 @@ function reviewScreen() {
             <p class="workspace-subtitle">只编辑学生课时 CSV 中已汇总的课程行。所有调整会立即反映在右侧报告预览中。</p>
           </div>
           <label class="student-picker">
-            <span>当前学生 / 月份</span>
+            <span>当前学生 / 账单期间</span>
             <select id="studentSelect">
               ${state.reports.map((item, index) => (
                 `<option value="${index}" ${index === state.selectedIndex ? "selected" : ""}>${invalidIndexes.has(index) ? "⚠ " : ""}${esc(reportLabel(item))}</option>`

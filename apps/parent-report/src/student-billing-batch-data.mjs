@@ -72,6 +72,29 @@ function monthLabel(month) {
   return `${year}年${Number(value)}月`;
 }
 
+function billingPeriodLabel(months) {
+  const ranges = [];
+  for (const month of months) {
+    const [year, value] = month.split("-").map(Number);
+    const ordinal = year * 12 + value;
+    const previous = ranges.at(-1);
+    if (previous && ordinal === previous.ordinal + 1) {
+      previous.end = month;
+      previous.ordinal = ordinal;
+    } else {
+      ranges.push({ start: month, end: month, ordinal });
+    }
+  }
+  return ranges.map(({ start, end }) => {
+    if (start === end) return monthLabel(start);
+    const [startYear, startMonth] = start.split("-");
+    const [endYear, endMonth] = end.split("-");
+    return startYear === endYear
+      ? `${startYear}年${Number(startMonth)}-${Number(endMonth)}月`
+      : `${monthLabel(start)}-${monthLabel(end)}`;
+  }).join("、");
+}
+
 function formatMonthEnglish(monthValue) {
   const match = String(monthValue || "").match(/^(\d{4})-(\d{2})$/);
   if (!match) return String(monthValue || "");
@@ -114,6 +137,7 @@ function billingNote(row) {
 
 function buildCourseLine(row) {
   return {
+    month: row.month,
     teacher: row.teacher,
     courseType: row.courseType,
     teachingType: row.teachingType,
@@ -177,7 +201,7 @@ function buildCalendar(month, lessons) {
   }
 
   while (cells.length % 7 !== 0) cells.push({ inMonth: false, day: "", date: "", lessons: [] });
-  return { weekdays: WEEKDAYS, cells };
+  return { month, monthLabel: monthLabel(month), weekdays: WEEKDAYS, cells };
 }
 
 function scheduleRecordsForStudentMonth(scheduleLookup, studentId, month, billingRows) {
@@ -194,18 +218,22 @@ function scheduleRecordsForStudentMonth(scheduleLookup, studentId, month, billin
     .sort((a, b) => `${a.date} ${a.startTime}`.localeCompare(`${b.date} ${b.startTime}`));
 }
 
-export function buildStudentMonthReports(billingRows, scheduleLookup) {
-  const byStudentMonth = new Map();
+export function buildStudentReports(billingRows, scheduleLookup) {
+  const byStudent = new Map();
   for (const row of billingRows) {
-    const key = JSON.stringify([row.studentName, row.month]);
-    if (!byStudentMonth.has(key)) byStudentMonth.set(key, []);
-    byStudentMonth.get(key).push(row);
+    if (!byStudent.has(row.studentName)) byStudent.set(row.studentName, []);
+    byStudent.get(row.studentName).push(row);
   }
 
-  return [...byStudentMonth.entries()].map(([key, rows]) => {
-    const [studentId, month] = JSON.parse(key);
+  return [...byStudent.entries()].map(([studentId, rows]) => {
+    rows = [...rows].sort((a, b) => a.month.localeCompare(b.month));
+    const months = [...new Set(rows.map((row) => row.month))];
+    const month = months.length === 1 ? months[0] : `${months[0]}_${months.at(-1)}`;
     const courseLines = rows.map(buildCourseLine);
-    const lessons = scheduleRecordsForStudentMonth(scheduleLookup, studentId, month, rows).map(lessonFromRecord);
+    const lessons = months.flatMap((value) => (
+      scheduleRecordsForStudentMonth(scheduleLookup, studentId, value, rows.filter((row) => row.month === value))
+        .map(lessonFromRecord)
+    ));
     const activeTeacherNames = [...new Set(lessons.map((lesson) => lesson.teacher).filter(Boolean))]
       .sort((a, b) => a.localeCompare(b, "zh-CN"));
 
@@ -215,8 +243,9 @@ export function buildStudentMonthReports(billingRows, scheduleLookup) {
       studentId,
       studentName: cleanStudentName(studentId),
       month,
-      monthLabel: monthLabel(month),
-      monthEnglish: formatMonthEnglish(month),
+      months,
+      monthLabel: billingPeriodLabel(months),
+      monthEnglish: months.map(formatMonthEnglish).join(" / "),
       generatedDate: new Date().toISOString().slice(0, 10),
       totals: {
         duration: roundMoney(rows.reduce((sum, row) => sum + row.duration, 0)),
@@ -227,7 +256,7 @@ export function buildStudentMonthReports(billingRows, scheduleLookup) {
       },
       courseLines,
       lessons,
-      calendar: buildCalendar(month, lessons),
+      calendars: months.map((value) => buildCalendar(value, lessons)),
       activeTeacherNames,
     };
   });

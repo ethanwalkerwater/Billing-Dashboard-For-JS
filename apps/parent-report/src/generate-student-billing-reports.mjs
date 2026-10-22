@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   buildRawScheduleLookup,
-  buildStudentMonthReports,
+  buildStudentReports,
   parseCompleteBillingCsv,
   safeFileName,
 } from "./student-billing-batch-data.mjs";
@@ -43,7 +43,7 @@ export function generateStudentBillingReports({
   ));
   const scheduleLookup = buildRawScheduleLookup(fs.readFileSync(schedulePath, "utf8"));
   const { teachers } = JSON.parse(fs.readFileSync(teachersPath, "utf8"));
-  const reports = buildStudentMonthReports(billingRows, scheduleLookup);
+  const reports = buildStudentReports(billingRows, scheduleLookup);
 
   fs.mkdirSync(outputDir, { recursive: true });
   const written = reports.map((report) => {

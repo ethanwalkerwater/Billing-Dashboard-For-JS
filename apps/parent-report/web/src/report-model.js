@@ -28,6 +28,7 @@ export function buildRequiredSelectChoices(current, values, placeholderLabel, { 
 
 function baselineLine(line) {
   return {
+    month: line.month,
     teacher: line.teacher,
     courseType: line.courseType,
     teachingType: line.teachingType,
@@ -214,7 +215,8 @@ export function updateCourseLine(report, index, field, value) {
 function lessonMatchesLine(lesson, baseline) {
   return lesson.teacher === baseline.teacher
     && lesson.courseType === baseline.courseType
-    && lesson.teachingType === baseline.teachingType;
+    && lesson.teachingType === baseline.teachingType
+    && (!baseline.month || lesson.date.startsWith(`${baseline.month}-`));
 }
 
 export function buildConfirmedReport(report) {
@@ -232,8 +234,10 @@ export function buildConfirmedReport(report) {
     };
   });
 
-  for (const cell of next.calendar.cells) {
-    cell.lessons = next.lessons.filter((lesson) => lesson.date === cell.date);
+  for (const calendar of next.calendars || [next.calendar]) {
+    for (const cell of calendar.cells) {
+      cell.lessons = next.lessons.filter((lesson) => lesson.date === cell.date);
+    }
   }
 
   next.activeTeacherNames = [...new Set(
@@ -300,7 +304,7 @@ export function collectInvalidReports(reports) {
     return [{
       index,
       studentName: String(report.studentName || "未命名学生"),
-      monthLabel: String(report.monthLabel || report.month || "月份未填写"),
+      monthLabel: String(report.monthLabel || report.month || "账单期间未填写"),
       errors,
     }];
   });
