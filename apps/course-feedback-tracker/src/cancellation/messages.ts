@@ -37,11 +37,17 @@ export function formatDateTime(ms: number): string {
 
 const REASON_TEXT: Record<CancellationReason, string> = { personal: "个人原因", sick: "病假" };
 
-function card(title: string, template: string, lines: string[]): FeishuCard {
+function card(title: string, template: string, lines: string[], scheduleUrl?: string): FeishuCard {
   return {
     config: { wide_screen_mode: true },
     header: { template, title: { tag: "plain_text", content: title } },
-    elements: [{ tag: "div", text: { tag: "lark_md", content: lines.filter(Boolean).join("\n") } }],
+    elements: [
+      { tag: "div", text: { tag: "lark_md", content: lines.filter(Boolean).join("\n") } },
+      ...(scheduleUrl ? [{
+        tag: "action",
+        actions: [{ tag: "button", type: "primary", text: { tag: "plain_text", content: "查看本节课课表" }, url: scheduleUrl }],
+      }] : []),
+    ],
   };
 }
 
@@ -55,27 +61,37 @@ interface CancellationContext {
 
 export function teacherCancellationCard(context: CancellationContext): FeishuCard {
   const { lesson, request } = context;
-  return card(`${context.studentName} 取消了一节课`, "orange", [
+  const teacher = lesson.teacherName || "老师未填写";
+  return card(`${teacher} · ${context.studentName} 的课程已取消`, "orange", [
+    `**授课老师**：**${teacher}**`,
+    `**学生**：${context.studentName}`,
+    "**本节课已取消，无需按原安排上课。**",
     `**课程**：${lesson.courseName}`,
     `**时间**：${formatLessonTime(lesson)}`,
     `**收费**：${context.tier}（${context.tierText}）`,
     `**原因**：${REASON_TEXT[request.reason]}${request.note ? `，${request.note}` : ""}`,
     `**提交时间**：${formatDateTime(request.submittedMs)}`,
     "课表「临时取消」已自动填写，日历标题会同步显示请假。",
-  ]);
+  ], lesson.scheduleUrl);
 }
 
 export function groupCancellationCard(context: CancellationContext & { teacherNotified: boolean }): FeishuCard {
   const { lesson, request } = context;
   const sick = request.reason === "sick";
-  return card(`取消课程 · ${context.studentName}`, sick ? "yellow" : "blue", [
-    `**课程**：${lesson.courseName} · ${lesson.teacherName}`,
+  const teacher = lesson.teacherName || "老师未填写";
+  return card(`${teacher} · ${context.studentName} 的课程已取消`, sick ? "yellow" : "blue", [
+    `**授课老师**：**${teacher}**${lesson.teacherOpenId ? ` <at id=${lesson.teacherOpenId}></at>` : ""}`,
+    `**学生**：${context.studentName}`,
+    "**本节课已取消，无需按原安排上课。**",
+    `**课程**：${lesson.courseName}`,
     `**时间**：${formatLessonTime(lesson)}`,
     `**收费**：${context.tier}（${context.tierText}）`,
     `**原因**：${REASON_TEXT[request.reason]}${request.note ? `，${request.note}` : ""}`,
     sick ? `**病假证明**：${request.hasSickProof ? "已上传，请到「取消申请」表核实" : "未上传，请跟进"}` : "",
-    context.teacherNotified ? "老师已收到私聊通知。" : "⚠️ 没能私聊通知老师（课表「老师-日历」没有对应飞书账号），请手动告知老师。",
-  ]);
+    context.teacherNotified
+      ? `${teacher} 已收到私聊通知。`
+      : `⚠️ 没能私聊通知老师（${lesson.teacherOpenId ? "私聊发送失败" : "课表「老师-日历」没有对应飞书账号"}），请教务手动告知：${teacher}。`,
+  ], lesson.scheduleUrl);
 }
 
 export function groupAlertCard(input: {
