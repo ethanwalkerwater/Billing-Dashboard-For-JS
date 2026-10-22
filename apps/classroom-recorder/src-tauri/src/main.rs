@@ -35,6 +35,12 @@ async fn logout(core: St<'_>) -> R {
     Ok(())
 }
 
+/// 设置里的「检查更新」：返回给老师看的一句话；有新版且空闲时直接安装重启
+#[tauri::command]
+async fn check_update(core: St<'_>) -> R<String> {
+    update::check_now(core.inner()).await
+}
+
 /// 手动刷新课表
 #[tauri::command]
 async fn refresh_lessons(core: St<'_>) -> R {
@@ -259,6 +265,7 @@ fn main() {
             login,
             logout,
             refresh_lessons,
+            check_update,
             delete_lesson,
             start_recording,
             start_adhoc,
