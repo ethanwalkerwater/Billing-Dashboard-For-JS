@@ -30,3 +30,23 @@ export function adjustedLessonAmounts(amount, multiplier) {
     commissionBaseAmount: round(numericOrZero(amount)),
   };
 }
+
+export function recurringAdjustmentRows(entries, month, teacher) {
+  let latestMonth = "";
+  let rows = [];
+  for (const [key, value] of Object.entries(entries)) {
+    const [savedMonth, savedTeacher] = JSON.parse(key);
+    if (savedTeacher === teacher && savedMonth <= month && savedMonth > latestMonth) {
+      latestMonth = savedMonth;
+      rows = value;
+    }
+  }
+  return rows;
+}
+
+export function expandRecurringAdjustments(entries, months) {
+  const teachers = new Set(Object.keys(entries).map((key) => JSON.parse(key)[1]));
+  return months.flatMap((month) => [...teachers].flatMap((teacher) =>
+    recurringAdjustmentRows(entries, month, teacher).map((row) => ({ month, teacher, ...row })),
+  ));
+}
