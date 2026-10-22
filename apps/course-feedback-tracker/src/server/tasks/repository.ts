@@ -5,6 +5,8 @@ export interface FeedbackTaskRepository {
   findByTaskIds(taskIds: string[]): Promise<StoredFeedbackTask[]>;
   findByPublicToken(publicToken: string): Promise<StoredFeedbackTask | null>;
   applySyncPlan(plan: TaskSyncPlan): Promise<void>;
+  /** 这些答卷在库里记在哪几轮（飞书里删掉或改了月份的答卷，要回原来那一轮腾位置） */
+  listResponseMonths(responseRecordIds: string[]): Promise<string[]>;
   /** 「课程类型」页的手动设定：课程类型 → 是否课程 */
   listCourseTypeOverrides(): Promise<Map<string, boolean>>;
   /** 问卷写法 → 课表规范名 */

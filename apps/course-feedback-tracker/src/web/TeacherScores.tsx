@@ -9,7 +9,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { courseMonthToCollectionMonth, nameMatchKey, shiftMonth } from "@/domain";
+import { nameMatchKey, shiftMonth } from "@/domain";
 import { cn } from "@/lib/utils";
 import { PageHeader } from "./AppNav";
 import type { Page } from "./AppNav";
@@ -43,10 +43,9 @@ function Stat({ label, value, hint }: { label: string; value: React.ReactNode; h
   );
 }
 
-/** 「2026年9月课程 · 10月收集」：课程月份是评分对象，收集月份是反馈提交的月份。 */
+/** 「2026年9月课程」：评分对象是课程月份；这个月的反馈当月就能交，晚交的到下个月月底。 */
 function courseLabel(month: string): string {
-  const collection = Number(courseMonthToCollectionMonth(month).slice(5));
-  return `${monthName(month)}课程 · ${collection}月收集`;
+  return `${monthName(month)}课程`;
 }
 
 /** 「2026年2月 – 9月」 */
@@ -172,7 +171,7 @@ function EmptyMonth({ month, report }: { month: string; report?: MonthReport }) 
       <CardContent className="text-muted-foreground flex flex-col items-center gap-2 py-16 text-center text-sm">
         <Info className="size-5" />
         <p>{courseLabel(month)}还算不出分数。</p>
-        <p className="text-xs">{report?.error ?? "需要这个月的课表（点问卷跟踪页的「生成名单」）和下个月收到的反馈。"}</p>
+        <p className="text-xs">{report?.error ?? "需要这个月的课表（点问卷跟踪页的「生成名单」）和收到的反馈。"}</p>
       </CardContent>
     </Card>
   );
@@ -592,7 +591,7 @@ export function TeacherScores({ page, onPageChange, onSignOut }: { page: Page; o
               </Button>
             </>
           }
-          status={<SyncStatus times={syncTimes.times} feedbackMonth={currentCollectionMonth()} scheduleMonth={shiftMonth(currentCollectionMonth(), -1)} syncing={syncing} />}
+          status={<SyncStatus times={syncTimes.times} feedbackMonth={shiftMonth(currentCollectionMonth(), 1)} scheduleMonth={currentCollectionMonth()} syncing={syncing} />}
         />
 
         <div className="flex flex-wrap items-center justify-between gap-3">

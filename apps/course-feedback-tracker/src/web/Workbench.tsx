@@ -16,7 +16,7 @@ import { DuplicateNotice } from "./DuplicateNotice";
 import { MultiSelectFilter } from "./MultiSelectFilter";
 import { QrBatchDialog } from "./QrBatchDialog";
 import { SyncDetails } from "./SyncDetails";
-import { SyncStatus, useSyncTimes } from "./SyncStatus";
+import { SyncStatus, feedbackIsStale, useSyncTimes } from "./SyncStatus";
 import type { SyncSummary } from "./SyncDetails";
 import { TaskSheet } from "./TaskSheet";
 import { TaskTable } from "./TaskTable";
@@ -30,15 +30,19 @@ import type { SortKey } from "./useWorkbenchData";
 
 const STATUS_ORDER: TaskStatus[] = ["unsent", "sent", "completed", "declined"];
 
-function currentCollectionMonth(): string {
-  return new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit" }).format(new Date()).slice(0, 7);
+/**
+ * 默认看本月课程这一轮。内部仍用收集月份（课程月份 + 1）当这一轮的键，数据库、任务 ID 都不用改；
+ * 二维码预填了反馈课程月份，月中就能发出去评，不用等到下个月 1 号。
+ */
+function currentRound(): string {
+  const now = new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit" }).format(new Date()).slice(0, 7);
+  return shiftMonth(now, 1);
 }
 
-/** 「2026年9月 · 8月课程」——不依赖浏览器语言，也把双月份口径说清楚。 */
+/** 「2026年10月课程」——下拉按课程月份选，不依赖浏览器语言。 */
 function monthLabel(collectionMonth: string): string {
-  const [year, month] = collectionMonth.split("-").map(Number);
-  const courseMonth = Number(collectionMonthToCourseMonth(collectionMonth).slice(5));
-  return `${year}年${month}月 · ${courseMonth}月课程`;
+  const [year, month] = collectionMonthToCourseMonth(collectionMonth).split("-").map(Number);
+  return `${year}年${month}月课程`;
 }
 
 function Stat({
@@ -82,7 +86,7 @@ export function Workbench({
   onPageChange: (page: Page) => void;
   onSignOut: () => void | Promise<void>;
 }) {
-  const [collectionMonth, setCollectionMonth] = useState(currentCollectionMonth);
+  const [collectionMonth, setCollectionMonth] = useState(currentRound);
   const [filters, setFilters] = useState(EMPTY_FILTERS);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [activeTask, setActiveTask] = useState<StoredFeedbackTask | null>(null);
@@ -116,8 +120,8 @@ export function Workbench({
     [data.allTasks, data.excludedTeachers],
   );
   const monthOptions = useMemo(() => {
-    const now = currentCollectionMonth();
-    return Array.from({ length: 12 }, (_, index) => shiftMonth(now, -index));
+    const latest = currentRound();
+    return Array.from({ length: 12 }, (_, index) => shiftMonth(latest, -index));
   }, []);
   const selectedTasks = visible.filter((task) => selected.has(task.taskId));
 
@@ -181,10 +185,29 @@ export function Workbench({
     });
   }
 
-  // 打开工作台 / 切换月份时自动从飞书拉一次最新答卷。不设定时任务：数据只在这里看，打开时新就够了。
-  // 先显示库里已有的数据，刷新完再替换，不让老师干等。
+  // 打开工作台 / 切换月份时，在后台悄悄同步一次答卷：只同步还在收集的两轮（更早的已经收齐，直接看库里的），
+  // 10 分钟内同步过（刚刷新过、飞书事件推过）也跳过。不占按钮，表格先显示库里已有的数据，同步完再替换。
+  const [autoSyncing, setAutoSyncing] = useState(false);
   useEffect(() => {
-    void refreshResponses();
+    const latest = currentRound();
+    if (collectionMonth !== latest && collectionMonth !== shiftMonth(latest, -1)) return;
+    let active = true;
+    void (async () => {
+      if (!(await feedbackIsStale(collectionMonth)) || !active) return;
+      setAutoSyncing(true);
+      try {
+        await callFeedbackApi<SyncSummary>({ action: "sync-responses", collectionMonth });
+        if (active) await Promise.all([data.reload(), syncTimes.reload()]);
+      } catch (cause) {
+        if (active) setNotice(`自动同步答卷失败：${cause instanceof Error ? cause.message : String(cause)}，可以点「刷新反馈」重试`);
+      } finally {
+        if (active) setAutoSyncing(false);
+      }
+    })();
+    return () => {
+      active = false;
+      setAutoSyncing(false);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [collectionMonth]);
 
@@ -247,7 +270,7 @@ export function Workbench({
               times={syncTimes.times}
               feedbackMonth={collectionMonth}
               scheduleMonth={collectionMonthToCourseMonth(collectionMonth)}
-              syncing={busy === "刷新反馈"}
+              syncing={busy === "刷新反馈" || autoSyncing}
             />
           }
         />
@@ -368,6 +391,9 @@ export function Workbench({
               })
             }
             onOpen={setActiveTask}
+            onOwnerChange={(taskId, owner) =>
+              void data.updateOwner([taskId], owner).catch((cause) => setNotice(cause instanceof Error ? cause.message : String(cause)))
+            }
             sortKey={sortKey}
             sortAsc={sortAsc}
             onSort={toggleSort}
@@ -411,6 +437,12 @@ export function Workbench({
         onMarkSent={() => void changeStatus("sent")}
         onMarkDeclined={() => void changeStatus("declined")}
         onMarkUnsent={() => void changeStatus("unsent")}
+        onSetOwner={(owner) =>
+          void run("设负责人", async () => {
+            const updated = await data.updateOwner(selected, owner);
+            return `已把 ${updated} 行的负责人设为「${owner}」，下个月生成名单时默认沿用`;
+          })
+        }
         onDownloadZip={() => void zipSelected()}
         onExportCsv={() =>
           void run("导出选中", async () => {

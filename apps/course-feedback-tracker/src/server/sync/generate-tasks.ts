@@ -1,9 +1,9 @@
 import { collectionMonthToCourseMonth, groupScheduleIntoTasks } from "../../domain";
-import type { SkippedScheduleRecord } from "../../domain";
+import type { LessonRow, SkippedScheduleRecord } from "../../domain";
 import type { FeishuClient } from "../feishu/client";
 import type { FeishuConfig } from "../feishu/config";
 import { FeishuSchemaError } from "../feishu/errors";
-import { buildScheduleCsvWithCount } from "../export/csv";
+import { SCHEDULE_CSV_HEADERS, scheduleRows, toCsv } from "../export/csv";
 import { parseScheduleRecord, parseStudentRecord } from "../feishu/parsers";
 import { planSelectOptionAppend } from "../feishu/options";
 import { ensureSelectFieldOptions } from "../feishu/sync-options";
@@ -129,22 +129,23 @@ export async function generateMonthlyTasks(input: {
     }).missingNames;
   }
 
-  const existing = await input.repository.listByCollectionMonth(input.collectionMonth);
-  const plan = await buildTaskSyncPlan({
-    existing,
-    drafts: grouped.tasks,
-    publicTokenPepper: input.publicTokenPepper,
-    now: input.now,
+  // 课表快照的行（含记录ID）：评分页靠它算课时权重；每个任务也存一份自己的课，评价后课时就按它定稿。
+  const lessons = scheduleRows({
+    records: scheduleRaw,
+    courseMonth,
+    studentNamesByRecordId: new Map(students.parsed.map((student) => [student.recordId, student.name])),
   });
+  const lessonsById = new Map(lessons.map((row) => [row["记录ID"], row]));
+  const drafts = grouped.tasks.map((task) => ({
+    ...task,
+    lessons: task.scheduleRecordIds.map((id) => lessonsById.get(id)).filter((row): row is LessonRow => Boolean(row)),
+  }));
+
+  const existing = await input.repository.listByCollectionMonth(input.collectionMonth);
+  const plan = await buildTaskSyncPlan({ existing, drafts, publicTokenPepper: input.publicTokenPepper, now: input.now });
   if (!input.dryRun) {
     await input.repository.applySyncPlan(plan);
-    // 顺手存下课程月份的课表快照：评分页靠它算课时权重，不用再读一遍整张飞书课表。
-    const snapshot = buildScheduleCsvWithCount({
-      records: scheduleRaw,
-      courseMonth,
-      studentNamesByRecordId: new Map(students.parsed.map((student) => [student.recordId, student.name])),
-    });
-    await input.repository.saveSnapshot("schedule", courseMonth, snapshot.csv, snapshot.rows);
+    await input.repository.saveSnapshot("schedule", courseMonth, toCsv(SCHEDULE_CSV_HEADERS, lessons), lessons.length);
   }
 
   return {

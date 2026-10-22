@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { assertTaskStatusTransition, nameMatchKey } from "@/domain";
-import type { TaskStatus } from "@/domain";
+import { assertTaskStatusTransition, nameMatchKey, ownerResolver } from "@/domain";
+import type { OwnerAssignment, TaskStatus } from "@/domain";
 import type { StoredFeedbackTask } from "@/server/tasks/types";
-import { ALIASES_TABLE, EXCLUDED_TEACHERS_TABLE, RESPONSES_TABLE, TASKS_TABLE } from "@/shared/rdb";
+import { ALIASES_TABLE, EXCLUDED_TEACHERS_TABLE, OWNER_ASSIGNMENTS_TABLE, RESPONSES_TABLE, TASKS_TABLE } from "@/shared/rdb";
 import { db, taskRepository } from "./cloudbase";
 
 /** 对不上任务的答卷，顶部横幅和手动绑定都用它。 */
@@ -59,8 +59,19 @@ interface ResponseRow {
   sync_status: string;
 }
 
+interface OwnerRow {
+  student_record_id: string;
+  teacher_canonical_name: string;
+  from_month: string;
+  owner: string;
+}
+
 export function useWorkbenchData(collectionMonth: string) {
-  const [allTasks, setAllTasks] = useState<StoredFeedbackTask[]>([]);
+  const [storedTasks, setAllTasks] = useState<StoredFeedbackTask[]>([]);
+  const [owners, setOwners] = useState<OwnerAssignment[]>([]);
+  // 切了月份后，上个月还在路上的读取（或刷新反馈完成后的重读）回来了也不能覆盖当前月份
+  const currentMonth = useRef(collectionMonth);
+  currentMonth.current = collectionMonth;
   const [responses, setResponses] = useState<ResponseRow[]>([]);
   /** 不参与统计的老师（课表规范名），所有月份通用 */
   const [excludedTeachers, setExcludedTeachersState] = useState<string[]>([]);
@@ -70,18 +81,30 @@ export function useWorkbenchData(collectionMonth: string) {
   const reload = useCallback(async () => {
     setLoading(true);
     try {
-      const [taskRows, responseRows, excludedRows] = await Promise.all([
+      const [taskRows, responseRows, excludedRows, ownerRows] = await Promise.all([
         taskRepository.listByCollectionMonth(collectionMonth),
         db
           .from(RESPONSES_TABLE)
           .select<ResponseRow>("response_record_id,task_id,student_name,teacher_name,identity,submitted_at,sync_status")
           .eq("collection_month", collectionMonth),
         db.from(EXCLUDED_TEACHERS_TABLE).select<{ teacher_name: string }>("teacher_name"),
+        // ponytail: 负责人设定整表读（只存手动设的那次，几百行）；上万行再按学生过滤
+        db.from(OWNER_ASSIGNMENTS_TABLE).select<OwnerRow>("student_record_id,teacher_canonical_name,from_month,owner"),
       ]);
       if (responseRows.error) throw new Error(responseRows.error.message);
       if (excludedRows.error) throw new Error(excludedRows.error.message);
+      if (ownerRows.error) throw new Error(ownerRows.error.message);
+      if (currentMonth.current !== collectionMonth) return;
 
       setAllTasks(taskRows);
+      setOwners(
+        (ownerRows.data ?? []).map((row) => ({
+          studentRecordId: row.student_record_id,
+          teacherCanonicalName: row.teacher_canonical_name,
+          fromMonth: row.from_month,
+          owner: row.owner,
+        })),
+      );
       setResponses(responseRows.data ?? []);
       setExcludedTeachersState((excludedRows.data ?? []).map((row) => row.teacher_name));
       setError(null);
@@ -92,9 +115,21 @@ export function useWorkbenchData(collectionMonth: string) {
     }
   }, [collectionMonth]);
 
+  // reload 只随月份变：换月份先清空，别在新月份的标题下显示上个月的名单
   useEffect(() => {
+    setAllTasks([]);
+    setResponses([]);
     void reload();
   }, [reload]);
+
+  // 负责人不存在任务上：按「从某月起生效」的设定实时解析，改了 9 月，没单独设过的 10、11 月立刻跟着变。
+  const allTasks = useMemo(() => {
+    const resolve = ownerResolver(owners);
+    return storedTasks.map((task) => {
+      const hit = resolve(task);
+      return { ...task, owner: hit?.owner, ownerFromMonth: hit?.fromMonth };
+    });
+  }, [storedTasks, owners]);
 
   // 不参与统计的老师：任务、答卷都从工作台视图里拿掉，应发、完成率、对不上横幅都不算他们。
   const { tasks, unlinked, duplicates, summary } = useMemo(() => {
@@ -201,6 +236,40 @@ export function useWorkbenchData(collectionMonth: string) {
     [reload, tasks],
   );
 
+  /** 设负责人（单行下拉或批量）：从这个课程月份起生效，之后的月份没单独设过就沿用。 */
+  const updateOwner = useCallback(
+    async (taskIds: Iterable<string>, owner: string) => {
+      const ids = new Set(taskIds);
+      const rows = storedTasks
+        .filter((task) => ids.has(task.taskId))
+        .map((task) => ({
+          studentRecordId: task.studentRecordId,
+          teacherCanonicalName: task.teacherCanonicalName,
+          fromMonth: task.courseMonth,
+          owner,
+        }));
+      if (rows.length === 0) return 0;
+      const now = new Date().toISOString();
+      const result = await db.from(OWNER_ASSIGNMENTS_TABLE).upsert(
+        rows.map((row) => ({
+          student_record_id: row.studentRecordId,
+          teacher_canonical_name: row.teacherCanonicalName,
+          from_month: row.fromMonth,
+          owner,
+          updated_at: now,
+        })),
+        { onConflict: "student_record_id,teacher_canonical_name,from_month" },
+      );
+      if (result.error) throw new Error(`设置负责人失败：${result.error.message}`);
+      // 只改本地设定，不整表重读，下拉选完立刻生效
+      const key = (row: OwnerAssignment) => `${row.studentRecordId}\u001f${row.teacherCanonicalName}\u001f${row.fromMonth}`;
+      const replaced = new Set(rows.map(key));
+      setOwners((current) => [...current.filter((row) => !replaced.has(key(row))), ...rows]);
+      return rows.length;
+    },
+    [storedTasks],
+  );
+
   /** 加别名。下次同步时这批写法就能自动对上，不用每月手动绑。 */
   const addAlias = useCallback(
     async (alias: Alias) => {
@@ -254,6 +323,7 @@ export function useWorkbenchData(collectionMonth: string) {
     error,
     reload,
     updateStatus,
+    updateOwner,
     addAlias,
     bindResponse,
   };

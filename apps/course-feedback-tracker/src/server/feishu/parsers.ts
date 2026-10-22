@@ -1,5 +1,5 @@
 import type { ScheduleRecord, StudentRecord } from "../../domain";
-import { canonicalizeName } from "../../domain";
+import { FEEDBACK_MONTH_FIELD, canonicalizeName, isMonth } from "../../domain";
 import { FeishuSchemaError } from "./errors";
 import type { FeishuRecord } from "./types";
 
@@ -12,6 +12,8 @@ export interface FeedbackResponseRecord {
   /** 「身份」字段原始值：学生本人 / 家长/监护人 */
   identity: string[];
   submittedAt: string;
+  /** 二维码预填的「反馈课程月份」；老二维码没有、或被改成了别的写法时为 null，按提交时间归属 */
+  courseMonth: string | null;
 }
 
 function requiredRecordId(record: FeishuRecord): string {
@@ -118,6 +120,11 @@ export function parseScheduleRecord(record: FeishuRecord): ScheduleRecord {
   };
 }
 
+export function readFeedbackCourseMonth(fields: Record<string, unknown>): string | null {
+  const value = readTextValue(fields[FEEDBACK_MONTH_FIELD]);
+  return value && isMonth(value) ? value : null;
+}
+
 export function parseFeedbackResponse(record: FeishuRecord): FeedbackResponseRecord {
   const recordId = requiredRecordId(record);
   const submittedAt = readDateTime(record.fields["提交时间"] ?? record.created_time);
@@ -129,6 +136,7 @@ export function parseFeedbackResponse(record: FeishuRecord): FeedbackResponseRec
     teacherNames: readStringList(record.fields["老师姓名"]),
     identity: readStringList(record.fields["身份"]),
     submittedAt,
+    courseMonth: readFeedbackCourseMonth(record.fields),
   };
 }
 

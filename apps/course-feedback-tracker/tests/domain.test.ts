@@ -172,17 +172,20 @@ describe("task grouping", () => {
 });
 
 describe("form URL", () => {
-  it("encodes only teacher and student with the exact Feishu prefill keys", () => {
+  it("encodes teacher, student and the feedback month with the exact Feishu prefill keys", () => {
     const value = buildPrefilledFormUrl({
       baseUrl: "https://example.feishu.cn/share/base/form/demo",
       teacherName: "应雁心",
       studentName: "姚凯榕",
+      courseMonth: "2026-10",
     });
     const url = new URL(value);
     assert.equal(url.searchParams.get(FORM_PREFILL_KEYS.teacher), "应雁心");
     assert.equal(url.searchParams.get(FORM_PREFILL_KEYS.student), "姚凯榕");
-    // 业务方决定不用任务 ID，也不往飞书表加字段，URL 里不能出现它。
-    assert.equal([...url.searchParams.keys()].length, 2);
+    assert.equal(url.searchParams.get("prefill_反馈课程月份"), "2026-10");
+    assert.equal(url.searchParams.get("hide_反馈课程月份"), "1");
+    // 业务方决定不用任务 ID，URL 里不能出现它。
+    assert.equal([...url.searchParams.keys()].length, 4);
   });
 });
 

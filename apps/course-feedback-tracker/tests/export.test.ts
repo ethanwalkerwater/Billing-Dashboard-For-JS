@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { buildFeedbackCsv, buildScheduleCsv, keepCourseLessons, parseCsv, toCsv, formatShanghai } from "../src/server/export/csv";
+import { applyFrozenLessons, buildFeedbackCsv, buildScheduleCsv, keepCourseLessons, parseCsv, toCsv, formatShanghai, SCHEDULE_CSV_HEADERS } from "../src/server/export/csv";
 import type { FeishuRecord } from "../src/server/feishu/types";
 
 /**
@@ -46,8 +46,8 @@ describe("teacher-feedback CSV compatibility", () => {
     });
     const lines = csv.replace(/^﻿/, "").trim().split("\r\n");
 
-    assert.equal(lines[0], "上课时间,老师,学生,课程时长,课程类型,授课类型,临时取消");
-    assert.equal(lines[1], "2026-08-12 10:00:00,应雁心,姚凯榕,1.5,IG数学,1v1,");
+    assert.equal(lines[0], "上课时间,老师,学生,课程时长,课程类型,授课类型,临时取消,记录ID");
+    assert.equal(lines[1], "2026-08-12 10:00:00,应雁心,姚凯榕,1.5,IG数学,1v1,,lesson-1");
     // 只导出课程月份内的记录。
     assert.equal(lines.length, 2);
   });
@@ -78,6 +78,17 @@ describe("teacher-feedback CSV compatibility", () => {
     assert.ok(lines[1].startsWith("2026-09-03 10:00:00,"));
   });
 
+  it("puts feedback into the round of its prefilled month, not its submit month", () => {
+    const at = Date.parse("2026-10-20T02:00:00.000Z");
+    const records: FeishuRecord[] = [
+      { record_id: "rec-oct", fields: { 提交时间: at, 老师姓名: "应雁心", 学生姓名: "姚凯榕", 反馈课程月份: "2026-10" } },
+      { record_id: "rec-sept", fields: { 提交时间: at, 老师姓名: "应雁心", 学生姓名: "姚凯榕" } },
+    ];
+    const rows = (collectionMonth: string) => parseCsv(buildFeedbackCsv({ records, collectionMonth })).length - 1;
+    assert.equal(rows("2026-11"), 1);
+    assert.equal(rows("2026-10"), 1);
+  });
+
   it("escapes separators so a course name with a comma cannot shift columns", () => {
     const csv = buildScheduleCsv({
       records: [
@@ -95,6 +106,21 @@ describe("teacher-feedback CSV compatibility", () => {
       studentNamesByRecordId: new Map([["student-1", "姚凯榕"]]),
     });
     assert.ok(csv.includes('"Alevel数学 P3,S1 ""强化"""'));
+  });
+});
+
+describe("frozen lessons for scoring", () => {
+  it("replaces an answered pair's lessons with the ones it was answered against", () => {
+    const row = (记录ID: string, 学生: string, 课程时长: string) => ({ 上课时间: "2026-10-20 10:00:00", 老师: "应雁心", 学生, 课程时长, 课程类型: "IG数学", 授课类型: "1v1", 临时取消: "", 记录ID });
+    const live = toCsv(SCHEDULE_CSV_HEADERS, [
+      row("lesson-1", "姚凯榕", "1"), // 评价后时长从 2 改成了 1
+      row("lesson-new", "姚凯榕", "2"), // 评价后新加的课
+      row("lesson-other", "Mia", "3"), // 别的学生，不动
+    ]);
+    const csv = applyFrozenLessons(live, [{ studentName: "姚凯榕", teacherName: "应雁心", lessons: [row("lesson-1", "姚凯榕", "2")] }]);
+    const [header, ...rest] = parseCsv(csv);
+    const hours = Object.fromEntries(rest.map((cells) => [cells[header.indexOf("记录ID")], cells[header.indexOf("课程时长")]]));
+    assert.deepEqual(hours, { "lesson-other": "3", "lesson-1": "2" });
   });
 });
 

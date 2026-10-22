@@ -7,8 +7,9 @@ import { Separator } from "@/components/ui/separator";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { TASK_STATUS_LABELS } from "@/domain";
 import { cn } from "@/lib/utils";
+import { isFrozen } from "@/server/tasks/reconcile";
 import type { StoredFeedbackTask } from "@/server/tasks/types";
-import { BRAND_LOGO_URL, FOOTER_LINE, cardFileName, downloadBlob, renderQrCard, taskFormUrl, taskQrDataUrl } from "./qr";
+import { BRAND_LOGO_URL, FOOTER_LINE, cardFileName, cardMonthLabel, downloadBlob, renderQrCard, taskFormUrl, taskQrDataUrl } from "./qr";
 import { respondedBy } from "./useWorkbenchData";
 
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
@@ -56,7 +57,9 @@ export function TaskSheet({ task, onClose }: { task: StoredFeedbackTask | null; 
             <div className="mt-2 text-center">
               <div className="text-3xl font-bold tracking-tight">{task.teacherCanonicalName}老师</div>
               <div className="mt-2 text-base font-medium text-[#3f3f46]">{task.courseNames.join(" · ")}</div>
-              <div className="text-muted-foreground mt-2 text-sm">学生：{task.studentName}</div>
+              <div className="text-muted-foreground mt-2 text-sm">
+                学生：{task.studentName} · {cardMonthLabel(task.courseMonth)}
+              </div>
             </div>
             <div className="mx-auto mt-5 size-48 shrink-0 overflow-hidden rounded-lg bg-white p-2 shadow-sm">
               {qrDataUrl ? (
@@ -125,6 +128,12 @@ export function TaskSheet({ task, onClose }: { task: StoredFeedbackTask | null; 
             <Row label="课程月份">
               <span className="font-mono text-xs">{task.courseMonth}</span>
             </Row>
+            {task.lessons?.length ? (
+              <Row label="课时">
+                {task.lessons.length} 节 · {task.lessons.reduce((sum, lesson) => sum + (Number(lesson["课程时长"]) || 0), 0)} 小时
+                <span className="text-muted-foreground ml-1.5 text-xs">{isFrozen(task) ? "已评价，课时定稿" : "按课表，生成名单时更新"}</span>
+              </Row>
+            ) : null}
             <Row label="任务 ID">
               <span className="font-mono text-xs">{task.taskId.slice(-12)}</span>
             </Row>

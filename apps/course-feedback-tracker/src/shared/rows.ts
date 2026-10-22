@@ -1,4 +1,4 @@
-import type { TaskStatus } from "../domain";
+import type { LessonRow, TaskStatus } from "../domain";
 import type { StoredFeedbackTask } from "../server/tasks/types";
 
 /** feedback_tasks 的数据库行形状，前端和云函数都通过 PostgREST 读写同一张表。 */
@@ -12,6 +12,7 @@ export interface FeedbackTaskRow {
   teacher_canonical_name: string;
   course_names: string[];
   schedule_record_ids: string[];
+  lessons: LessonRow[] | null;
   status: TaskStatus;
   public_token: string;
   sent_at: string | null;
@@ -36,6 +37,7 @@ export function rowToTask(row: FeedbackTaskRow): StoredFeedbackTask {
     teacherCanonicalName: row.teacher_canonical_name,
     courseNames: row.course_names ?? [],
     scheduleRecordIds: row.schedule_record_ids ?? [],
+    lessons: row.lessons ?? undefined,
     status: row.status,
     publicToken: row.public_token,
     sentAt: row.sent_at ?? undefined,
@@ -61,6 +63,7 @@ export function taskToRow(task: StoredFeedbackTask): FeedbackTaskRow {
     teacher_canonical_name: task.teacherCanonicalName,
     course_names: task.courseNames,
     schedule_record_ids: task.scheduleRecordIds,
+    lessons: task.lessons ?? null,
     status: task.status,
     public_token: task.publicToken,
     sent_at: task.sentAt ?? null,

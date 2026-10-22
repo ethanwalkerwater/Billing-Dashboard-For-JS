@@ -210,6 +210,8 @@ const store: ScoreStore = {
     const result = await db.from(SCORE_RESULTS_TABLE).select<{ detail: PriorDetailRow[] }>("detail").eq("course_month", courseMonth);
     return result.data?.[0]?.detail;
   },
+  // 回填的都是提前评价上线前的月份，没有定稿课时
+  frozenLessons: async () => [],
 };
 for (let courseMonth = LIVE_SCORES_FROM; courseMonth < currentMonth; courseMonth = shiftMonth(courseMonth, 1)) {
   const outcome = await recomputeMonth({ store, compute: async (request) => computeLocally({ ...request }), courseMonth, currentMonth, force: true });

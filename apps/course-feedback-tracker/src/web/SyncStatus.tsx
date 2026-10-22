@@ -7,6 +7,16 @@ import { db } from "./cloudbase";
 import { formatMoment } from "./report-types";
 import type { SyncedAt } from "./report-types";
 
+/** 答卷超过这么久没同步，打开页面时就去飞书拉一次；飞书事件推着的时候基本不会触发。 */
+const STALE_MS = 10 * 60_000;
+
+/** 这一轮的答卷是不是很久没同步了（从没同步过也算）。 */
+export async function feedbackIsStale(collectionMonth: string): Promise<boolean> {
+  const result = await db.from(SNAPSHOTS_TABLE).select<{ synced_at: string }>("synced_at").eq("kind", "feedback").eq("month", collectionMonth);
+  const at = result.data?.[0]?.synced_at;
+  return !at || Date.now() - Date.parse(at) > STALE_MS;
+}
+
 /** 读各月份最近一次同步时间（不带 CSV 正文）。 */
 export function useSyncTimes() {
   const [times, setTimes] = useState<SyncedAt[]>([]);
@@ -26,7 +36,7 @@ export function useSyncTimes() {
 
 /**
  * 顶部的同步时间：让老师一眼知道看到的数据新到什么时候。
- * 答卷 = 收集月份的飞书答卷（打开页面自动刷新）；课表 = 课程月份的课表（点「生成名单」时更新）。
+ * 答卷 = 这一轮的飞书答卷（飞书事件、每日定时对账、「刷新反馈」时更新）；课表 = 课程月份的课表（点「生成名单」时更新）。
  */
 export function SyncStatus({
   times,

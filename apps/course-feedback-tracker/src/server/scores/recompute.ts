@@ -1,5 +1,6 @@
 import { courseMonthToCollectionMonth, shiftMonth } from "../../domain";
-import { keepCourseLessons } from "../export/csv";
+import type { LessonRow } from "../../domain";
+import { applyFrozenLessons, keepCourseLessons } from "../export/csv";
 import type { NameAlias } from "../tasks/types";
 
 /**
@@ -11,7 +12,8 @@ export const LIVE_SCORES_FROM = "2026-09";
 /** 评分脚本或入参口径变了就加一，所有未定稿月份下次刷新时会重算。 */
 // 2：只按「课程」算课时和权重（咨询、考试、会议、自习、作业等不算），见 domain/lesson-kind.ts
 // 3：4 分算 5 分的两条规则（连续打 4 分、评分标准高），见 functions/feedback-score/index.py
-export const SCORE_ENGINE_VERSION = "3";
+// 4：答卷按「反馈课程月份」归属（可以月中提前评）；评价过的学生-老师课时定稿（applyFrozenLessons）
+export const SCORE_ENGINE_VERSION = "4";
 
 /** 规则「连续 3 个月打 4 分」要看前几个月的逐条明细（存的是原始分） */
 export const STREAK_MONTHS = 3;
@@ -64,9 +66,11 @@ export interface ScoreStore {
   courseTypeOverrides(): Promise<Map<string, boolean>>;
   /** 某个课程月份存下的逐条明细 */
   detail(courseMonth: string): Promise<PriorDetailRow[] | undefined>;
+  /** 这一轮（收集月份）里有人评价过、课时已定稿的任务 */
+  frozenLessons(collectionMonth: string): Promise<Array<{ studentName: string; teacherName: string; lessons: LessonRow[] }>>;
 }
 
-/** 课程月份 M 的反馈在 M+1 月收集；M+1 月过完，M 就定稿。 */
+/** 课程月份 M 的反馈从 M 月生成名单起就能填（预填了反馈课程月份），晚交的到 M+1 月；M+1 月过完，M 就定稿。 */
 export function isFinalMonth(courseMonth: string, currentMonth: string): boolean {
   return currentMonth > courseMonthToCollectionMonth(courseMonth);
 }
@@ -96,19 +100,21 @@ export async function recomputeMonth(input: {
   if (existing?.status === "final" && !input.force) return "final";
 
   const priorMonths = Array.from({ length: STREAK_MONTHS }, (_, index) => shiftMonth(courseMonth, index - STREAK_MONTHS));
-  const [rawScheduleCsv, feedbackCsv, aliases, teacherNames, overrides, ...priorRows] = await Promise.all([
+  const collectionMonth = courseMonthToCollectionMonth(courseMonth);
+  const [rawScheduleCsv, feedbackCsv, aliases, teacherNames, overrides, frozen, ...priorRows] = await Promise.all([
     store.snapshot("schedule", courseMonth),
-    store.snapshot("feedback", courseMonthToCollectionMonth(courseMonth)),
+    store.snapshot("feedback", collectionMonth),
     store.aliases(),
     store.teacherNames(),
     store.courseTypeOverrides(),
+    store.frozenLessons(collectionMonth),
     ...priorMonths.map((month) => store.detail(month)),
   ]);
   if (!rawScheduleCsv || !feedbackCsv) return "missing-input";
 
-  // 只把「课程」交给评分：咨询、考试、会议这类课表占位不算老师总课时，也不参与学生权重。
-  // 课程类型设定一改，过滤后的课表就变，下面的哈希跟着变，未定稿月份会自动重算。
-  const scheduleCsv = keepCourseLessons(rawScheduleCsv, overrides).csv;
+  // 评价过的学生-老师按评价时的课算权重；再只把「课程」交给评分：咨询、考试、会议这类课表占位不算老师总课时，
+  // 也不参与学生权重。课程类型设定一改，过滤后的课表就变，下面的哈希跟着变，未定稿月份会自动重算。
+  const scheduleCsv = keepCourseLessons(applyFrozenLessons(rawScheduleCsv, frozen), overrides).csv;
   const priorDetails = priorRows.map((rows) =>
     (rows ?? []).filter((row) => Object.values(row.scores).includes(4)).map(({ student, teacher, matched, scores }) => ({ student, teacher, matched, scores })),
   );

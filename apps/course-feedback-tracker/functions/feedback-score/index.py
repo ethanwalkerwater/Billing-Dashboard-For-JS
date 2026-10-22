@@ -312,6 +312,10 @@ def compute_month(event: Dict[str, object]) -> Dict[str, object]:
                 output_dir=folder / "out",
                 name_map_csv=name_map,
                 dedupe_keep=str(event.get("dedupeKeep") or "last"),
+                # 答卷快照已经按「反馈课程月份」筛好了这一轮（月中提前交的也在里面），
+                # 不能再让脚本按「提交月 = 课程月 + 1」筛一遍，所以给一个包住所有提交时间的窗口。
+                feedback_start_date="2000-01-01",
+                feedback_end_date="2999-12-31",
             )
             summary_rows, detail_rows = result["summary_rows"], result["detail_rows"]
             meta = result["run_meta"]

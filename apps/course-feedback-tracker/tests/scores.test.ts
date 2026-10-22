@@ -14,6 +14,7 @@ function memoryStore(snapshots: Record<string, string>) {
     teacherNames: async () => ["应雁心"],
     courseTypeOverrides: async () => new Map(),
     detail: async () => undefined,
+    frozenLessons: async () => [],
   };
   return { store, results };
 }

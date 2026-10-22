@@ -5,21 +5,25 @@
  *  1. 教务前端 `app.callFunction({ name: 'feedback-api', data: { action } })`，带 CloudBase 登录身份；
  *  2. HTTP 触发：`GET /t/:token` 学生扫码跳转、`POST /webhooks/feishu` 答卷事件。
  *
- * 没有定时对账：答卷库只有工作台在看，工作台打开时自动刷新一次就够了，定时跑只是白耗资源点。
+ * 答卷怎么进库：飞书答卷表有变化时推事件（Webhook），只处理受影响的那几轮；每天凌晨定时对账一次兜底
+ * （漏掉的事件、到期定稿）；工作台「刷新反馈」手动补一次。打开工作台只读库，不再每次去飞书拉。
  *
  * 任务列表、筛选、改状态和导出都由前端经 PostgREST + RLS 直接读写 feedback_tasks，
  * 不走这个函数——函数只负责需要飞书密钥或公开访问的那几件事。
  */
 import cloudbase from "@cloudbase/node-sdk";
 
-import { collectionMonthToCourseMonth, shiftMonth } from "../../src/domain/month";
+import { collectionMonthToCourseMonth, courseMonthToCollectionMonth, shiftMonth } from "../../src/domain/month";
 import { buildPrefilledFormUrl } from "../../src/domain/form-url";
 import { buildFeedbackCsv, buildScheduleCsv } from "../../src/server/export/csv";
 import { FeishuClient } from "../../src/server/feishu/client";
 import { loadFeishuConfig } from "../../src/server/feishu/config";
 import { parseStudentRecord } from "../../src/server/feishu/parsers";
 import { generateMonthlyTasks } from "../../src/server/sync/generate-tasks";
-import { reconcileResponses } from "../../src/server/sync/reconcile-responses";
+import { collectionMonthOf, listResponseRecords, reconcileResponses } from "../../src/server/sync/reconcile-responses";
+import { parseFeedbackResponse } from "../../src/server/feishu/parsers";
+import { isFrozen } from "../../src/server/tasks/reconcile";
+import type { FeishuRecord } from "../../src/server/feishu/types";
 import { LIVE_SCORES_FROM, recomputeMonth } from "../../src/server/scores/recompute";
 import type { PriorDetailRow, ScoreRequest, ScoreResponse, ScoreStore, StoredResult } from "../../src/server/scores/recompute";
 import { RdbFeedbackTaskRepository, SCORE_RESULTS_TABLE, SNAPSHOTS_TABLE, TASKS_TABLE } from "../../src/shared/rdb";
@@ -41,6 +45,12 @@ interface HttpEvent {
 
 interface CallEvent {
   action?: string;
+/** CloudBase 定时触发器的事件：{ Type: "Timer", TriggerName, Time } */
+interface TimerEvent {
+  Type?: string;
+  TriggerName?: string;
+}
+
   collectionMonth?: string;
   /** recompute-scores：手动重算的课程月份 */
   courseMonth?: string;
@@ -89,6 +99,10 @@ const scoreStore: ScoreStore = {
 
 async function computeScores(request: ScoreRequest): Promise<ScoreResponse> {
   const response = await app.callFunction({ name: "feedback-score", data: request as never });
+  frozenLessons: async (collectionMonth) =>
+    (await repository().listByCollectionMonth(collectionMonth))
+      .filter(isFrozen)
+      .map((task) => ({ studentName: task.studentName, teacherName: task.teacherCanonicalName, lessons: task.lessons ?? [] })),
   return response.result as ScoreResponse;
 }
 
@@ -96,31 +110,53 @@ function recompute(courseMonth: string, force = false) {
   return recomputeMonth({ store: scoreStore, compute: computeScores, courseMonth, currentMonth: currentShanghaiMonth(), force });
 }
 
-/**
- * 刷新某个收集月份的答卷后：重算它对应的课程月份（答卷没变就跳过）。
- * 如果上一个课程月份还没定稿（它的收集月份刚过完），再把上个月的答卷拉一遍、算一次并定稿——每月只发生一次。
- */
-async function refreshScoresAfterSync(collectionMonth: string) {
+/** 对账后重算这几轮对应的课程月份（输入没变就跳过，不调评分函数）。 */
+async function recomputeRounds(collectionMonths: Iterable<string>) {
   const scores: Record<string, string> = {};
-  const courseMonth = collectionMonthToCourseMonth(collectionMonth);
-  scores[courseMonth] = await recompute(courseMonth);
-  const previous = shiftMonth(courseMonth, -1);
-  const stored = await scoreStore.result(previous);
-  if (
-    collectionMonth === currentShanghaiMonth() &&
-    previous >= LIVE_SCORES_FROM &&
-    stored?.status !== "final" &&
-    (await scoreStore.snapshot("schedule", previous))
-  ) {
-    const { client, config } = feishu();
-    await reconcileResponses({ client, config, repository: repository(), collectionMonth: courseMonth });
-    scores[previous] = await recompute(previous);
+  for (const collectionMonth of collectionMonths) {
+    const courseMonth = collectionMonthToCourseMonth(collectionMonth);
+    scores[courseMonth] = await recompute(courseMonth);
   }
   return scores;
 }
 
 function repository() {
   return new RdbFeedbackTaskRepository(db());
+}
+
+/** 还在收集的两轮：本月课程（月中就能提前评）和上月课程（晚交的）。 */
+function openRounds(): string[] {
+  const current = currentShanghaiMonth();
+  return [current, shiftMonth(current, 1)];
+}
+
+/**
+ * 课程月份 M 在 M+2 月初定稿（M+1 月过完，晚交的也收齐了），每月只发生一次。
+ * 名单可能是 M 月中提前生成的，课表快照还是当时的计划，所以定稿前重新生成一次名单：
+ * 没人评的任务跟上实际课表、课表快照换成实际上过的课（老师总课时用它）；评过的任务课时已定稿，不动。
+ */
+async function finalizeClosingMonth(records: FeishuRecord[]) {
+  const closing = shiftMonth(currentShanghaiMonth(), -2);
+  if (closing < LIVE_SCORES_FROM) return {};
+  const stored = await scoreStore.result(closing);
+  if (stored?.status === "final" || !(await scoreStore.snapshot("schedule", closing))) return {};
+  const { client, config } = feishu();
+  const collectionMonth = courseMonthToCollectionMonth(closing);
+  await generateMonthlyTasks({ client, config, repository: repository(), collectionMonth, publicTokenPepper: requireEnv("PUBLIC_TOKEN_PEPPER") });
+  await reconcileResponses({ client, config, repository: repository(), collectionMonth, records });
+  return { [closing]: await recompute(closing) };
+}
+
+/** 全量对账这几轮（整张答卷表读一次），重算分数，顺带检查要不要定稿。工作台「刷新反馈」和每日定时任务用。 */
+async function syncRounds(collectionMonths: string[]) {
+  const { client, config } = feishu();
+  const records = await listResponseRecords(client, config);
+  const results = [];
+  for (const collectionMonth of collectionMonths) {
+    results.push(await reconcileResponses({ client, config, repository: repository(), collectionMonth, records }));
+  }
+  const scores = { ...(await recomputeRounds(collectionMonths)), ...(await finalizeClosingMonth(records)) };
+  return { results, scores };
 }
 
 function feishu() {
@@ -196,6 +232,7 @@ async function handlePublicRedirect(token: string) {
   return { statusCode: 302, headers: { location: target, "cache-control": "no-store" }, body: "" };
 }
 
+    courseMonth: task.courseMonth,
 async function handleFeishuWebhook(event: HttpEvent) {
   const raw = decodeBody(event);
   const verified = verifyFeishuEvent({
@@ -207,18 +244,32 @@ async function handleFeishuWebhook(event: HttpEvent) {
   if (!verified.ok) return jsonResponse(401, { ok: false, error: verified.reason });
   if (verified.challenge) return jsonResponse(200, { challenge: verified.challenge });
 
-  const recordIds = extractRecordIds(verified.payload);
   const { client, config } = feishu();
-  // 事件里的业务字段不可信，只拿 record id 回读飞书原始记录。
-  const result = await reconcileResponses({
-    client,
-    config,
-    repository: repository(),
-    // 事件推的是刚提交的答卷，按提交时间归到当前收集月份。
-    collectionMonth: currentShanghaiMonth(),
-    onlyRecordIds: recordIds.length > 0 ? recordIds : undefined,
-  });
-  return jsonResponse(200, { ok: true, ...summarize(result) });
+  // 订阅的是整个多维表格，其他表（统计表、学员信息…）的改动直接忽略。
+  const tableId = verified.payload?.event?.table_id;
+  const recordIds = extractRecordIds(verified.payload);
+  if ((tableId && tableId !== config.responseTableId) || recordIds.length === 0) return jsonResponse(200, { ok: true, ignored: true });
+
+  // 事件里的业务字段不可信，只拿 record id，回读整张答卷表后按轮次全量对账（幂等，飞书重推也没关系）。
+  // 受影响的轮次 = 这些答卷现在属于的那轮 + 库里原来记的那轮（删掉的、改了月份的要回原来那轮腾位置）。
+  const records = await listResponseRecords(client, config);
+  const ids = new Set(recordIds);
+  const rounds = new Set(await repository().listResponseMonths(recordIds));
+  for (const record of records) {
+    if (!ids.has(record.record_id)) continue;
+    try {
+      rounds.add(collectionMonthOf(parseFeedbackResponse(record)));
+    } catch {
+      // 字段坏了的答卷在全量对账里会标 exception，这里不用管它属于哪轮。
+    }
+  }
+  const results = [];
+  for (const collectionMonth of rounds) {
+    results.push(summarize(await reconcileResponses({ client, config, repository: repository(), collectionMonth, records })));
+  }
+  // 不在这里定稿：定稿要重读整张课表（约 40 秒），飞书要求 3 秒内回 200，交给每日定时任务。
+  const scores = await recomputeRounds(rounds);
+  return jsonResponse(200, { ok: true, rounds: results, scores });
 }
 
 function extractRecordIds(payload: FeishuEventEnvelope | undefined): string[] {
@@ -261,7 +312,7 @@ function currentShanghaiMonth(): string {
     .slice(0, 7);
 }
 
-export async function main(event: HttpEvent & CallEvent) {
+export async function main(event: HttpEvent & CallEvent & TimerEvent) {
   const isHttp = typeof event.httpMethod === "string";
   try {
     // ---- HTTP 入口 ----
@@ -309,10 +360,9 @@ export async function main(event: HttpEvent & CallEvent) {
         return { ok: true, actorId: uid, ...summary, scores };
       }
       case "sync-responses": {
-        const { client, config } = feishu();
-        const collectionMonth = event.collectionMonth ?? currentShanghaiMonth();
-        const result = await reconcileResponses({ client, config, repository: repository(), collectionMonth });
-        const scores = await refreshScoresAfterSync(collectionMonth);
+        // 工作台传当前查看的那一轮；老师评分页不传，对账所有还在收集的轮次。
+        const { results, scores } = await syncRounds(event.collectionMonth ? [event.collectionMonth] : openRounds());
+        const [result] = results;
         return { ok: true, actorId: uid, ...summarize(result), outcomes: result.outcomes, scores };
       }
       case "recompute-scores": {
@@ -366,6 +416,14 @@ export async function main(event: HttpEvent & CallEvent) {
     console.error("[feedback-api]", message);
     // 不把飞书原始报文或密钥回传给调用方。
     // HTTP 入口必须回 { statusCode, body }，否则网关会把它当成函数崩溃返回 500。
+    // ---- 每日定时对账（cloudbaserc.json 的 timer 触发器）----
+    if (event.Type === "Timer") {
+      const { results, scores } = await syncRounds(openRounds());
+      const summary = { ok: true, rounds: results.map(summarize), scores };
+      console.log("[feedback-api] 定时对账", JSON.stringify(summary));
+      return summary;
+    }
+
     if (isHttp) return jsonResponse(500, { ok: false, error: "INTERNAL_ERROR" });
     return { ok: false, error: message };
   }
