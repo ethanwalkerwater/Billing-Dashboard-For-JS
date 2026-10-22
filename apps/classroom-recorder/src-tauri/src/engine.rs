@@ -118,27 +118,25 @@ pub fn pre_lesson<'a>(now: i64, lessons: &'a [Lesson], ended: &HashSet<String>) 
         .min_by_key(|l| l.start_at)
 }
 
-/// 下次拉课表要等多久（ms）。拉课表每次要花云函数约 2 秒，老师的 App 常年挂着，所以按需拉而不是死循环：
-/// 报告生成中每分钟（报告好了云端还会飞书私信老师）；否则每 30 分钟兜底，晚 23 点到早 7 点（北京时间）不拉；
-/// 每节课开录前再拉一次（开课前 10 分钟），保证自动开录用的是最新课表。打开窗口、登录、睡醒另有立即拉取。
-pub fn fetch_wait(now: i64, lessons: &[Lesson], processing: bool) -> i64 {
-    const IDLE: i64 = 30 * MIN;
-    const HOUR: i64 = 60 * MIN;
-    if processing {
-        return MIN;
+const HOUR: i64 = 60 * MIN;
+
+/// t 之后的第一个北京时间早上 7 点（每天自动拉一次课表的时间点）
+pub fn next_morning(t: i64) -> i64 {
+    const DAY: i64 = 24 * HOUR;
+    let local = t + 8 * HOUR;
+    let seven = local - local.rem_euclid(DAY) + 7 * HOUR - 8 * HOUR;
+    if seven > t { seven } else { seven + DAY }
+}
+
+/// 下次自动拉课表要等多久（ms）。课表一般提前几周就排好，拉一次要花云函数约 2 秒，所以平时不轮询：
+/// 打开主窗口、登录、手动「刷新」时拉，另外每天早上 7 点（北京时间）拉一次；last_ok = 上次拉成功的时间。
+/// 刚下课、报告还在生成的 3 小时内每 3 分钟拉一次，报告好了好弹通知（云端也会飞书私信老师）。
+pub fn fetch_wait(now: i64, last_ok: i64, lessons: &[Lesson]) -> i64 {
+    if lessons.iter().any(|l| l.status == "processing" && now < l.end_at + 3 * HOUR) {
+        return 3 * MIN;
     }
-    let hour = (now + 8 * HOUR).rem_euclid(24 * HOUR) / HOUR;
-    let mut next = if (7..23).contains(&hour) {
-        now + IDLE
-    } else {
-        // 夜里直接等到早上 7 点
-        now + (7 * HOUR - (now + 8 * HOUR).rem_euclid(24 * HOUR)).rem_euclid(24 * HOUR)
-    };
-    let empty = HashSet::new();
-    if let Some(l) = lessons.iter().filter(|l| eligible(l, &empty) && l.start_at - PRE > now).min_by_key(|l| l.start_at) {
-        next = next.min(l.start_at - PRE);
-    }
-    (next - now).max(MIN)
+    let due = next_morning(last_ok);
+    if now >= due { 5 * MIN } else { due - now } // 上次没拉成功：5 分钟后再试
 }
 
 /// 现在能不能自动更新（更新会重启 App）：没在录，且前后 30 分钟内没有要自动录的课。
@@ -160,6 +158,10 @@ pub struct Config {
     pub device: String,
     /// 设置里关掉了屏幕边上的「随时录制」悬浮按钮
     pub hide_fab: bool,
+    /// 老师在 App 里删掉的课：编号 → 删除时间（只在本机隐藏，不改课表；30 天后清掉）
+    pub hidden: HashMap<String, i64>,
+    /// 删掉时云端已有录音、还没通知云端放弃的课（断网时下次拉课表再补发）
+    pub discard: Vec<String>,
 }
 
 pub struct Active {
@@ -269,7 +271,7 @@ pub struct Core {
     pub rec: Sender<Msg>,
     pub shared: Arc<Shared>,
     pub kick_fetch: tokio::sync::Notify,
-    /// 上次拉课表的时间（ms），主窗口获得焦点时据此节流
+    /// 上次拉成功课表的时间（ms）：主窗口获得焦点时据此节流，睡醒时据此判断是否错过了早上那次
     pub last_fetch: std::sync::atomic::AtomicI64,
     ui: Mutex<TrayUi>,
 }
@@ -493,8 +495,9 @@ impl Core {
         let now = now_ms();
         {
             let mut g = self.lock();
-            if g.last_tick != 0 && now - g.last_tick > 15_000 {
-                self.kick_fetch.notify_one(); // 电脑刚睡醒
+            // 电脑刚睡醒、睡着时错过了每天早上那次拉课表（睡眠期间计时器不走）
+            if g.last_tick != 0 && now - g.last_tick > 15_000 && now >= next_morning(self.last_fetch.load(Ordering::Relaxed)) {
+                self.kick_fetch.notify_one();
             }
             g.last_tick = now;
             self.default_name(&mut g, now, false);
@@ -782,6 +785,42 @@ impl Core {
         Ok(())
     }
 
+    /// 老师在 App 里删掉一节课：只在本机隐藏，不改课表。正在录就停掉，本机录音整个删掉（不再上传、不出总结）；
+    /// 云端已收到部分录音的，记进 discard，由 cloud::discard_pending 通知云端放弃（否则云端过两小时会用已有分段出报告）。
+    pub fn delete_lesson(self: &Arc<Self>, id: &str) -> Result<(), String> {
+        let dir = self.lesson_dir(id).ok_or("课程编号无效")?;
+        let now = now_ms();
+        {
+            let mut g = self.lock();
+            if g.active.as_ref().is_some_and(|a| a.lesson.id == id) {
+                self.stop_session(&mut g, now);
+                g.processing_until = None;
+            }
+            if g.naming.as_ref().is_some_and(|(n, _)| n == id) {
+                g.naming = None;
+            }
+            let cloud = dir.exists() || g.merged().iter().any(|l| l.id == id && matches!(l.status.as_str(), "recording" | "processing"));
+            if dir.exists() {
+                std::fs::remove_dir_all(&dir).map_err(|e| format!("删除本机录音失败：{e}"))?;
+            }
+            g.orphans.retain(|(o, _)| o != id);
+            g.ended.remove(id);
+            g.lessons.retain(|l| l.id != id);
+            g.adhoc.remove(id);
+            if g.toast.as_ref().is_some_and(|t| t["lessonId"] == id) {
+                g.toast = None;
+            }
+            g.cfg.hidden.retain(|_, t| now - *t < 30 * 24 * HOUR);
+            g.cfg.hidden.insert(id.into(), now);
+            if cloud && !g.cfg.discard.iter().any(|d| d == id) {
+                g.cfg.discard.push(id.into());
+            }
+            self.save_cfg(&g.cfg);
+        }
+        self.publish();
+        Ok(())
+    }
+
     pub fn with_active(self: &Arc<Self>, f: impl FnOnce(&Core, &mut Inner, i64)) {
         {
             let mut g = self.lock();
@@ -867,7 +906,7 @@ impl Core {
                 return;
             }
             let before: HashMap<String, String> = g.merged().into_iter().map(|l| (l.id, l.status)).collect();
-            g.lessons = lessons;
+            g.lessons = lessons.into_iter().filter(|l| !g.cfg.hidden.contains_key(&l.id)).collect();
             for l in g.merged() {
                 let (true, Some(summary)) = (l.status == "done" && before.get(&l.id).is_some_and(|s| s == "processing"), &l.summary) else { continue };
                 let student = l.title.rsplit(" · ").next().unwrap_or(&l.title);
@@ -950,19 +989,17 @@ mod tests {
 
     #[test]
     fn fetch_schedule() {
-        // T0 是北京时间白天；课在 2 小时后 → 30 分钟兜底；课在 25 分钟后 → 开课前 10 分钟拉
-        let far = vec![lesson("a", T0 + 120 * MIN, 60, "upcoming")];
-        assert_eq!(fetch_wait(T0, &far, false), 30 * MIN);
-        let soon = vec![lesson("a", T0 + 25 * MIN, 60, "upcoming"), lesson("x", T0 + 12 * MIN, 60, "cancelled")];
-        assert_eq!(fetch_wait(T0, &soon, false), 15 * MIN);
-        // 刚在开课前 10 分钟拉过：不会对同一节课再拉，至少隔 1 分钟
-        assert_eq!(fetch_wait(T0 + 15 * MIN + 1, &soon, false), 30 * MIN);
-        assert_eq!(fetch_wait(T0, &soon, true), MIN);
-        // 北京时间 23:30 → 等到 7:00；7:20 的课 7:00 就拉过了；6:50 的早课在 6:40 拉
-        let night = T0 - 16 * 60 * MIN + 23 * 60 * MIN + 30 * MIN;
-        assert_eq!(fetch_wait(night, &[], false), 450 * MIN);
-        assert_eq!(fetch_wait(night, &[lesson("m", night + 470 * MIN, 60, "upcoming")], false), 450 * MIN);
-        assert_eq!(fetch_wait(night, &[lesson("m", night + 440 * MIN, 60, "upcoming")], false), 430 * MIN);
+        // T0 = 北京时间 16:00：刚拉过 → 等到明早 7:00（15 小时）
+        assert_eq!(fetch_wait(T0, T0, &[]), 15 * 60 * MIN);
+        // 昨天 16:00 拉过、今早 7:00 没拉成（关机）→ 已过期，5 分钟后重试
+        assert_eq!(fetch_wait(T0, T0 - 24 * 60 * MIN, &[]), 5 * MIN);
+        // 北京时间 6:00 拉过 → 当天 7:00 还要再拉一次
+        assert_eq!(next_morning(T0 - 10 * 60 * MIN), T0 - 9 * 60 * MIN);
+        assert_eq!(next_morning(T0 - 9 * 60 * MIN), T0 + 15 * 60 * MIN);
+        // 刚下课在出报告：每 3 分钟；下课 3 小时后还没好（多半失败了）不再盯
+        let p = vec![lesson("a", T0 - 60 * MIN, 50, "processing")];
+        assert_eq!(fetch_wait(T0, T0, &p), 3 * MIN);
+        assert_eq!(fetch_wait(T0 + 3 * 60 * MIN, T0 + 3 * 60 * MIN, &p), 12 * 60 * MIN);
     }
 
     #[test]

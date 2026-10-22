@@ -85,11 +85,13 @@ body.fab-page{padding:10px;display:flex;justify-content:flex-end}
 
 /* ---------- 通知窗口 ---------- */
 body.toast-page{padding:12px 20px 48px}
-.toast{width:360px;background:var(--surface);border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow);padding:12px 14px;
+.toast{width:360px;background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:12px 14px;
   transition:transform .45s cubic-bezier(.2,.8,.2,1),opacity .3s}
 .toast.hidden{transform:translateX(120%);opacity:0;pointer-events:none}
 .toast .head{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted)}
 .toast .head .ago{margin-left:auto}
+.toast .head .x{width:22px;height:22px;margin:-2px -4px -2px 0;border-radius:6px;display:grid;place-items:center;color:var(--faint);font-size:16px;line-height:1}
+.toast .head .x:hover{background:var(--surface-2);color:var(--text)}
 .appicon{width:20px;height:20px;border-radius:6px;background:linear-gradient(135deg,#4c7dff,#2f56d9);display:grid;place-items:center;color:#fff;flex:none}
 .appicon svg{width:12px;height:12px}
 .toast h4{margin:8px 0 2px;font-size:14px}
@@ -105,6 +107,8 @@ body.toast-page{padding:12px 20px 48px}
 .titlebar.mac{padding-left:78px}
 .titlebar .name{font-weight:600}
 .titlebar .who{margin-left:auto;font-size:12px;color:var(--muted)}
+.titlebar .who.err{color:var(--rec)}
+.iconbtn.busy svg{animation:spin .8s linear infinite}
 .iconbtn{width:28px;height:28px;border-radius:8px;display:grid;place-items:center;color:var(--muted)}
 .iconbtn:hover{background:var(--line);color:var(--text)}
 .iconbtn svg{width:16px;height:16px}
@@ -136,7 +140,20 @@ body.toast-page{padding:12px 20px 48px}
 .st.cancelled{border:2px dashed var(--line)}
 
 .detail{overflow:auto;padding:26px 32px 40px}
-.detail h2{margin:0;font-size:22px;letter-spacing:-.2px}
+.detail h2{margin:0;font-size:22px;letter-spacing:-.2px;min-width:0}
+.dhead{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.del{flex:none;margin-top:3px;padding:4px 10px;border-radius:8px;font-size:12px;color:var(--faint)}
+.del:hover{background:var(--rec-soft);color:var(--rec)}
+.primary.danger{background:var(--rec)}
+.replace{position:fixed;z-index:10;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:4px;box-shadow:0 4px 14px rgba(16,24,40,.1);font-size:13px}
+.replace.hidden{display:none}
+.replace > button{padding:5px 10px;border-radius:7px;font-weight:600;color:var(--accent)}
+.replace > button:hover{background:var(--accent-soft)}
+.replace form{display:flex;align-items:center;gap:8px;margin:0;padding:4px 4px 4px 8px}
+.replace label{color:var(--muted);white-space:nowrap;max-width:220px;overflow:hidden;text-overflow:ellipsis}
+.replace input{width:140px;background:var(--surface);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:5px 8px;font:inherit;outline:none}
+.replace input:focus{border-color:var(--accent)}
+.replace .primary{padding:5px 12px;border-radius:8px}
 .meta{color:var(--muted);margin-top:4px;font-size:13px}
 .card{margin-top:22px;border:1px solid var(--line);border-radius:var(--radius);background:var(--surface)}
 .card-h{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--line);font-weight:600}

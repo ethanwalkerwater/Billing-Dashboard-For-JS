@@ -37,6 +37,7 @@ copy.addEventListener('click', async () => {
   copy.textContent = '已复制 ✓';
   close(900);
 });
+$('#toastClose').addEventListener('click', () => close(0));
 $('#toastView').addEventListener('click', () => {
   const t = S?.toast;
   if (!t) return;

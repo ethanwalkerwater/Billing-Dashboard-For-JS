@@ -113,6 +113,8 @@ const commands: Record<string, (a: Record<string, string & boolean>) => unknown>
   open_main: a => patch({ selectedLessonId: a.lessonId ?? s.selectedLessonId }),
   hide_toast: () => patch({ toast: null }),
   set_autostart: a => patch({ autostart: a.enabled }),
+  refresh_lessons: () => new Promise(r => setTimeout(r, 800)),
+  delete_lesson: a => patch({ lessons: s.lessons.filter(l => l.id !== a.lessonId) }),
 };
 
 // 声波电平约 8 Hz；麦克风异常时几乎为 0。

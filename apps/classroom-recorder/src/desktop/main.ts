@@ -5,6 +5,7 @@ import { esc, MIC_SVG, ordered, shanghaiToday, tick } from './format';
 const app = document.querySelector<HTMLDivElement>('#app')!;
 app.className = 'main';
 const mac = navigator.userAgent.includes('Mac');
+const REFRESH = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg>';
 const GEAR = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>';
 
 let S: AppState | null = null;
@@ -19,6 +20,14 @@ let saveTimer = 0;
 let saving: Promise<unknown> = Promise.resolve();
 const inOrder = (cmd: string, args: Record<string, unknown>) => (saving = saving.catch(() => {}).then(() => call(cmd, args)));
 let note: { id: string; text: string } | null = null; // 手动开录失败的原因，显示在按钮下
+let delAsk: string | null = null; // 正在确认删除的课
+let refreshing = false;
+let topErr = ''; // 刷新 / 删除失败的原因，在标题栏显示 5 秒
+const showErr = (text: string) => {
+  topErr = text;
+  render();
+  setTimeout(() => { if (topErr === text) { topErr = ''; render(); } }, 5000);
+};
 const last = { shell: '', list: '', detail: '', sheet: '' };
 
 const $ = <T extends HTMLElement>(s: string) => app.querySelector<T>(s);
@@ -43,7 +52,7 @@ function render() {
     }</div></div>`);
     return;
   }
-  if (swap('shell', app, `${titlebar(`<span class="who" data-tauri-drag-region>${esc(s.teacher.name)} · 飞书已登录</span><button class="iconbtn" data-act="settings" title="设置" aria-label="设置">${GEAR}</button>`)}
+  if (swap('shell', app, `${titlebar(`<span class="who" data-tauri-drag-region>${esc(s.teacher.name)} · 飞书已登录</span><button class="iconbtn" data-act="refresh" title="刷新课表" aria-label="刷新课表">${REFRESH}</button><button class="iconbtn" data-act="settings" title="设置" aria-label="设置">${GEAR}</button>`)}
     <div class="body"><div class="list" id="list"></div><div class="detail" id="detail"></div></div><div class="sheet hidden" id="sheet"></div>`)) {
     last.list = last.detail = last.sheet = '';
   }
@@ -55,6 +64,11 @@ function render() {
   }
   if (!lessonOf(sel)) sel = (rows.find(r => r.group === '今天') ?? rows[0])?.lesson.id ?? null;
 
+  const rb = $('[data-act="refresh"]');
+  rb?.classList.toggle('busy', refreshing);
+  const who = $('.who');
+  if (who) who.textContent = topErr || `${s.teacher.name} · 飞书已登录`;
+  who?.classList.toggle('err', !!topErr);
   renderList(rows);
   renderDetail(lessonOf(sel));
   renderSheet();
@@ -94,9 +108,14 @@ function renderList(rows: ReturnType<typeof ordered>) {
 function renderDetail(l: Lesson | undefined) {
   const s = S!;
   if (!l) return void swap('detail', $('#detail'), '<p class="empty">最近 7 天和明天都没有课</p>');
-  const head = `<h2>${esc(l.title)}${tag(l)}</h2><div class="meta num">${l.date.slice(5).replace('-', '/')} · ${esc(l.start)}–${esc(l.end)}${l.topic ? ` · ${esc(l.topic)}` : ''}</div>`;
+  const head = `<div class="dhead"><h2>${esc(l.title)}${tag(l)}</h2>${l.needsName ? '' : '<button class="del" data-act="delete">删除</button>'}</div><div class="meta num">${l.date.slice(5).replace('-', '/')} · ${esc(l.start)}–${esc(l.end)}${l.topic ? ` · ${esc(l.topic)}` : ''}</div>`;
   let body = '';
-  if (l.needsName) {
+  if (delAsk === l.id) {
+    const rec = l.status === 'recording' || l.status === 'processing';
+    body = `<div class="hero"><div class="sub lead">从菁仕课堂删除这节课？</div><div class="sub">只在 App 里删除，不会改课表${
+      l.status === 'recording' ? '；录音会立即停止并丢弃，不会生成总结' : rec ? '；录音和正在生成的总结都会放弃' : ''}</div>
+      <div class="acts"><button class="ghost" data-act="delete-cancel">取消</button><button class="primary danger" data-act="delete-ok">删除</button></div></div>`;
+  } else if (l.needsName) {
     body = `<div class="card"><div class="card-h">这段录音是关于什么？ <small>10 分钟不填按「课程」处理</small></div>
       <form class="name-form" data-name="${esc(l.id)}"><input name="topic" maxlength="30" placeholder="例如：教研周会、雅思口语试讲" autocomplete="off" aria-label="主题">
         <span class="seg" role="radiogroup" aria-label="类型"><button type="button" data-kind="adhoc" class="on">课程</button><button type="button" data-kind="meeting">会议</button></span>
@@ -144,9 +163,12 @@ function renderDetail(l: Lesson | undefined) {
 
 const copyLabel = (l?: Lesson) => (isMeeting(l) ? '复制纪要' : '复制总结');
 
+/** 高度跟着内容走。先设 auto 时内容会瞬间变矮，外层滚动位置被夹回去（Windows 上看得出输入框跳动），所以量完把滚动位置还原 */
 function fit(ta: HTMLTextAreaElement) {
+  const boxes = [$('#detail'), $('.body')].filter(Boolean).map(b => [b!, b!.scrollTop] as const);
   ta.style.height = 'auto';
   ta.style.height = `${ta.scrollHeight}px`;
+  for (const [b, top] of boxes) b.scrollTop = top;
   $('#cnt')!.textContent = `${ta.value.length} 字`;
 }
 
@@ -187,6 +209,7 @@ app.addEventListener('click', e => {
     if (sel) flushSave(sel);
     sel = row.dataset.id!;
     flash = null;
+    delAsk = null;
     return render();
   }
   if (t.classList.contains('sheet')) return setSheet(false);
@@ -195,6 +218,20 @@ app.addEventListener('click', e => {
   const lessonId = sel;
   if (act === 'login') void call('login');
   else if (act === 'settings') setSheet(true);
+  else if (act === 'refresh') {
+    if (refreshing) return;
+    refreshing = true;
+    topErr = '';
+    render();
+    call('refresh_lessons').catch(err => showErr(String(err))).finally(() => { refreshing = false; render(); });
+  }
+  else if (act === 'delete') { delAsk = lessonId; render(); }
+  else if (act === 'delete-cancel') { delAsk = null; render(); }
+  else if (act === 'delete-ok') {
+    delAsk = null;
+    if (lessonId) { clearTimeout(saveTimer); drafts.delete(lessonId); }
+    call('delete_lesson', { lessonId }).catch(err => showErr(String(err)));
+  }
   else if (act === 'close-settings') setSheet(false);
   else if (act === 'autostart') void call('set_autostart', { enabled: !S.autostart });
   else if (act === 'fab') void call('set_fab', { enabled: !S.fab });
@@ -240,7 +277,71 @@ app.addEventListener('submit', e => {
   void call('name_adhoc', { lessonId: form.dataset.name, topic, kind });
 });
 
-document.addEventListener('keydown', e => { if (e.key === 'Escape') setSheet(false); });
+// ---------- 划词全文替换：总结里同一个词反复识别错时，选中它，一次全部改掉 ----------
+const pop = document.body.appendChild(document.createElement('div'));
+pop.className = 'replace hidden';
+let picked = '';
+const hidePop = () => { picked = ''; pop.classList.add('hidden'); };
+
+app.addEventListener('mouseup', e => {
+  const ta = e.target as HTMLTextAreaElement;
+  if (ta.id !== 'sum') return;
+  setTimeout(() => {
+    const text = ta.value.slice(ta.selectionStart, ta.selectionEnd);
+    if (!text.trim() || text.length > 50 || text.includes('\n')) return hidePop();
+    picked = text;
+    const n = ta.value.split(text).length - 1;
+    pop.innerHTML = `<button data-r="open">全文替换 · ${n} 处</button>`;
+    pop.classList.remove('hidden');
+    pop.style.left = `${Math.max(8, Math.min(e.clientX - 20, innerWidth - pop.offsetWidth - 8))}px`;
+    pop.style.top = `${Math.min(e.clientY + 14, innerHeight - pop.offsetHeight - 8)}px`;
+  });
+});
+
+pop.addEventListener('mousedown', e => { if ((e.target as HTMLElement).tagName === 'BUTTON') e.preventDefault(); }); // 不让 textarea 丢掉选区
+pop.addEventListener('click', e => {
+  const r = (e.target as HTMLElement).closest<HTMLElement>('[data-r]')?.dataset.r;
+  const ta = $<HTMLTextAreaElement>('#sum');
+  if (!ta || !picked) return hidePop();
+  if (r === 'open') {
+    const n = ta.value.split(picked).length - 1;
+    pop.innerHTML = `<form><label>把 ${n} 处「${esc(picked)}」改成</label><input value="${esc(picked)}" aria-label="替换成"><button class="primary" data-r="go">全部替换</button></form>`;
+    const input = pop.querySelector('input')!;
+    pop.style.left = `${Math.max(8, Math.min(pop.offsetLeft, innerWidth - pop.offsetWidth - 8))}px`;
+    input.focus();
+    input.select();
+  }
+});
+pop.addEventListener('submit', e => {
+  e.preventDefault();
+  const ta = $<HTMLTextAreaElement>('#sum');
+  const to = pop.querySelector('input')!.value;
+  if (ta && picked && to !== picked) replaceAll(ta, picked, to);
+  hidePop();
+});
+
+/** 用 insertText 整段替换，Cmd/Ctrl+Z 能撤销；会触发 input，草稿和自动保存照常走 */
+function replaceAll(ta: HTMLTextAreaElement, from: string, to: string) {
+  const at = ta.selectionStart;
+  const before = ta.value.slice(0, at).split(from).length - 1; // 光标前有几处，替换后光标跟着挪
+  const next = ta.value.split(from).join(to);
+  const boxes = [$('#detail'), $('.body')].filter(Boolean).map(b => [b!, b!.scrollTop] as const);
+  ta.focus();
+  ta.select();
+  if (!document.execCommand('insertText', false, next)) {
+    ta.value = next;
+    ta.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+  const caret = at + before * (to.length - from.length);
+  ta.setSelectionRange(caret, caret + to.length);
+  for (const [b, top] of boxes) b.scrollTop = top;
+}
+
+document.addEventListener('mousedown', e => { if (!pop.contains(e.target as Node)) hidePop(); });
+app.addEventListener('input', e => { if ((e.target as HTMLElement).id === 'sum') hidePop(); });
+document.addEventListener('scroll', () => { if (!pop.contains(document.activeElement)) hidePop(); }, true);
+
+document.addEventListener('keydown', e => { if (e.key === 'Escape') { hidePop(); setSheet(false); } });
 window.addEventListener('beforeunload', () => { if (sel) flushSave(sel); });
 
 subscribe(s => {

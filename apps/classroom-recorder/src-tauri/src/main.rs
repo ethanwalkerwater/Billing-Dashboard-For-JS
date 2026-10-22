@@ -35,6 +35,20 @@ async fn logout(core: St<'_>) -> R {
     Ok(())
 }
 
+/// 手动刷新课表
+#[tauri::command]
+async fn refresh_lessons(core: St<'_>) -> R {
+    cloud::fetch_once(core.inner()).await
+}
+
+#[tauri::command]
+async fn delete_lesson(core: St<'_>, lesson_id: String) -> R {
+    core.delete_lesson(&lesson_id)?;
+    let c = core.inner().clone();
+    tauri::async_runtime::spawn(async move { cloud::discard_pending(&c).await });
+    Ok(())
+}
+
 #[tauri::command]
 async fn start_recording(core: St<'_>, lesson_id: String) -> R {
     core.start_recording(&lesson_id)
@@ -244,6 +258,8 @@ fn main() {
             get_state,
             login,
             logout,
+            refresh_lessons,
+            delete_lesson,
             start_recording,
             start_adhoc,
             name_adhoc,
