@@ -186,7 +186,7 @@ function renderSheet() {
       <select data-act="mic" aria-label="麦克风">${s.mics.map(m => `<option value="${esc(m)}"${m === s.mic ? ' selected' : ''}>${esc(m)}</option>`).join('')}</select></div>
     <div class="set"><div class="lab"><b>悬浮录制按钮</b><span>不在课表里的会议、试讲也能随时录</span></div><button class="switch${s.fab ? '' : ' off'}" data-act="fab" role="switch" aria-checked="${s.fab}" aria-label="悬浮录制按钮"></button></div>
     <div class="set"><div class="lab"><b>开机自动启动</b><span>关掉后，没打开 App 就不会自动录课</span></div><button class="switch${s.autostart ? '' : ' off'}" data-act="autostart" role="switch" aria-checked="${s.autostart}" aria-label="开机自动启动"></button></div>
-    <div class="set"><div class="lab"><b>版本 ${esc(s.version ?? '')}</b><span>${esc(updMsg || '有新版本时，会在没课的时候自动安装并重启，不用手动操作')}</span></div><button class="ghost sm" data-act="update"${updMsg === '正在检查…' ? ' disabled' : ''}>检查更新</button></div>
+    <div class="set"><div class="lab"><b>版本 ${esc(s.version ?? '')}</b><span>${esc(updMsg || '点「检查更新」，有新版本会自动下载并重启 App')}</span></div><button class="ghost sm" data-act="update"${updMsg.startsWith('正在检查') ? ' disabled' : ''}>检查更新</button></div>
     <div class="set"><div class="lab"><b>${esc(s.teacher!.name)}</b><span>飞书账号</span></div><button class="logout" data-act="logout">退出登录</button></div>
     <div class="foot"><button class="ghost" data-act="close-settings">完成</button></div>
   </div>`);
@@ -261,7 +261,7 @@ app.addEventListener('click', e => {
   }
   else if (act === 'rec') void call(recording() ? 'request_stop' : 'start_adhoc').catch(err => showErr(String(err)));
   else if (act === 'update') {
-    updMsg = '正在检查…';
+    updMsg = '正在检查，有新版本会下载并重启…';
     render();
     call<string>('check_update').then(m => { updMsg = m; }, err => { updMsg = String(err); }).finally(render);
   }

@@ -35,7 +35,7 @@ async fn logout(core: St<'_>) -> R {
     Ok(())
 }
 
-/// 设置里的「检查更新」：返回给老师看的一句话；有新版且空闲时直接安装重启
+/// 设置里的「检查更新」：返回给老师看的一句话；有新版且没在录课时直接安装重启
 #[tauri::command]
 async fn check_update(core: St<'_>) -> R<String> {
     update::check_now(core.inner()).await
@@ -338,7 +338,6 @@ fn main() {
                 }
             });
             tauri::async_runtime::spawn(cloud::fetch_loop(core.clone()));
-            tauri::async_runtime::spawn(update::update_loop(core.clone()));
             tauri::async_runtime::spawn(cloud::upload_loop(core));
             Ok(())
         })

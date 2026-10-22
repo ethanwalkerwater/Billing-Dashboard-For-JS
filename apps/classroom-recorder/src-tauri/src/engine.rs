@@ -139,12 +139,6 @@ pub fn fetch_wait(now: i64, last_ok: i64, lessons: &[Lesson]) -> i64 {
     if now >= due { 5 * MIN } else { due - now } // 上次没拉成功：5 分钟后再试
 }
 
-/// 现在能不能自动更新（更新会重启 App）：没在录，且前后 30 分钟内没有要自动录的课。
-pub fn update_idle(now: i64, lessons: &[Lesson], recording: bool) -> bool {
-    let empty = HashSet::new();
-    !recording && !lessons.iter().any(|l| eligible(l, &empty) && now >= l.start_at - 30 * MIN && now < l.end_at + AUTO_STOP)
-}
-
 // ---------- 状态 ----------
 
 #[derive(Serialize, Deserialize, Default)]
@@ -1001,17 +995,6 @@ mod tests {
         let p = vec![lesson("a", T0 - 60 * MIN, 50, "processing")];
         assert_eq!(fetch_wait(T0, T0, &p), 3 * MIN);
         assert_eq!(fetch_wait(T0 + 3 * 60 * MIN, T0 + 3 * 60 * MIN, &p), 12 * 60 * MIN);
-    }
-
-    #[test]
-    fn update_only_when_idle() {
-        let ls = vec![lesson("a", T0, 60, "upcoming"), lesson("c", T0 + 3 * 60 * MIN, 60, "cancelled")];
-        assert!(update_idle(T0 - 31 * MIN, &ls, false));
-        assert!(!update_idle(T0 - 29 * MIN, &ls, false));
-        assert!(!update_idle(T0 + 69 * MIN, &ls, false));
-        assert!(update_idle(T0 + 70 * MIN, &ls, false));
-        assert!(update_idle(T0 + 3 * 60 * MIN, &ls, false)); // 临时取消的课不挡更新
-        assert!(!update_idle(T0 - 2 * 60 * MIN, &ls, true)); // 正在随时录制
     }
 
     #[test]
