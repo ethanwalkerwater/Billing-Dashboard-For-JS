@@ -340,7 +340,7 @@ async function ownedPatch(id: string, session: Session, patch: Record<string, un
 
 async function getReport(token: string) {
   if (!/^[A-Za-z0-9_-]{32}$/.test(token)) return fail(404, "NOT_FOUND", "未找到这份课堂报告");
-  const [doc] = await pg<LessonDoc>("GET", LESSONS, `reportToken=${eq(token)}&stage=eq.done&limit=1&select=student,course,kind,teacherName,startAt,endAt,finish,report,gapMinutes`);
+  const [doc] = await pg<LessonDoc>("GET", LESSONS, `reportToken=${eq(token)}&stage=eq.done&limit=1&select=student,course,kind,teacherName,startAt,endAt,finish,report,gapMinutes,audioSec`);
   return doc ? json(200, L.reportData(doc)) : fail(404, "NOT_FOUND", "未找到这份课堂报告");
 }
 
@@ -445,7 +445,8 @@ async function runStep(doc: LessonDoc, step: L.Step): Promise<Partial<LessonDoc>
       CallbackUrl: `${requireEnv("API_BASE_URL")}/asr/callback?lesson=${encodeURIComponent(doc._id)}`,
     });
     if (!task.Data?.TaskId) throw new Error("腾讯云录音识别任务提交失败");
-    return { stage: "transcribing", mergedFileId: fileID, asrTaskId: task.Data.TaskId, gapMinutes: step.gapMinutes };
+    const audioSec = Math.round(parts.reduce((sum, part) => sum + part.length, 0) / L.AUDIO_BYTES_PER_SEC);
+    return { stage: "transcribing", mergedFileId: fileID, asrTaskId: task.Data.TaskId, gapMinutes: step.gapMinutes, audioSec };
   }
   if (step.action === "poll") {
     if (!doc.asrTaskId) return { stage: "queued" };
@@ -600,8 +601,12 @@ async function authenticateAdmin(event: HttpEvent): Promise<AdminSession | undef
 const STAGE_FILTER: Record<string, string> = { done: "eq.done", recording: "eq.recording", failed: "eq.failed", processing: "in.(queued,transcribing,summarizing)" };
 
 async function adminLessons(query: Record<string, string>) {
-  const filters = ["select=_id,student,course,kind,teacherName,startAt,endAt,stage,attempts,promptVersion", "order=startAt.desc", "limit=50"];
+  const filters = ["select=_id,student,course,kind,teacherName,startAt,endAt,audioSec,stage,attempts,promptVersion", "order=startAt.desc", "limit=50"];
   if (STAGE_FILTER[query.stage]) filters.push(`stage=${STAGE_FILTER[query.stage]}`);
+  if (query.kind === "meeting") filters.push("kind=eq.meeting");
+  if (query.kind === "lesson") filters.push("kind=in.(lesson,adhoc)");
+  if (query.teacher) filters.push(`teacherName=${eq(query.teacher.slice(0, 40))}`);
+  if (query.student) filters.push(`student=${eq(query.student.slice(0, 40))}`);
   if (/^\d+$/.test(query.before ?? "")) filters.push(`startAt=lt.${query.before}`);
   // 只留文字和数字：PostgREST 的 or=(…) 里逗号、括号、星号都有含义
   const q = (query.q ?? "").replace(/[^\p{L}\p{N}-]/gu, "").slice(0, 20);
@@ -609,9 +614,14 @@ async function adminLessons(query: Record<string, string>) {
   return json(200, { lessons: await pg("GET", LESSONS, filters.join("&")) });
 }
 
+/** 表头筛选的候选：上过课的「老师 × 学生」去重（视图 classroom_lesson_people） */
+async function adminPeople() {
+  return json(200, { people: await pg("GET", "classroom_lesson_people", "select=teacherName,student&limit=5000") });
+}
+
 async function adminLesson(id: string) {
   const [doc] = await pg<LessonDoc>("GET", LESSONS,
-    `_id=${eq(id)}&select=_id,student,course,kind,teacherName,startAt,endAt,stage,attempts,error,finish,mergedFileId,audioDeletedAt,transcript,summary,editedSummary,reportToken,promptVersion,gapMinutes`);
+    `_id=${eq(id)}&select=_id,student,course,kind,teacherName,startAt,endAt,stage,attempts,error,finish,mergedFileId,audioDeletedAt,transcript,summary,editedSummary,reportToken,promptVersion,gapMinutes,audioSec`);
   if (!doc) return fail(404, "LESSON_NOT_FOUND", "没有找到这节课");
   const { finish, mergedFileId, ...rest } = doc;
   return json(200, {
@@ -713,6 +723,7 @@ async function asrStatus(taskId: number) {
 async function adminRoute(method: string, path: string, event: HttpEvent, query: Record<string, string>, admin: AdminSession) {
   if (method === "GET" && path === "/admin/me") return json(200, { name: admin.name });
   if (method === "GET" && path === "/admin/lessons") return adminLessons(query);
+  if (method === "GET" && path === "/admin/people") return adminPeople();
   if (method === "GET" && path === "/admin/prompts") {
     const rows = await pg<PromptRow>("GET", PROMPTS, "order=version.desc&limit=30");
     return json(200, { versions: rows.length ? rows.map(withMeeting) : [await livePrompts()] });

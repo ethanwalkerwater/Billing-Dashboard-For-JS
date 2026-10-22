@@ -58,6 +58,13 @@ h2{font-size:15px;font-weight:600;margin:0}
 .tablewrap{overflow-x:auto}
 table{width:100%;border-collapse:collapse;min-width:640px}
 th{font-weight:500;color:var(--muted-fg);text-align:left;height:40px;padding:0 16px;border-bottom:1px solid var(--border);font-size:13px}
+.thf{position:relative;display:inline-flex;align-items:center;gap:2px;max-width:140px;height:28px;margin-left:-8px;padding:0 6px 0 8px;border-radius:6px;cursor:pointer;white-space:nowrap}
+.thf:hover{background:var(--muted);color:var(--fg)}
+.thf span{overflow:hidden;text-overflow:ellipsis}
+.thf svg{width:14px;height:14px;flex:none}
+.thf.on{background:var(--muted);color:var(--fg)}
+.thf select{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%}
+.thf:has(select:focus-visible){outline:2px solid var(--ring,var(--fg));outline-offset:1px}
 td{height:52px;padding:0 16px;border-bottom:1px solid var(--border)}
 tbody tr{cursor:pointer}
 tbody tr:hover{background:var(--muted)}

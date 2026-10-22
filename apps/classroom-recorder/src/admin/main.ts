@@ -7,7 +7,7 @@
 import './styles.css';
 
 type Stage = 'recording' | 'queued' | 'transcribing' | 'summarizing' | 'done' | 'failed';
-interface Row { _id: string; student: string; course: string; kind?: 'lesson' | 'adhoc' | 'meeting'; teacherName: string; startAt: number; endAt: number; stage: Stage; attempts: number; promptVersion: number | null }
+interface Row { _id: string; student: string; course: string; kind?: 'lesson' | 'adhoc' | 'meeting'; teacherName: string; startAt: number; endAt: number; audioSec?: number | null; stage: Stage; attempts: number; promptVersion: number | null }
 interface Detail extends Row {
   error?: string; transcript?: string; summary?: string; editedSummary?: string;
   mins: number; gapMinutes?: number; fileName: string; audioUrl: string | null; audioDeletedAt?: number | null; reportUrl: string | null;
@@ -32,6 +32,7 @@ const ICON = {
   search: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>',
   hist: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/></svg>',
   open: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg>',
+  chev: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m7 10 5 5 5-5"/></svg>',
   spark: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5 18 18M6 18l2.5-2.5M15.5 8.5 18 6"/></svg>',
 };
 
@@ -125,7 +126,12 @@ function route() {
 
 // ---------- 课程列表 ----------
 
-const list = { rows: [] as Row[], q: '', stage: 'all', more: false, seq: 0 };
+/** 表头筛选：空字符串 = 全部 */
+const list = { rows: [] as Row[], q: '', stage: '', kind: '', teacher: '', student: '', people: null as { teacherName: string; student: string }[] | null, more: false, seq: 0 };
+type FilterKey = 'stage' | 'kind' | 'teacher' | 'student';
+const FILTER_KEYS: FilterKey[] = ['teacher', 'student', 'kind', 'stage'];
+const STAGES = [['done', '已完成'], ['processing', '转写中'], ['recording', '录制中'], ['failed', '失败']];
+const KINDS = [['lesson', '课程'], ['meeting', '会议']];
 
 function status(row: Row): [string, string] {
   if (row.stage === 'done') return ['已完成', 'b-ok'];
@@ -137,12 +143,14 @@ const badge = (row: Row) => {
   const [text, cls] = status(row);
   return `<span class="badge ${cls}"><i></i>${text}</span>`;
 };
+/** 实际录到的时长；合并录音前还不知道 */
+const duration = (r: Row) => (r.audioSec == null ? '—' : r.audioSec < 60 ? `${r.audioSec || '&lt;1'} 秒` : `${Math.round(r.audioSec / 60)} 分钟`);
 
 async function loadLessons(append = false) {
   const seq = ++list.seq;
   const params = new URLSearchParams();
   if (list.q) params.set('q', list.q);
-  if (list.stage !== 'all') params.set('stage', list.stage);
+  for (const key of FILTER_KEYS) if (list[key]) params.set(key, list[key]);
   if (append && list.rows.length) params.set('before', String(list.rows.at(-1)!.startAt));
   const { lessons } = await api<{ lessons: Row[] }>(`/admin/lessons?${params}`);
   if (seq !== list.seq) return; // 搜索框连续输入：只认最后一次
@@ -151,27 +159,46 @@ async function loadLessons(append = false) {
   const rows = $('#rows');
   if (!rows) return;
   rows.innerHTML = list.rows.map((r) => `<tr data-id="${esc(r._id)}">
-      <td class="mono">${when(r.startAt)}</td><td class="who">${esc(r.student || '—')}</td><td>${esc(r.course)}${kindTag(r)}</td><td>${esc(r.teacherName)}</td>
-      <td class="mono muted">${Math.round((r.endAt - r.startAt) / 60_000) || "&lt;1"} 分钟</td><td>${badge(r)}</td></tr>`).join('')
-    || `<tr><td colspan="6" class="empty">${list.q || list.stage !== 'all' ? '没有符合条件的课程' : '还没有录过课'}</td></tr>`;
+      <td class="mono">${when(r.startAt)}</td><td class="who">${esc(r.student || '—')}</td><td>${esc(r.course)}${r.kind === 'adhoc' ? ' <span class="badge">随时录制</span>' : ''}</td>
+      <td>${r.kind === 'meeting' ? '会议' : '课程'}</td><td>${esc(r.teacherName)}</td><td class="mono muted">${duration(r)}</td><td>${badge(r)}</td></tr>`).join('')
+    || `<tr><td colspan="7" class="empty">${list.q || FILTER_KEYS.some((key) => list[key]) ? '没有符合条件的课程' : '还没有录过课'}</td></tr>`;
   $('#more').hidden = !list.more;
+}
+
+/** 表头里的筛选：原生下拉盖在列名上，选中后列名换成选中的值 */
+function filterTh(key: FilterKey, label: string, options: string[][]) {
+  const value = list[key];
+  const shown = options.find(([v]) => v === value)?.[1] ?? value;
+  return `<th><label class="thf${value ? ' on' : ''}"><span>${esc(value ? shown : label)}</span>${ICON.chev}
+    <select data-filter="${key}" aria-label="筛选${label}"><option value="">全部${label}</option>
+    ${options.map(([v, t]) => `<option value="${esc(v)}" ${v === value ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select></label></th>`;
+}
+
+function renderHead() {
+  const people = list.people ?? [];
+  const uniq = (values: string[]) => [...new Set(values.filter(Boolean))].sort((a, b) => a.localeCompare(b, 'zh-CN')).map((v) => [v, v]);
+  const teachers = uniq(people.map((p) => p.teacherName).concat(list.teacher));
+  // 选了老师就只列这位老师的学生
+  const students = uniq(people.filter((p) => !list.teacher || p.teacherName === list.teacher).map((p) => p.student).concat(list.student));
+  $('#thead').innerHTML = `<tr><th>上课时间</th>${filterTh('student', '学生', students)}<th>课程</th>${filterTh('kind', '类型', KINDS)}
+    ${filterTh('teacher', '老师', teachers)}<th>时长</th>${filterTh('stage', '状态', STAGES)}</tr>`;
 }
 
 async function showLessons() {
   main.innerHTML = `
     <div class="head"><h1>课程</h1>
-      <div class="row">
-        <label class="input search" for="q">${ICON.search}<input id="q" placeholder="学生、课程或老师" value="${esc(list.q)}" autocomplete="off"></label>
-        <select id="stage" class="input" aria-label="状态">
-          ${[['all', '全部状态'], ['done', '已完成'], ['processing', '转写中'], ['recording', '录制中'], ['failed', '失败']]
-            .map(([v, t]) => `<option value="${v}" ${list.stage === v ? 'selected' : ''}>${t}</option>`).join('')}
-        </select>
-      </div>
+      <label class="input search" for="q">${ICON.search}<input id="q" placeholder="学生、课程或老师" value="${esc(list.q)}" autocomplete="off"></label>
     </div>
     <div class="card tablewrap"><table>
-      <thead><tr><th>上课时间</th><th>学生</th><th>课程</th><th>老师</th><th>时长</th><th>状态</th></tr></thead>
-      <tbody id="rows"><tr><td colspan="6" class="empty"><span class="spin"></span></td></tr></tbody></table></div>
+      <thead id="thead"></thead>
+      <tbody id="rows"><tr><td colspan="7" class="empty"><span class="spin"></span></td></tr></tbody></table></div>
     <div class="more" id="more" hidden><button class="btn" id="loadMore">加载更多</button></div>`;
+  renderHead();
+  if (!list.people) {
+    api<{ people: { teacherName: string; student: string }[] }>('/admin/people')
+      .then(({ people }) => { list.people = people; if ($('#thead')) renderHead(); })
+      .catch(() => { /* 候选项拿不到不影响列表，下拉里只剩「全部」 */ });
+  }
   await loadLessons();
 }
 
@@ -559,8 +586,10 @@ document.addEventListener('input', (event) => {
 });
 document.addEventListener('change', (event) => {
   const target = event.target as HTMLInputElement;
-  if (target.id === 'stage') {
-    list.stage = target.value;
+  const filter = target.dataset.filter as FilterKey | undefined;
+  if (filter) {
+    list[filter] = target.value;
+    renderHead();
     loadLessons().catch((e: Error) => toast(e.message));
   }
   if (target.id === 'srcLesson') pr.lessonId = target.value;
