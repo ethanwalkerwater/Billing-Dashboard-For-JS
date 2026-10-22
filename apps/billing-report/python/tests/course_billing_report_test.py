@@ -34,8 +34,22 @@ class CourseBillingReportTest(unittest.TestCase):
         self.assertEqual(parse_cancellation_rate("0h-70%"), 0.7)
         self.assertEqual(parse_cancellation_rate("2h-50%"), 0.5)
         self.assertEqual(parse_cancellation_rate("6h-30%"), 0.3)
+        self.assertEqual(parse_cancellation_rate("提前取消-0%"), 0)
         self.assertIsNone(parse_cancellation_rate(""))
         self.assertIsNone(parse_cancellation_rate("请假"))
+
+    def test_free_cancellation_is_recognized_without_hiding_inconsistent_source_amounts(self):
+        for source_amount in ("0", "", "100"):
+            with self.subTest(source_amount=source_amount):
+                record = normalize_row(make_row(临时取消="提前取消-0%", 课程总价格=source_amount), 2)
+                self.assertTrue(record["isCancelled"])
+                self.assertEqual(record["cancellationRate"], 0)
+                self.assertEqual(record["expectedAmount"], 0)
+                self.assertEqual(record["amount"], 100 if source_amount == "100" else 0)
+                codes = {issue["code"] for issue in record["issues"]}
+                self.assertNotIn("unknown_cancellation", codes)
+                self.assertEqual("amount_mismatch" in codes, source_amount == "100")
+                self.assertEqual("missing_amount" in codes, source_amount == "")
 
     def test_student_view_keeps_teaching_type_and_cancellation_separate(self):
         records = [
