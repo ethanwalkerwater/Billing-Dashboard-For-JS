@@ -4,7 +4,8 @@
  * 两种入口：
  *  1. 教务前端 `app.callFunction({ name: 'feedback-api', data: { action } })`，带 CloudBase 登录身份；
  *  2. HTTP 触发：`GET /t/:token` 学生扫码跳转、`POST /webhooks/feishu` 答卷事件、
- *     `GET /auth/feishu/start|callback` 教务网站的飞书登录（反馈工作台、取消课程、雅思正向率共用）。
+ *     `GET /auth/feishu/start|callback` 教务网站的飞书登录（反馈工作台、取消课程、雅思正向率共用）、
+ *     `GET /site/teachers/stats` 官网服务器取老师累计评分和课堂体验（带 x-site-key）。
  *
  * 答卷怎么进库：飞书答卷表有变化时推事件（Webhook），只处理受影响的那几轮；每天凌晨定时对账一次兜底
  * （漏掉的事件、到期定稿）；工作台「刷新反馈」手动补一次。打开工作台只读库，不再每次去飞书拉。
@@ -30,7 +31,9 @@ import { LIVE_SCORES_FROM, recomputeMonth } from "../../src/server/scores/recomp
 import type { PriorDetailRow, ScoreRequest, ScoreResponse, ScoreStore, StoredResult } from "../../src/server/scores/recompute";
 import { RdbFeedbackTaskRepository, SCORE_RESULTS_TABLE, SNAPSHOTS_TABLE, TASKS_TABLE } from "../../src/shared/rdb";
 import type { PostgrestLike } from "../../src/shared/rdb";
-import { verifyFeishuEvent } from "./feishu-event";
+import { buildTeacherStats } from "../../src/server/site/teacher-stats";
+import type { ScoreResultRow } from "../../src/server/site/teacher-stats";
+import { headerValue, safeEqual, verifyFeishuEvent } from "./feishu-event";
 import { createServiceDb } from "./service-db";
 import type { FeishuEventEnvelope } from "./feishu-event";
 
@@ -309,6 +312,16 @@ function summarize(result: {
   };
 }
 
+// ---------- 官网老师数据（jsjy.asia/teachers 服务器每小时取一次） ----------
+
+/** 只认带 SITE_API_KEY 的请求（官网服务器端），返回已定稿月份的累计评分和课堂体验，不含学生信息。 */
+async function handleSiteTeachers(event: HttpEvent) {
+  const key = process.env.SITE_API_KEY ?? "";
+  if (key.length < 32 || !safeEqual(headerValue(event.headers ?? {}, "x-site-key"), key)) return jsonResponse(401, { ok: false, error: "UNAUTHORIZED" });
+  const rows = await selectRows<ScoreResultRow>(SCORE_RESULTS_TABLE, "course_month,status,source,teachers,preferences", { status: "final" });
+  return jsonResponse(200, { ok: true, generatedAt: new Date().toISOString(), ...buildTeacherStats(rows) });
+}
+
 // ---------- 飞书登录（教务网站共用，详见 src/server/feishu-login.ts） ----------
 
 type AdminRow = { user_id: string; feishu_open_id: string | null; active: boolean };
@@ -426,11 +439,12 @@ export async function main(event: HttpEvent & CallEvent & TimerEvent) {
     }
 
     // ---- HTTP 入口 ----
-    // CloudBase HTTP 访问服务会把注册的服务路径（/t、/webhooks、/auth）从 event.path 里剥掉，
+    // CloudBase HTTP 访问服务会把注册的服务路径（/t、/webhooks、/auth、/site）从 event.path 里剥掉，
     // 且 requestContext 里没有原始路径，所以这里按「方法 + 剩余路径形状」区分公开端点。
     // 登录用两段路径（/feishu/start），不会和单段的扫码 token 撞上。
     if (isHttp) {
-      const path = (event.path ?? "").replace(/^\/(t|webhooks|auth)(?=\/)/, "");
+      const path = (event.path ?? "").replace(/^\/(t|webhooks|auth|site)(?=\/)/, "");
+      if (event.httpMethod === "GET" && path === "/teachers/stats") return await handleSiteTeachers(event);
       if (event.httpMethod === "GET" && path === "/feishu/start") return handleLoginStart(event);
       if (event.httpMethod === "GET" && path === "/feishu/callback") {
         try {

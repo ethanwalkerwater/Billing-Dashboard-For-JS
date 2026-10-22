@@ -13,10 +13,8 @@
  *    2026-05 起用飞书答卷快照，更早的用老看板留下的 outputs/teacher-feedback/<月>/respondent_detail.csv。
  * 5. LIVE_SCORES_FROM 起的月份：走和云函数完全相同的 recomputeMonth，只是计算在本机跑。
  */
-import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 import { createServiceDb } from "../functions/feedback-api/service-db";
 import { canonicalizeName, courseMonthToCollectionMonth, shiftMonth } from "../src/domain";
@@ -25,7 +23,8 @@ import { FeishuClient } from "../src/server/feishu/client";
 import { loadFeishuConfig } from "../src/server/feishu/config";
 import { parseStudentRecord } from "../src/server/feishu/parsers";
 import { LIVE_SCORES_FROM, recomputeMonth } from "../src/server/scores/recompute";
-import type { PriorDetailRow, ScoreResponse, ScoreStore, StoredResult } from "../src/server/scores/recompute";
+import type { PriorDetailRow, ScoreStore, StoredResult } from "../src/server/scores/recompute";
+import { computeLocally } from "./compute-locally";
 import { ALIASES_TABLE, RdbFeedbackTaskRepository, SCORE_HISTORY_TABLE, SCORE_RESULTS_TABLE, SNAPSHOTS_TABLE, TASKS_TABLE } from "../src/shared/rdb";
 
 const APP = resolve(import.meta.dirname, "..");
@@ -60,19 +59,6 @@ const check = (result: { error: { message: string } | null }, what: string) => {
 const currentMonth = new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit" })
   .format(new Date())
   .slice(0, 7);
-
-/** 在本机跑 functions/feedback-score/index.py（和云函数同一份代码）。脚本会往 stdout 打日志，所以结果走临时文件。 */
-function computeLocally(event: Record<string, unknown>): ScoreResponse {
-  const dir = mkdtempSync(join(tmpdir(), "feedback-score-"));
-  writeFileSync(join(dir, "in.json"), JSON.stringify(event));
-  const run = spawnSync(
-    "python3",
-    ["-c", "import json,sys,index; json.dump(index.main(json.load(open(sys.argv[1]))), open(sys.argv[2], 'w'), ensure_ascii=False)", join(dir, "in.json"), join(dir, "out.json")],
-    { cwd: resolve(APP, "functions/feedback-score"), env: { ...process.env, PYTHONPATH: resolve(APP, "../teacher-feedback/scripts") }, encoding: "utf8" },
-  );
-  if (run.status !== 0) throw new Error(`评分脚本失败：${run.stderr}`);
-  return JSON.parse(readFileSync(join(dir, "out.json"), "utf8")) as ScoreResponse;
-}
 
 // ---- 1. 别名 ----
 check(

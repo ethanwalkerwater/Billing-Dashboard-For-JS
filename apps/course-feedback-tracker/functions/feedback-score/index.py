@@ -25,11 +25,14 @@ from monthly_teacher_feedback import (
     NUMERIC_SCORE_FIELDS,
     TEACHER_SCORE_EXPORT_METRICS,
     TEXT_FEEDBACK_FIELDS,
+    canonical_identity,
     finalize_teacher_score_rows,
     generate_monthly_feedback_report,
     load_name_map,
+    normalize_student,
     normalize_teacher,
     normalize_text,
+    parse_datetime,
 )
 
 # 与评分脚本默认一致的非授课课程类型（课时不计入权重）
@@ -221,6 +224,65 @@ def detail(rows: List[Dict[str, object]], show, adjustments: Optional[Dict[int, 
     ]
 
 
+# ---- 课堂体验（官网「上课风格 / 教学节奏 / 课堂互动」）----
+# 和评分同一套课时权重：同一学生-老师一个月算一份（学生、家长都填了取平均），权重 = 学生当月跟这位老师的课时。
+# 存「偏右侧选择 × 课时」的和、课时和、份数，累计时逐月相加，位置 = 加权和 ÷ 课时和 × 100。
+# 按选项开头的类型名认：快照里多选题用「、」连接，选项说明里本身也有「、」，不能按分隔符拆。
+PREFERENCE_AXES = {
+    "classStyle": ("上课风格", "风趣幽默型", "严谨专注型"),
+    "teachingPace": ("教学节奏", "高效紧凑型", "稳扎稳打型"),
+    "classroomInteraction": ("课堂互动", "系统讲授型", "互动引导型"),
+}
+
+
+def preference_choice(text: str, left: str, right: str) -> Optional[float]:
+    """0 = 左侧，1 = 右侧；多选题两边都选算 0.5；「其他」或没填返回 None。"""
+    has_left, has_right = left in text, right in text
+    if has_left and has_right:
+        return 0.5
+    if has_left or has_right:
+        return 1.0 if has_right else 0.0
+    return None
+
+
+def preferences(feedback_csv: Path, name_map: Path, detail_rows: List[Dict[str, object]], dedupe_keep: str, show) -> Dict[str, Dict[str, Dict[str, float]]]:
+    maps = load_name_map(name_map)
+    hours = {(row["teacher"], row["student"]): float(row["student_teacher_hours"]) for row in detail_rows if is_matched(row.get("matched"))}
+    # 和评分脚本一样，同一老师 + 学生 + 身份只留一份（first / last）
+    latest: Dict[tuple, tuple] = {}
+    with feedback_csv.open(encoding="utf-8-sig", newline="") as handle:
+        for row in csv.DictReader(handle):
+            teacher = normalize_teacher(row.get("老师姓名", ""), maps["teacher"])
+            student = normalize_student(row.get("学生姓名", ""), maps["student"])
+            submitted = parse_datetime(row.get("提交时间", ""))
+            if (teacher, student) not in hours or submitted is None:
+                continue
+            key = (teacher, student, canonical_identity(row.get("身份", "")))
+            current = latest.get(key)
+            if current is None or (submitted < current[0] if dedupe_keep == "first" else submitted > current[0]):
+                latest[key] = (submitted, row)
+
+    choices: Dict[tuple, Dict[str, List[float]]] = {}
+    for (teacher, student, _), (_, row) in latest.items():
+        for axis, (column, left, right) in PREFERENCE_AXES.items():
+            choice = preference_choice(row.get(column) or "", left, right)
+            if choice is not None:
+                choices.setdefault((teacher, student), {}).setdefault(axis, []).append(choice)
+
+    result: Dict[str, Dict[str, Dict[str, float]]] = {}
+    for (teacher, student), axes in choices.items():
+        weight = hours[(teacher, student)]
+        for axis, values in axes.items():
+            item = result.setdefault(show(teacher), {}).setdefault(axis, {"weighted": 0.0, "hours": 0.0, "responses": 0})
+            item["weighted"] += weight * sum(values) / len(values)
+            item["hours"] += weight
+            item["responses"] += len(values)
+    for axes in result.values():
+        for item in axes.values():
+            item["weighted"], item["hours"] = round(item["weighted"], 6), round(item["hours"], 6)
+    return result
+
+
 def overlay_history(teachers: List[Dict[str, object]], history: List[Dict[str, object]], show) -> List[Dict[str, object]]:
     """
     已公布月份：分数、课时、份数、覆盖率以定稿为准（排名据此重排），
@@ -279,6 +341,7 @@ def compute_month(event: Dict[str, object]) -> Dict[str, object]:
 
     adjustments: Dict[int, Dict[str, str]] = {}
     adjusted_summary: List[Dict[str, object]] = []
+    prefs: Dict[str, Dict[str, Dict[str, float]]] = {}
     with tempfile.TemporaryDirectory() as tmp:
         folder = Path(tmp)
         name_map = folder / "name_map.csv"
@@ -318,6 +381,7 @@ def compute_month(event: Dict[str, object]) -> Dict[str, object]:
                 feedback_end_date="2999-12-31",
             )
             summary_rows, detail_rows = result["summary_rows"], result["detail_rows"]
+            prefs = preferences(folder / "feedback.csv", name_map, detail_rows, str(event.get("dedupeKeep") or "last"), show)
             meta = result["run_meta"]
             stats = {
                 "feedbackRows": meta["feedback_stats"].get("feedback_rows_in_scope", 0),
@@ -352,7 +416,7 @@ def compute_month(event: Dict[str, object]) -> Dict[str, object]:
     teachers = with_rank(teachers)
     if event.get("history"):
         teachers = overlay_history(teachers, event["history"], show)
-    return {"teachers": teachers, "stats": stats, "detail": detail(detail_rows, show, adjustments)}
+    return {"teachers": teachers, "stats": stats, "detail": detail(detail_rows, show, adjustments), "preferences": prefs}
 
 
 def main(event, context=None):

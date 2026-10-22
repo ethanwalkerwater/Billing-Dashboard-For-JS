@@ -13,7 +13,8 @@ export const LIVE_SCORES_FROM = "2026-09";
 // 2：只按「课程」算课时和权重（咨询、考试、会议、自习、作业等不算），见 domain/lesson-kind.ts
 // 3：4 分算 5 分的两条规则（连续打 4 分、评分标准高），见 functions/feedback-score/index.py
 // 4：答卷按「反馈课程月份」归属（可以月中提前评）；评价过的学生-老师课时定稿（applyFrozenLessons）
-export const SCORE_ENGINE_VERSION = "4";
+// 5：顺带算官网「课堂体验」三项偏好（preferences），见 functions/feedback-score/index.py
+export const SCORE_ENGINE_VERSION = "5";
 
 /** 规则「连续 3 个月打 4 分」要看前几个月的逐条明细（存的是原始分） */
 export const STREAK_MONTHS = 3;
@@ -36,12 +37,16 @@ export interface ScoreRequest {
   priorDetails: PriorDetailRow[][];
 }
 
+/** 老师 → 偏好维度 → 「偏右侧选择 × 课时」的和、课时和、份数 */
+export type MonthPreferences = Record<string, Record<string, { weighted: number; hours: number; responses: number }>>;
+
 export interface ScoreResponse {
   ok: boolean;
   error?: string;
   teachers?: unknown[];
   stats?: Record<string, unknown>;
   detail?: unknown[];
+  preferences?: MonthPreferences;
 }
 
 export interface StoredResult {
@@ -51,6 +56,8 @@ export interface StoredResult {
   teachers: unknown[];
   stats: Record<string, unknown>;
   detail: unknown[];
+  /** 导入的历史月份由补算脚本单独写这一列 */
+  preferences?: MonthPreferences;
   error: string | null;
   inputs_hash: string | null;
   computed_at: string;
@@ -131,6 +138,7 @@ export async function recomputeMonth(input: {
     teachers: response.ok ? (response.teachers ?? []) : [],
     stats: response.ok ? (response.stats ?? {}) : {},
     detail: response.ok ? (response.detail ?? []) : [],
+    preferences: response.ok ? (response.preferences ?? {}) : {},
     error: response.ok ? null : (response.error ?? "评分计算失败"),
     inputs_hash: hash,
     computed_at: new Date().toISOString(),
