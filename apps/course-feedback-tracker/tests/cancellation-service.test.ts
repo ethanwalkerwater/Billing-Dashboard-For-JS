@@ -25,6 +25,7 @@ function harness(overrides: { lesson?: Partial<CancellableLesson>; now?: number 
     startMs: START,
     endMs: START + 2 * HOUR,
     cancellation: "",
+    scheduleUrl: "https://example.feishu.cn/base/baseTest?table=tblSchedule&record=recLesson",
     ...overrides.lesson,
   };
   const intents = new Map<string, CancelIntent>();
@@ -81,7 +82,7 @@ function harness(overrides: { lesson?: Partial<CancellableLesson>; now?: number 
   };
 }
 
-const text = (card: FeishuCard) => JSON.stringify(card);
+const text = (value: unknown) => JSON.stringify(value);
 
 test("happy path: link → intent → form submission writes the tier and notifies teacher and group", async () => {
   const h = harness({ now: START - 2.2 * HOUR });
@@ -101,8 +102,20 @@ test("happy path: link → intent → form submission writes the tier and notifi
   assert.deepEqual(h.writes, [["recLesson", "2h-50%"]]);
   assert.match(h.results.get("recReq1")!, /^已生效：2h-50%/);
   assert.equal(h.userCards[0][0], "ou_teacher");
-  assert.match(text(h.userCards[0][1]), /Kiki 取消了一节课/);
-  assert.match(text(h.groupCards[0]), /老师已收到私聊通知/);
+  assert.match(text(h.userCards[0][1].header), /黄钢 · Kiki 的课程已取消/);
+  assert.match(text(h.groupCards[0].header), /黄钢 · Kiki 的课程已取消/);
+  for (const card of [h.userCards[0][1], h.groupCards[0]]) {
+    assert.match(text(card), /\*\*授课老师\*\*：\*\*黄钢\*\*/);
+    assert.match(text(card), /查看本节课课表/);
+    assert.ok(text(card).includes(h.lesson.scheduleUrl!));
+    assert.deepEqual((card.elements as unknown[]).at(-1), {
+      tag: "action",
+      actions: [{ tag: "button", type: "primary", text: { tag: "plain_text", content: "查看本节课课表" }, url: h.lesson.scheduleUrl }],
+    });
+    assert.doesNotMatch(text(card), /\[查看本节课课表\]\(/);
+  }
+  assert.match(text(h.groupCards[0]), /<at id=ou_teacher><\/at>/);
+  assert.match(text(h.groupCards[0]), /黄钢 已收到私聊通知/);
 });
 
 test("the same submission or intent is never applied twice", async () => {
@@ -165,4 +178,15 @@ test("a failed schedule write keeps the request pending and alerts the group", a
   assert.match(h.results.get("recFail")!, /^待处理：写入课表失败/);
   assert.equal(h.userCards.length, 0);
   assert.match(text(h.groupCards[0]), /手动在课表/);
+});
+
+test("a missing teacher is explicit and a failed private message does not claim the account is missing", async () => {
+  const h = harness({ lesson: { teacherName: "", scheduleUrl: undefined } });
+  h.deps.notify.user = async () => { throw new Error("message failed"); };
+  const { intentId } = await createIntent(h.deps, "tokA", "recLesson");
+  h.submit("recReq1", intentId);
+  await processRequest(h.deps, "recReq1");
+  assert.match(text(h.groupCards[0].header), /老师未填写/);
+  assert.match(text(h.groupCards[0]), /私聊发送失败/);
+  assert.doesNotMatch(text(h.groupCards[0]), /没有对应飞书账号|查看本节课课表|undefined/);
 });

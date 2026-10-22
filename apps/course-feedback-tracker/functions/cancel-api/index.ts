@@ -80,6 +80,7 @@ function deps(): CancellationDeps {
   const feishu = createFeishuCancellationAdapters(client, {
     scheduleAppToken: requireEnv("CANCEL_SCHEDULE_APP_TOKEN"),
     scheduleTableId: requireEnv("CANCEL_SCHEDULE_TABLE_ID"),
+    scheduleBaseUrl: requireEnv("CANCEL_SCHEDULE_URL"),
     requestAppToken: requireEnv("CANCEL_REQUEST_APP_TOKEN"),
     requestTableId: requireEnv("CANCEL_REQUEST_TABLE_ID"),
   });
@@ -169,7 +170,9 @@ async function handleWebhook(event: HttpEvent) {
   if (verified.challenge) return jsonResponse(200, { challenge: verified.challenge });
   const results = [];
   for (const recordId of extractRecordIds(verified.payload, requireEnv("CANCEL_REQUEST_TABLE_ID"))) {
-    results.push({ recordId, ...(await processRequest(deps(), recordId)) });
+    const result = await processRequest(deps(), recordId);
+    console.info("cancel-request", { recordId, status: result.status });
+    results.push({ recordId, ...result });
   }
   return jsonResponse(200, { ok: true, results });
 }

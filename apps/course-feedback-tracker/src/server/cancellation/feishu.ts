@@ -12,6 +12,7 @@ import type { FeishuRecord } from "../feishu/types";
 export interface CancelFeishuConfig {
   scheduleAppToken: string;
   scheduleTableId: string;
+  scheduleBaseUrl: string;
   requestAppToken: string;
   requestTableId: string;
 }
@@ -81,7 +82,7 @@ export function parseLesson(record: FeishuRecord): CancellableLesson | null {
   return {
     recordId: record.record_id,
     studentRecordIds: readStudentKeys(fields["学生"]),
-    teacherName: plainText(fields["老师"]),
+    teacherName: plainText(fields["老师"]) || plainText(fields["老师-日历"]),
     teacherOpenId: readPersonOpenId(fields["老师-日历"]),
     courseName: plainText(fields["课程类型"]),
     startMs,
@@ -133,7 +134,12 @@ export function createFeishuCancellationAdapters(client: FeishuClient, config: C
       },
       async get(recordId: string): Promise<CancellableLesson | null> {
         const record = await client.getRecord({ ...schedule, recordId });
-        return record ? parseLesson(record) : null;
+        const lesson = record ? parseLesson(record) : null;
+        if (!lesson) return null;
+        const url = new URL(config.scheduleBaseUrl);
+        url.searchParams.set("table", config.scheduleTableId);
+        url.searchParams.set("record", lesson.recordId);
+        return { ...lesson, scheduleUrl: url.href };
       },
       async writeCancellation(recordId: string, tier: CancellationTier): Promise<void> {
         await client.updateRecord({ ...schedule, recordId, fields: { 临时取消: tier } });

@@ -17,6 +17,8 @@ export type CancellationReason = "personal" | "sick";
 export interface CancellableLesson {
   /** 课表记录 ID */
   recordId: string;
+  /** 飞书课表中本节课的定位链接，沿用原有访问权限。 */
+  scheduleUrl?: string;
   /** 课表「学生」关联到学生表的记录 ID */
   studentRecordIds: string[];
   teacherName: string;
