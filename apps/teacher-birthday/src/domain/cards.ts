@@ -5,12 +5,10 @@ export type FeishuCard = Record<string, unknown>;
 const WEEKDAYS = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
 const mmdd = ({ y, m, d }: Ymd) => `${m}/${d}（${WEEKDAYS[new Date(Date.UTC(y, m - 1, d)).getUTCDay()]}）`;
 
-export function wishFormUrl(base: string, teacherName: string, year: number): string {
+export function wishFormUrl(base: string, teacherName: string): string {
   const url = new URL(base);
   url.searchParams.set(`prefill_${WISH_FIELDS.teacher}`, teacherName);
   url.searchParams.set(`hide_${WISH_FIELDS.teacher}`, "1");
-  url.searchParams.set(`prefill_${WISH_FIELDS.year}`, String(year));
-  url.searchParams.set(`hide_${WISH_FIELDS.year}`, "1");
   return url.href;
 }
 
@@ -42,9 +40,9 @@ export function askCard(input: { teacherName: string; date: Ymd; daysLeft: numbe
 }
 
 /** date 只在补发（生日已过）时传，标题写明日期而不是「今天」 */
-export function celebrateCard(input: { teacherName: string; openId: string | null; pageUrl: string; wishCount: number; lateDate?: Ymd }): FeishuCard {
+export function celebrateCard(input: { teacherName: string; openId: string | null; pageUrl: string; lateDate?: Ymd }): FeishuCard {
   const who = input.openId ? `<at id=${input.openId}></at>` : `**${input.teacherName}** 老师`;
-  const gift = input.wishCount > 0 ? `同学和同事们写了 **${input.wishCount}** 条祝福，装进了一份小礼物里。` : "我们给你准备了一份小礼物。";
+  const gift = "我们把感谢和祝福，装进了一份专属生日礼物里。";
   return {
     config: { wide_screen_mode: true },
     header: { template: "carmine", title: { tag: "plain_text", content: input.lateDate ? `🎂 ${input.lateDate.m}/${input.lateDate.d} 是 ${input.teacherName} 老师的生日` : `🎂 今天是 ${input.teacherName} 老师的生日` } },

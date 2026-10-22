@@ -25,7 +25,7 @@ for (const line of readFileSync(envFile, "utf8").split("\n")) {
 }
 const required = [
   "FEISHU_APP_ID", "FEISHU_APP_SECRET", "TEACHER_APP_TOKEN", "TEACHER_TABLE_ID", "WISH_TABLE_ID", "WISH_FORM_URL",
-  "SCHEDULE_APP_TOKEN", "SCHEDULE_TABLE_ID", "BIRTHDAY_ACADEMIC_OPEN_IDS", "BIRTHDAY_GROUP_CHAT_ID", "PAGE_BASE_URL", "PAGE_TOKEN_PEPPER",
+  "SCHEDULE_APP_TOKEN", "SCHEDULE_TABLE_ID", "BIRTHDAY_ACADEMIC_CHAT_ID", "BIRTHDAY_GROUP_CHAT_ID", "PAGE_BASE_URL", "PAGE_TOKEN_PEPPER",
 ];
 const missing = required.filter((key) => !envVariables[key]);
 if (missing.length) {

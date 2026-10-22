@@ -2,10 +2,10 @@
 import { blessingMessages, chooseBlessing } from "../domain/blessing";
 import { askCard, celebrateCard, wishFormUrl } from "../domain/cards";
 import type { FeishuCard } from "../domain/cards";
-import { birthdayIn, dueActions, nextBirthday, shanghaiYmd, tenure } from "../domain/dates";
+import { birthdayIn, dueActions, nextBirthday, shanghaiYmd, tenure, wishWindow } from "../domain/dates";
 import type { DueAction, LessonStats, TeacherRow, Ymd } from "../domain/dates";
 import type { PageData } from "../domain/page-data";
-import { TEACHER_FIELDS as T, parseTeacher, parseWish } from "../domain/records";
+import { TEACHER_FIELDS as T, WISH_FIELDS as W, parseTeacher, parseWish } from "../domain/records";
 import type { Wish } from "../domain/records";
 import { scheduleStats } from "../domain/stats";
 import { signPageToken, verifyPageToken } from "./token";
@@ -16,7 +16,7 @@ export interface BirthdayFeishu {
   listTeachers(): Promise<RawRecord[]>;
   getTeacher(recordId: string): Promise<RawRecord | null>;
   updateTeacher(recordId: string, fields: Record<string, unknown>): Promise<void>;
-  listWishes(teacherName: string, year: number): Promise<RawRecord[]>;
+  listWishes(teacherName: string): Promise<RawRecord[]>;
   listLessons(scheduleName: string, todayMs: number): Promise<Array<{ fields: Record<string, unknown> }>>;
   tmpUrls(fileTokens: string[]): Promise<Map<string, string>>;
   /** to = "open_id:ou_…" 或 "chat_id:oc_…" */
@@ -30,7 +30,7 @@ export interface BirthdayConfig {
   wishFormUrl: string;
   scheduleAppToken: string;
   scheduleTableId: string;
-  academicOpenIds: string[];
+  academicChatId: string;
   groupChatId: string;
   pageBaseUrl: string;
   pepper: string;
@@ -43,26 +43,31 @@ export interface BirthdayDeps {
   generate(messages: ReturnType<typeof blessingMessages>): Promise<string>;
 }
 
-const wishesOf = async (deps: BirthdayDeps, name: string, year: number): Promise<Wish[]> =>
-  (await deps.feishu.listWishes(name, year)).map((r) => parseWish(r.fields)).filter((w): w is Wish => w !== null);
+async function wishesOf(deps: BirthdayDeps, teacher: TeacherRow, year: number): Promise<Wish[]> {
+  const { fromMs, toMs } = wishWindow(teacher.birthMs, year);
+  return (await deps.feishu.listWishes(teacher.name))
+    .filter(({ fields }) => {
+      const time = Number(fields[W.time]);
+      return Number.isFinite(time) && time >= fromMs && time < toMs;
+    })
+    .map((r) => parseWish(r.fields)).filter((w): w is Wish => w !== null);
+}
 
 export function pageUrl(deps: BirthdayDeps, recordId: string, year: number): string {
   return `${deps.config.pageBaseUrl}?t=${encodeURIComponent(signPageToken(recordId, year, deps.config.pepper))}`;
 }
 
 async function sendAsk(deps: BirthdayDeps, teacher: TeacherRow, date: Ymd, daysLeft: number): Promise<string> {
-  const formUrl = wishFormUrl(deps.config.wishFormUrl, teacher.name, date.y);
-  const wishCount = (await wishesOf(deps, teacher.name, date.y)).length;
-  for (const openId of deps.config.academicOpenIds) {
-    await deps.feishu.send(`open_id:${openId}`, askCard({ teacherName: teacher.name, date, daysLeft, formUrl, wishCount }));
-  }
+  const formUrl = wishFormUrl(deps.config.wishFormUrl, teacher.name);
+  const wishCount = (await wishesOf(deps, teacher, date.y)).length;
+  await deps.feishu.send(`chat_id:${deps.config.academicChatId}`, askCard({ teacherName: teacher.name, date, daysLeft, formUrl, wishCount }));
   return formUrl;
 }
 
 /** 统计 + 寄语写回老师表（AI 失败只记日志，用模板兜底），然后发群卡片。 */
 async function sendCelebrate(deps: BirthdayDeps, teacher: TeacherRow, year: number, lateDate?: Ymd): Promise<string> {
   const todayMs = deps.now();
-  const wishes = await wishesOf(deps, teacher.name, year);
+  const wishes = await wishesOf(deps, teacher, year);
   // 统计只是锦上添花：课表名对不上、权限变了都不该挡住群卡片，失败就不写，网页隐藏那一行
   let stats: LessonStats | null = null;
   try {
@@ -88,7 +93,7 @@ async function sendCelebrate(deps: BirthdayDeps, teacher: TeacherRow, year: numb
   }
   if (Object.keys(fields).length > 0) await deps.feishu.updateTeacher(teacher.recordId, fields);
   const url = pageUrl(deps, teacher.recordId, year);
-  await deps.feishu.send(`chat_id:${deps.config.groupChatId}`, celebrateCard({ teacherName: teacher.name, openId: teacher.openId, pageUrl: url, wishCount: wishes.length, lateDate }));
+  await deps.feishu.send(`chat_id:${deps.config.groupChatId}`, celebrateCard({ teacherName: teacher.name, openId: teacher.openId, pageUrl: url, lateDate }));
   return url;
 }
 
@@ -138,7 +143,7 @@ export async function pageData(deps: BirthdayDeps, token: string): Promise<PageD
   const record = await deps.feishu.getTeacher(parsed.recordId);
   if (!record) return null;
   const teacher = parseTeacher(record);
-  const wishes = await wishesOf(deps, teacher.name, parsed.year);
+  const wishes = await wishesOf(deps, teacher, parsed.year);
   const tokens = [teacher.photoToken, ...wishes.flatMap((w) => w.files.map((f) => f.token))].filter((t): t is string => Boolean(t));
   const urls = tokens.length ? await deps.feishu.tmpUrls(tokens) : new Map<string, string>();
   return {
