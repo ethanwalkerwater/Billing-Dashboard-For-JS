@@ -11,7 +11,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { asr } from "tencentcloud-sdk-nodejs-asr";
 
 import { FeishuClient } from "../../../course-feedback-tracker/src/server/feishu/client";
-import { parseTeacher } from "../../../teacher-birthday/src/domain/records";
+import { parseTeacher, TEACHER_FIELDS } from "../../../teacher-birthday/src/domain/records";
 import * as L from "../../src/server/logic";
 import type { LessonDoc, Stage } from "../../src/server/logic";
 
@@ -189,15 +189,19 @@ async function authCallback(query: Record<string, string>) {
   if (!query.code) return page(400, "没有完成授权", "请回到菁仕课堂，重新点「飞书登录」并同意授权。");
   try {
     if (auth.kind === "admin") return await adminCallback(state, query.code);
-    const { openId } = await feishuUser(query.code);
-    const teachers = await feishu().listAllRecords({ appToken: requireEnv("TEACHER_APP_TOKEN"), tableId: requireEnv("TEACHER_TABLE_ID") });
-    const teacher = teachers.map(parseTeacher).find((row) => row.openId === openId);
-    if (!teacher) {
+    const { openId, name } = await feishuUser(query.code);
+    const teacherTable = { appToken: requireEnv("TEACHER_APP_TOKEN"), tableId: requireEnv("TEACHER_TABLE_ID") };
+    const match = L.matchTeacher((await feishu().listAllRecords(teacherTable)).map(parseTeacher), openId, name);
+    if (!match) {
       await pg("PATCH", AUTH, `_id=${eq(state)}`, { status: "not_teacher" }, "return=minimal");
-      return page(403, "没有找到老师档案", "没有在老师档案里找到你的飞书账号，请联系教务");
+      await notifyAdmins(`${name || "有人"} 想登录菁仕课堂，但「老师信息」表里没有对得上的档案。请在老师信息表新增一行（姓名和飞书里一致），并选上他的「飞书账号」。`);
+      return page(403, "老师档案里还没有你", `${name || "你"}，「老师信息」表里没有找到你的姓名，已通知教务添加。添加好后回到菁仕课堂再点一次「飞书登录」。`);
     }
+    const { teacher } = match;
+    // 第一次登录、档案还没选飞书账号：按姓名认上后写回，以后都按飞书账号认
+    if (match.bind) await feishu().updateRecord({ ...teacherTable, recordId: teacher.recordId, fields: { [TEACHER_FIELDS.feishu]: [{ id: openId }] } });
     await pg("PATCH", AUTH, `_id=${eq(state)}`, { status: "done", openId, name: teacher.name, scheduleName: teacher.scheduleName }, "return=minimal");
-    return page(200, "登录成功", "可以回到菁仕课堂了，这个页面可以关闭。");
+    return page(200, "登录成功", `${match.bind ? `${teacher.name}，已自动关联你在「老师信息」里的档案。` : ""}可以回到菁仕课堂了，这个页面可以关闭。`);
   } catch (error) {
     console.error(error);
     return page(500, "登录失败", "飞书暂时没有响应，请回到菁仕课堂重试。");
@@ -208,7 +212,7 @@ async function authPoll(state: string) {
   const auth = state ? await getRow<{ status: string; expiresAt: number; openId: string; name: string; scheduleName: string }>(AUTH, state) : undefined;
   if (!auth || auth.expiresAt < Date.now()) return fail(410, "EXPIRED", "登录已过期，请重新登录");
   if (auth.status === "pending") return json(202, { pending: true });
-  if (auth.status === "not_teacher") return fail(403, "NOT_A_TEACHER", "没有在老师档案里找到你的飞书账号，请联系教务");
+  if (auth.status === "not_teacher") return fail(403, "NOT_A_TEACHER", "「老师信息」表里还没有你，已通知教务添加，添加好后再登录");
   // 原子领取：同一个 state 只发一次 token；数据库只存 token 的 sha256
   const claimed = await pg("DELETE", AUTH, `_id=${eq(state)}&status=eq.done`);
   if (!claimed.length) return fail(410, "EXPIRED", "登录已过期，请重新登录");
@@ -530,7 +534,17 @@ async function runPipeline(lessonId?: string) {
 type AdminSession = { _id: string; openId: string; name: string; expiresAt: number };
 const ADMIN_TTL_MS = 30 * L.DAY;
 const adminUrl = () => requireEnv("REPORT_BASE_URL").replace(/report\.html$/, "admin.html");
-const isAdmin = (openId: string) => (process.env.ADMIN_OPEN_IDS ?? "").split(",").map((id) => id.trim()).includes(openId);
+const adminOpenIds = () => (process.env.ADMIN_OPEN_IDS ?? "").split(",").map((id) => id.trim()).filter(Boolean);
+const isAdmin = (openId: string) => adminOpenIds().includes(openId);
+
+/** 私信后台管理员；发不出去只记日志，不影响主流程 */
+async function notifyAdmins(text: string) {
+  for (const receiveId of adminOpenIds()) {
+    await feishu()
+      .sendMessage({ receiveIdType: "open_id", receiveId, msgType: "text", content: { text } })
+      .catch((error: unknown) => console.error("[classroom-api] 通知管理员失败", error instanceof Error ? error.message : error));
+  }
+}
 const redirect = (location: string) => ({ statusCode: 302, headers: { location, "cache-control": "no-store" }, body: "", isBase64Encoded: false });
 
 async function adminCallback(state: string, code: string) {

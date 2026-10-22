@@ -15,10 +15,10 @@ jobs:
       matrix:
         include:
           - platform: macos-latest
-            args: --target universal-apple-darwin
+            args: --target universal-apple-darwin --bundles app,dmg
             rust_targets: aarch64-apple-darwin,x86_64-apple-darwin
           - platform: windows-latest
-            args: ""
+            args: --bundles nsis
             rust_targets: ""
     runs-on: ${{ matrix.platform }}
     steps:
@@ -56,6 +56,9 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: 菁仕课堂 ${{ github.ref_name }}
           releaseBody: 老师端录课 App（macOS / Windows）
+          # 草稿：CI 只负责打包和签名；老师端真正收到更新，要等本地跑 scripts/publish-release.mjs 把 latest.json 传到 app.jsjy.asia
           releaseDraft: true
           prerelease: false
+          includeUpdaterJson: true
+          updaterJsonPreferNsis: true
           args: ${{ matrix.args }}

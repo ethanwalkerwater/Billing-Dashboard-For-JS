@@ -212,3 +212,20 @@ test("会议纪要：议题时间转秒、丢掉坏议题和空板块、缺字�
   assert.equal(L.meetingText(r, "10月15日"), "教研周会 · 10月15日 会议纪要\n\n定了试讲时间\n\n【决定】\n1. 下周三试讲\n\n【待办】\n1. 安排教室（下周二）\n\n【待跟进】\n无");
   assert.throws(() => L.parseMeetingReport(JSON.stringify({ title: "a", lead: "b", sections: [] })), /sections/);
 });
+
+test("matchTeacher：先认飞书账号，没绑的按唯一姓名认，同名或已绑不认", () => {
+  const rows = [
+    { name: "郑唯梓", scheduleName: "郑唯梓", openId: "ou_zheng" },
+    { name: "包天翊", scheduleName: "包天翊", openId: null },
+    { name: "Jack Hou（侯东淳）", scheduleName: "Jack Hou", openId: null },
+    { name: "王老师", scheduleName: "王老师", openId: null },
+    { name: "王老师", scheduleName: "物理王老师", openId: null },
+  ];
+  assert.deepEqual(L.matchTeacher(rows, "ou_zheng", "改了名"), { teacher: rows[0], bind: false });
+  assert.deepEqual(L.matchTeacher(rows, "ou_bao", " 包天翊 "), { teacher: rows[1], bind: true });
+  assert.deepEqual(L.matchTeacher(rows, "ou_hou", "Jack Hou"), { teacher: rows[2], bind: true });
+  assert.equal(L.matchTeacher(rows, "ou_x", "王老师"), null);
+  assert.equal(L.matchTeacher(rows, "ou_fake", "郑唯梓"), null);
+  assert.equal(L.matchTeacher(rows, "ou_x", ""), null);
+  assert.equal(L.matchTeacher(rows, "ou_x", "陌生人"), null);
+});
