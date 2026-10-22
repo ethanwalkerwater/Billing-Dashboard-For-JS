@@ -119,13 +119,13 @@ pub fn pre_lesson<'a>(now: i64, lessons: &'a [Lesson], ended: &HashSet<String>) 
 }
 
 /// 下次拉课表要等多久（ms）。拉课表每次要花云函数约 2 秒，老师的 App 常年挂着，所以按需拉而不是死循环：
-/// 报告生成中 30 秒（等状态变化）；否则每 30 分钟兜底，晚 23 点到早 7 点（北京时间）不拉；
+/// 报告生成中每分钟（报告好了云端还会飞书私信老师）；否则每 30 分钟兜底，晚 23 点到早 7 点（北京时间）不拉；
 /// 每节课开录前再拉一次（开课前 10 分钟），保证自动开录用的是最新课表。打开窗口、登录、睡醒另有立即拉取。
 pub fn fetch_wait(now: i64, lessons: &[Lesson], processing: bool) -> i64 {
     const IDLE: i64 = 30 * MIN;
     const HOUR: i64 = 60 * MIN;
     if processing {
-        return MIN / 2;
+        return MIN;
     }
     let hour = (now + 8 * HOUR).rem_euclid(24 * HOUR) / HOUR;
     let mut next = if (7..23).contains(&hour) {
@@ -957,7 +957,7 @@ mod tests {
         assert_eq!(fetch_wait(T0, &soon, false), 15 * MIN);
         // 刚在开课前 10 分钟拉过：不会对同一节课再拉，至少隔 1 分钟
         assert_eq!(fetch_wait(T0 + 15 * MIN + 1, &soon, false), 30 * MIN);
-        assert_eq!(fetch_wait(T0, &soon, true), MIN / 2);
+        assert_eq!(fetch_wait(T0, &soon, true), MIN);
         // 北京时间 23:30 → 等到 7:00；7:20 的课 7:00 就拉过了；6:50 的早课在 6:40 拉
         let night = T0 - 16 * 60 * MIN + 23 * 60 * MIN + 30 * MIN;
         assert_eq!(fetch_wait(night, &[], false), 450 * MIN);

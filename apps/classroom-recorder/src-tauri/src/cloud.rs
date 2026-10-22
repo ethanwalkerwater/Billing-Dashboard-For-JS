@@ -268,7 +268,7 @@ async fn upload_lesson(core: &Arc<Core>, dir: &Path, id: &str) -> Result<(), Api
     })
     .map_err(local)?;
     if missing.is_empty() {
-        core.kick_fetch.notify_one(); // 进入处理，开始 30 秒轮询
+        core.kick_fetch.notify_one(); // 进入处理，开始每分钟轮询
     } else {
         core.shared.kick_upload.notify_one();
     }
