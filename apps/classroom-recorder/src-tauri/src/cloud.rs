@@ -130,28 +130,46 @@ async fn poll_login(core: Arc<Core>, state: String, gen: u32) {
 
 // ---------- 课表 ----------
 
+/// 拉一次课表。手动「刷新」直接调它，好把失败原因告诉老师。
+pub async fn fetch_once(core: &Arc<Core>) -> Result<(), String> {
+    let token = core.lock().cfg.token.clone().ok_or("请先用飞书登录")?;
+    let mut v: Value = core.call(Method::GET, "/lessons", |rb| rb).await?.json().await.map_err(|_| "课表数据异常，请稍后再试")?;
+    let lessons = serde_json::from_value::<Vec<Lesson>>(v["lessons"].take()).map_err(|_| "课表数据异常，请稍后再试")?;
+    core.set_lessons(&token, lessons);
+    core.last_fetch.store(now_ms(), std::sync::atomic::Ordering::Relaxed);
+    Ok(())
+}
+
+/// 自动拉课表：启动时一次，之后按 engine::fetch_wait 等，或被 kick_fetch 叫醒（登录、打开主窗口、睡醒、录音提交完）。
 pub async fn fetch_loop(core: Arc<Core>) {
     loop {
-        let token = core.lock().cfg.token.clone();
-        if let Some(token) = token {
-            match core.call(Method::GET, "/lessons", |rb| rb).await {
-                Ok(res) => match res.json::<Value>().await.map(|mut v| serde_json::from_value::<Vec<Lesson>>(v["lessons"].take())) {
-                    Ok(Ok(lessons)) => core.set_lessons(&token, lessons),
-                    _ => eprintln!("[lessons] bad response"),
-                },
-                Err(e) => eprintln!("[lessons] {}", String::from(e)),
+        if core.lock().cfg.token.is_some() {
+            if let Err(e) = fetch_once(&core).await {
+                eprintln!("[lessons] {e}");
             }
-            core.last_fetch.store(now_ms(), std::sync::atomic::Ordering::Relaxed);
+            discard_pending(&core).await;
             let c = core.clone();
             let _ = tauri::async_runtime::spawn_blocking(move || c.refresh_mics()).await;
         }
-        let wait = {
-            let lessons = core.lock().merged();
-            crate::engine::fetch_wait(now_ms(), &lessons, lessons.iter().any(|l| l.status == "processing"))
-        };
+        let wait = crate::engine::fetch_wait(now_ms(), core.last_fetch.load(std::sync::atomic::Ordering::Relaxed), &core.lock().merged());
         tokio::select! {
             _ = tokio::time::sleep(Duration::from_millis(wait as u64)) => {}
             _ = core.kick_fetch.notified() => {}
+        }
+    }
+}
+
+/// 通知云端放弃老师在 App 里删掉的课（不再转写、不出总结）；断网没发出去的，下次拉课表时再发。
+pub async fn discard_pending(core: &Arc<Core>) {
+    let ids = core.lock().cfg.discard.clone();
+    for id in ids {
+        match core.call(Method::POST, &format!("/lessons/{id}/discard"), |rb| rb).await {
+            Ok(_) | Err(ApiError::Status(400..=499, _)) => {
+                let mut g = core.lock();
+                g.cfg.discard.retain(|d| *d != id);
+                core.save_cfg(&g.cfg);
+            }
+            Err(e) => eprintln!("[discard] {id}: {}", String::from(e)),
         }
     }
 }
@@ -268,7 +286,7 @@ async fn upload_lesson(core: &Arc<Core>, dir: &Path, id: &str) -> Result<(), Api
     })
     .map_err(local)?;
     if missing.is_empty() {
-        core.kick_fetch.notify_one(); // 进入处理，开始每分钟轮询
+        core.kick_fetch.notify_one(); // 进入处理，开始每 3 分钟看一次报告好了没
     } else {
         core.shared.kick_upload.notify_one();
     }

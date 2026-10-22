@@ -321,6 +321,16 @@ async function finishLesson(event: HttpEvent, session: Session, id: string) {
   return json(200, { missing });
 }
 
+/**
+ * 老师在 App 里删了这节课：还没出报告的不再处理。标成失败且次数用满，定时器不会再捡起来，后台能看到原因。
+ * ponytail: 删除恰好撞上正在跑的处理时，那一轮写回的阶段会盖掉这里；极少见，后台看到再手动处理
+ */
+async function discardLesson(session: Session, id: string) {
+  await pg("PATCH", LESSONS, `_id=${eq(id)}&teacherOpenId=${eq(session.openId)}&stage=neq.done`,
+    { stage: "failed", attempts: L.MAX_ATTEMPTS, error: "老师在 App 里删除了这节课", updatedAt: Date.now() }, "return=minimal");
+  return json(200, { ok: true });
+}
+
 async function ownedPatch(id: string, session: Session, patch: Record<string, unknown>) {
   const lesson = await getRow<LessonDoc>(LESSONS, id);
   if (!lesson || lesson.teacherOpenId !== session.openId) return fail(404, "LESSON_NOT_FOUND", "没有找到这节课的录音");
@@ -732,7 +742,7 @@ export async function main(event: HttpEvent) {
     if (method === "GET" && path === "/me") return json(200, { teacher: { name: session.name } });
     if (method === "GET" && path === "/lessons") return await listLessons(session);
 
-    const match = path.match(/^\/lessons\/(rec[A-Za-z0-9]+|adhoc-[0-9a-f]{16})\/(segments\/(\d{1,5})|finish|summary|copied)$/);
+    const match = path.match(/^\/lessons\/(rec[A-Za-z0-9]+|adhoc-[0-9a-f]{16})\/(segments\/(\d{1,5})|finish|summary|copied|discard)$/);
     if (match) {
       const [, id, action, seq] = match;
       if (method === "POST" && seq !== undefined) return await uploadSegment(event, session, id, Number(seq));
@@ -743,6 +753,7 @@ export async function main(event: HttpEvent) {
         return await ownedPatch(id, session, { editedSummary: text });
       }
       if (method === "POST" && action === "copied") return await ownedPatch(id, session, { copied: true });
+      if (method === "POST" && action === "discard") return await discardLesson(session, id);
     }
     return fail(404, "NOT_FOUND", "接口不存在");
   } catch (error) {
