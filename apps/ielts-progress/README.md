@@ -11,7 +11,7 @@
 | 月度 | 选一个月：老师之间对比、老师 × 科目、和上月的环比 |
 | 学生 | 每个学生各科最近一次的提分；点开看完整成绩记录（含阶段模考）和各老师带来的提升 |
 
-- 登录与反馈追踪、薪资预警共用（`jsjy`，白名单表 `feedback_admins`）。
+- 飞书账号登录，和反馈追踪共用登录端点（`feedback-api` 的 `/auth/feishu/*`）与白名单表 `feedback_admins`，配置见 [反馈追踪 README](../course-feedback-tracker/README.md#飞书登录)。
 - 访问：<https://jingshi.vercel.app/IELTS_Positive>（308 → CloudBase 静态托管 `/ielts/`；跳转在 `菁仕后台主页` 仓库 `src/app/IELTS_Positive/route.ts`，大小写敏感）。
 - 设计与口径：[`specs/ielts-progress/design.md`](../../specs/ielts-progress/design.md)。
 
