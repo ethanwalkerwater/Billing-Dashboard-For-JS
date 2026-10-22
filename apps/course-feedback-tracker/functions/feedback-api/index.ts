@@ -3,7 +3,8 @@
  *
  * 两种入口：
  *  1. 教务前端 `app.callFunction({ name: 'feedback-api', data: { action } })`，带 CloudBase 登录身份；
- *  2. HTTP 触发：`GET /t/:token` 学生扫码跳转、`POST /webhooks/feishu` 答卷事件。
+ *  2. HTTP 触发：`GET /t/:token` 学生扫码跳转、`POST /webhooks/feishu` 答卷事件、
+ *     `GET /auth/feishu/start|callback` 教务网站的飞书登录（反馈工作台、取消课程、雅思正向率共用）。
  *
  * 答卷怎么进库：飞书答卷表有变化时推事件（Webhook），只处理受影响的那几轮；每天凌晨定时对账一次兜底
  * （漏掉的事件、到期定稿）；工作台「刷新反馈」手动补一次。打开工作台只读库，不再每次去飞书拉。
@@ -14,6 +15,7 @@
 import cloudbase from "@cloudbase/node-sdk";
 
 import { collectionMonthToCourseMonth, courseMonthToCollectionMonth, shiftMonth } from "../../src/domain/month";
+import { customUserId, loginPage, loginRedirect, parseOrigins, safeNext, seal, unseal } from "../../src/server/feishu-login";
 import { buildPrefilledFormUrl } from "../../src/domain/form-url";
 import { buildFeedbackCsv, buildScheduleCsv } from "../../src/server/export/csv";
 import { FeishuClient } from "../../src/server/feishu/client";
@@ -43,18 +45,20 @@ interface HttpEvent {
   isBase64Encoded?: boolean;
 }
 
-interface CallEvent {
-  action?: string;
 /** CloudBase 定时触发器的事件：{ Type: "Timer", TriggerName, Time } */
 interface TimerEvent {
   Type?: string;
   TriggerName?: string;
 }
 
+interface CallEvent {
+  action?: string;
   collectionMonth?: string;
   /** recompute-scores：手动重算的课程月份 */
   courseMonth?: string;
   dryRun?: boolean;
+  /** bind-feishu：飞书登录回跳时带回的签名凭证，证明这个 CloudBase 会话属于哪个飞书账号 */
+  bindToken?: string;
 }
 
 let serviceDb: PostgrestLike | undefined;
@@ -95,14 +99,14 @@ const scoreStore: ScoreStore = {
   detail: async (courseMonth) => (await selectRows<{ detail: PriorDetailRow[] }>(SCORE_RESULTS_TABLE, "detail", { course_month: courseMonth }))[0]?.detail,
   // 评分脚本会把老师名去空格、去「老师」后缀；用课表写法还原显示名（Valentina Lin、数学杨老师）。
   teacherNames: async () => [...new Set((await selectRows<{ teacher_canonical_name: string }>(TASKS_TABLE, "teacher_canonical_name")).map((row) => row.teacher_canonical_name))],
-};
-
-async function computeScores(request: ScoreRequest): Promise<ScoreResponse> {
-  const response = await app.callFunction({ name: "feedback-score", data: request as never });
   frozenLessons: async (collectionMonth) =>
     (await repository().listByCollectionMonth(collectionMonth))
       .filter(isFrozen)
       .map((task) => ({ studentName: task.studentName, teacherName: task.teacherCanonicalName, lessons: task.lessons ?? [] })),
+};
+
+async function computeScores(request: ScoreRequest): Promise<ScoreResponse> {
+  const response = await app.callFunction({ name: "feedback-score", data: request as never });
   return response.result as ScoreResponse;
 }
 
@@ -118,10 +122,6 @@ async function recomputeRounds(collectionMonths: Iterable<string>) {
     scores[courseMonth] = await recompute(courseMonth);
   }
   return scores;
-}
-
-function repository() {
-  return new RdbFeedbackTaskRepository(db());
 }
 
 /** 还在收集的两轮：本月课程（月中就能提前评）和上月课程（晚交的）。 */
@@ -157,6 +157,10 @@ async function syncRounds(collectionMonths: string[]) {
   }
   const scores = { ...(await recomputeRounds(collectionMonths)), ...(await finalizeClosingMonth(records)) };
   return { results, scores };
+}
+
+function repository() {
+  return new RdbFeedbackTaskRepository(db());
 }
 
 function feishu() {
@@ -228,11 +232,11 @@ async function handlePublicRedirect(token: string) {
     baseUrl: feishu().config.formUrl,
     teacherName: task.teacherCanonicalName,
     studentName: task.studentName,
+    courseMonth: task.courseMonth,
   });
   return { statusCode: 302, headers: { location: target, "cache-control": "no-store" }, body: "" };
 }
 
-    courseMonth: task.courseMonth,
 async function handleFeishuWebhook(event: HttpEvent) {
   const raw = decodeBody(event);
   const verified = verifyFeishuEvent({
@@ -305,6 +309,104 @@ function summarize(result: {
   };
 }
 
+// ---------- 飞书登录（教务网站共用，详见 src/server/feishu-login.ts） ----------
+
+type AdminRow = { user_id: string; feishu_open_id: string | null; active: boolean };
+
+const loginSecret = () => requireEnv("PUBLIC_TOKEN_PEPPER");
+const loginCallbackUrl = () => `${requireEnv("FEISHU_LOGIN_BASE_URL").replace(/\/$/, "")}/feishu/callback`;
+
+/** 签自定义登录 ticket 要用控制台下载的「自定义登录私钥」，和业务用的 app 分开初始化。 */
+let ticketApp: ReturnType<typeof cloudbase.init> | undefined;
+function createTicket(openId: string): string {
+  // 部署脚本把私钥 JSON 转成 base64 放进环境变量
+  const credentials = JSON.parse(Buffer.from(requireEnv("CLOUDBASE_LOGIN_KEY"), "base64").toString("utf8"));
+  ticketApp ??= cloudbase.init({ env: cloudbase.SYMBOL_CURRENT_ENV, credentials });
+  return ticketApp.auth().createTicket(customUserId(openId));
+}
+
+async function adminByOpenId(openId: string): Promise<AdminRow | undefined> {
+  const result = await db().from("feedback_admins").select<AdminRow>("user_id,feishu_open_id,active").eq("feishu_open_id", openId).eq("active", true).limit(1);
+  if (result.error) throw new Error(`读取管理员白名单失败：${result.error.message}`);
+  return result.data?.[0];
+}
+
+function handleLoginStart(event: HttpEvent) {
+  const next = safeNext(event.queryStringParameters?.next, parseOrigins(process.env.LOGIN_ALLOWED_ORIGINS));
+  if (!next) return loginPage(400, "登录地址不正确", "请从教务网站的登录页点「用飞书登录」。");
+  const url = new URL("https://accounts.feishu.cn/open-apis/authen/v1/authorize");
+  url.searchParams.set("client_id", requireEnv("FEISHU_APP_ID"));
+  url.searchParams.set("redirect_uri", loginCallbackUrl());
+  url.searchParams.set("state", seal({ next }, loginSecret()));
+  return { statusCode: 302, headers: { location: url.href, "cache-control": "no-store" }, body: "" };
+}
+
+async function feishuUser(code: string): Promise<{ openId: string; name: string }> {
+  const tokenResponse = await fetch("https://open.feishu.cn/open-apis/authen/v2/oauth/token", {
+    method: "POST",
+    headers: { "content-type": "application/json; charset=utf-8" },
+    body: JSON.stringify({
+      grant_type: "authorization_code",
+      client_id: requireEnv("FEISHU_APP_ID"),
+      client_secret: requireEnv("FEISHU_APP_SECRET"),
+      code,
+      redirect_uri: loginCallbackUrl(),
+    }),
+  });
+  const token = (await tokenResponse.json()) as { code?: number; access_token?: string; error_description?: string; msg?: string };
+  if (token.code !== 0 || !token.access_token) throw new Error(`飞书换取用户凭证失败：${token.error_description ?? token.msg ?? token.code}`);
+  const infoResponse = await fetch("https://open.feishu.cn/open-apis/authen/v1/user_info", { headers: { authorization: `Bearer ${token.access_token}` } });
+  const info = (await infoResponse.json()) as { code?: number; msg?: string; data?: { open_id?: string; name?: string } };
+  if (info.code !== 0 || !info.data?.open_id) throw new Error(`飞书用户信息获取失败：${info.msg ?? info.code}`);
+  return { openId: info.data.open_id, name: info.data.name ?? "" };
+}
+
+async function handleLoginCallback(event: HttpEvent) {
+  const query = event.queryStringParameters ?? {};
+  const state = unseal<{ next: string }>(query.state ?? "", loginSecret());
+  if (!state?.next) return loginPage(400, "登录链接已过期", "请回到教务网站，重新点「用飞书登录」。");
+  if (!query.code) return loginPage(400, "没有完成授权", "需要同意飞书授权才能登录。", state.next);
+  const user = await feishuUser(query.code);
+  if (!(await adminByOpenId(user.openId))) await grantAccess(user);
+  const bindToken = seal({ openId: user.openId }, loginSecret());
+  return { statusCode: 302, headers: { location: loginRedirect(state.next, createTicket(user.openId), bindToken), "cache-control": "no-store" }, body: "" };
+}
+
+/**
+ * 飞书应用「排课机器人」的可用范围是全员，能走完飞书授权的就是本企业成员，直接开通（用户 2026-10-19 决定）。
+ * 要挡住某人：在飞书开发者后台把他移出可用范围；这里的 active=false 会在他下次登录时被改回 true。
+ */
+async function grantAccess(user: { openId: string; name: string }) {
+  const result = await db()
+    .from("feedback_admins")
+    .upsert([{ user_id: customUserId(user.openId), feishu_open_id: user.openId, display_name: user.name, active: true }], { onConflict: "feishu_open_id" });
+  if (result.error) throw new Error(`开通账号失败：${result.error.message}`);
+}
+
+/**
+ * 网页用 ticket 登录 CloudBase 后立刻调用：把当前 CloudBase 用户 ID 写进这个飞书账号的白名单行。
+ * 只认回调签发的 bindToken（10 分钟有效），所以别人拿不到别的管理员的权限。
+ */
+async function bindFeishu(bindToken: string | undefined) {
+  const claim = unseal<{ openId: string }>(bindToken ?? "", loginSecret());
+  if (!claim?.openId) throw new Error("登录已过期，请重新用飞书登录");
+  let uid: string | undefined;
+  try {
+    const user = app.auth().getUserInfo();
+    uid = user?.isAnonymous ? undefined : user?.uid;
+  } catch {
+    uid = undefined;
+  }
+  if (!uid) throw new Error("UNAUTHORIZED");
+  const admin = await adminByOpenId(claim.openId);
+  if (!admin) throw new Error("FORBIDDEN");
+  if (admin.user_id !== uid) {
+    const result = await db().from("feedback_admins").update({ user_id: uid }).eq("feishu_open_id", claim.openId);
+    if (result.error) throw new Error(`绑定管理员失败：${result.error.message}`);
+  }
+  return { ok: true };
+}
+
 /** 上海时区的当前月份，Webhook 和未指定月份的刷新用它当默认收集月份。 */
 function currentShanghaiMonth(): string {
   return new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit" })
@@ -315,11 +417,29 @@ function currentShanghaiMonth(): string {
 export async function main(event: HttpEvent & CallEvent & TimerEvent) {
   const isHttp = typeof event.httpMethod === "string";
   try {
+    // ---- 每日定时对账（cloudbaserc.json 的 timer 触发器）----
+    if (event.Type === "Timer") {
+      const { results, scores } = await syncRounds(openRounds());
+      const summary = { ok: true, rounds: results.map(summarize), scores };
+      console.log("[feedback-api] 定时对账", JSON.stringify(summary));
+      return summary;
+    }
+
     // ---- HTTP 入口 ----
-    // CloudBase HTTP 访问服务会把注册的服务路径（/t、/webhooks）从 event.path 里剥掉，
-    // 且 requestContext 里没有原始路径，所以这里按「方法 + 剩余路径形状」区分两个公开端点。
+    // CloudBase HTTP 访问服务会把注册的服务路径（/t、/webhooks、/auth）从 event.path 里剥掉，
+    // 且 requestContext 里没有原始路径，所以这里按「方法 + 剩余路径形状」区分公开端点。
+    // 登录用两段路径（/feishu/start），不会和单段的扫码 token 撞上。
     if (isHttp) {
-      const path = (event.path ?? "").replace(/^\/(t|webhooks)(?=\/)/, "");
+      const path = (event.path ?? "").replace(/^\/(t|webhooks|auth)(?=\/)/, "");
+      if (event.httpMethod === "GET" && path === "/feishu/start") return handleLoginStart(event);
+      if (event.httpMethod === "GET" && path === "/feishu/callback") {
+        try {
+          return await handleLoginCallback(event);
+        } catch (error) {
+          console.error("[feedback-api] 飞书登录", error instanceof Error ? error.message : error);
+          return loginPage(500, "登录失败", "飞书暂时没有响应，请回到教务网站重试。");
+        }
+      }
       if (event.httpMethod === "POST") {
         if (path === "/feishu" || path === "/") return handleFeishuWebhook(event);
         return jsonResponse(404, { ok: false, error: "NOT_FOUND" });
@@ -342,6 +462,8 @@ export async function main(event: HttpEvent & CallEvent & TimerEvent) {
     }
 
     // ---- 教务前端 callFunction ----
+    // 刚用飞书登录时 user_id 还没绑定，assertAdmin 必然失败，所以绑定放在它前面。
+    if (event.action === "bind-feishu") return await bindFeishu(event.bindToken);
     const uid = await assertAdmin();
     switch (event.action) {
       case "sync-tasks": {
@@ -411,19 +533,12 @@ export async function main(event: HttpEvent & CallEvent & TimerEvent) {
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    if (message === "UNAUTHORIZED") return jsonResponse(401, { ok: false, error: "请先登录" });
-    if (message === "FORBIDDEN") return jsonResponse(403, { ok: false, error: "当前账号不在管理员白名单" });
+    // callFunction 必须回 { ok: false }：回 HTTP 形状的 { statusCode, body } 前端会当成功，显示「新增 undefined」。
+    const denied = message === "UNAUTHORIZED" ? "请先登录" : message === "FORBIDDEN" ? "当前账号不在管理员白名单，请用飞书重新登录" : null;
+    if (denied) return isHttp ? jsonResponse(message === "UNAUTHORIZED" ? 401 : 403, { ok: false, error: denied }) : { ok: false, error: denied };
     console.error("[feedback-api]", message);
     // 不把飞书原始报文或密钥回传给调用方。
     // HTTP 入口必须回 { statusCode, body }，否则网关会把它当成函数崩溃返回 500。
-    // ---- 每日定时对账（cloudbaserc.json 的 timer 触发器）----
-    if (event.Type === "Timer") {
-      const { results, scores } = await syncRounds(openRounds());
-      const summary = { ok: true, rounds: results.map(summarize), scores };
-      console.log("[feedback-api] 定时对账", JSON.stringify(summary));
-      return summary;
-    }
-
     if (isHttp) return jsonResponse(500, { ok: false, error: "INTERNAL_ERROR" });
     return { ok: false, error: message };
   }

@@ -31,6 +31,15 @@ for (const line of readFileSync(envFile, "utf8").split("\n")) {
   if (value) envVariables[trimmed.slice(0, index).trim()] = value;
 }
 
+// 飞书登录要签 CloudBase 自定义登录 ticket：控制台「身份认证 → 自定义登录」下载的私钥文件，
+// 在 server.env 里写 CLOUDBASE_LOGIN_KEY_FILE=文件路径，这里读出来转成 base64 注入函数环境变量
+// （直接放 JSON 字符串，tcb CLI 会把它当对象解析，CreateFunction 报「Value 应为 string」）。
+if (envVariables.CLOUDBASE_LOGIN_KEY_FILE) {
+  const key = JSON.parse(readFileSync(resolve(root, envVariables.CLOUDBASE_LOGIN_KEY_FILE), "utf8"));
+  envVariables.CLOUDBASE_LOGIN_KEY = Buffer.from(JSON.stringify(key)).toString("base64");
+  delete envVariables.CLOUDBASE_LOGIN_KEY_FILE;
+}
+
 const required = [
   "FEISHU_APP_ID",
   "FEISHU_APP_SECRET",
@@ -43,6 +52,8 @@ const required = [
   "FEISHU_FORM_URL",
   "CLOUDBASE_ENV_ID",
   "CLOUDBASE_API_KEY",
+  "FEISHU_LOGIN_BASE_URL",
+  "CLOUDBASE_LOGIN_KEY",
 ];
 const missing = required.filter((key) => !envVariables[key]);
 if (missing.length > 0) {

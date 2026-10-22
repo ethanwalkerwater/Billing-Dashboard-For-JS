@@ -11,11 +11,8 @@
   `tcb routes add` 加的）；DNSPod 记录 `app CNAME app.jsjy.asia.tcbaccess.tencentcloudbase.com`；安全域名已加 `app.jsjy.asia`。
   证书续期后若 CloudBase 没自动换上，到「静态网站托管 → 基础配置」重新选证书。主域名 `jsjy.asia` 是官网（另一台服务器），不要动。
 - 门户入口：<https://jingshi.vercel.app/> 「学生反馈追踪系统」（源码在 `~/Documents/GitHub/菁仕后台主页`）
-- 教务账号：`jsjy`（另有一个以邮箱登录的备用账号）。**密码不写进仓库**，见 CloudBase 控制台的
-  「身份认证 → 用户管理」，或问项目负责人。
-  业务方原本要 `jsjy / jsjy`，但 CloudBase 密码策略要求 ≥8 位且至少 3 类字符（大写/小写/数字/符号），
-  实测 `jsjy` 直接报 `Invalid password length`，所以用了最接近的可接受形式。
-  登录不能去掉：所有学生/老师数据都靠 RLS 的管理员白名单保护，匿名访问等于公开。
+- 登录：飞书账号（反馈工作台、取消课程、雅思正向率、教师薪资预警共用，不再有账号密码登录）。白名单是 `feedback_admins` 表，按飞书 open_id 维护；
+  所有学生/老师数据都靠 RLS 的管理员白名单保护，登录不能去掉。流程与配置见下方「飞书登录」。
 - 旧版短链接（仍可用，仅供已印出去的码）：`https://jingshi-test-d5gp401i44a0fa7a7-1300607705.ap-shanghai.app.tcloudbase.com/t/<token>`
 - 飞书事件回调：`https://jingshi-test-d5gp401i44a0fa7a7-1300607705.ap-shanghai.app.tcloudbase.com/webhooks/feishu`
 
@@ -81,12 +78,12 @@ npm run build:course-feedback-tracker
 
 ## 部署
 
-tcb fn trigger create feedback-api -e jingshi-test-d5gp401i44a0fa7a7   # 只在首次或改了 cloudbaserc.json 的 triggers 时：每日 3 点定时对账
-npx tsx scripts/setup-feishu.ts   # 幂等：答卷表加「反馈课程月份」字段并放进问卷、订阅记录变更事件
-tcb db execute --sql "$(cat migrations/202610160003_owner_assignments.sql)"
 ```bash
 cd apps/course-feedback-tracker
 npm run deploy:functions   # 打包 + 部署 feedback-api（读 server.env 注入环境变量）
+tcb fn trigger create feedback-api -e jingshi-test-d5gp401i44a0fa7a7   # 只在首次或改了 cloudbaserc.json 的 triggers 时：每日 3 点定时对账
+npx tsx scripts/setup-feishu.ts   # 幂等：答卷表加「反馈课程月份」字段并放进问卷、订阅记录变更事件
+tcb db execute --sql "$(cat migrations/202610160003_owner_assignments.sql)"
 npm run deploy:web         # 构建 + 部署到静态托管 /feedback/
 npm run deploy:root-redirect   # 只在根目录跳转页改动时需要：覆盖根目录 index.html
 ```
@@ -98,10 +95,10 @@ tcb db execute --sql "$(cat migrations/202609170001_initial_feedback_tracker.sql
 tcb db execute --sql "$(cat migrations/202609170002_task_status_audit.sql)"
 tcb db execute --sql "$(cat migrations/202609170003_response_unlinked_status.sql)"
 tcb db execute --sql "$(cat migrations/202609170004_name_binding.sql)"
-tcb db execute --sql "$(cat migrations/202610160002_feedback_month_owner.sql)"
 tcb db execute --sql "$(cat migrations/202610020001_excluded_teachers.sql)"
 tcb db execute --sql "$(cat migrations/202610050001_teacher_scores.sql)"
 tcb db execute --sql "$(cat migrations/202610050002_score_results.sql)"
+tcb db execute --sql "$(cat migrations/202610160002_feedback_month_owner.sql)"
 npx tsx scripts/backfill-teacher-scores.ts   # 一次性：历史分数 + 补算分项 + 各月结果入库（可重复执行，需本机 python3）
 ```
 
@@ -262,3 +259,24 @@ npx tsx scripts/backfill-teacher-scores.ts   # 一次性：历史分数 + 补算
 时间一律写成上海时区的墙上时间（`YYYY-MM-DD HH:mm:ss`，不带时区后缀）。评分脚本用 `datetime.strptime` 解析再按 `%Y-%m` 比对月份，带时区后缀或 UTC 时间会让整月数据被判成"不在报表月份"。`tests/export.test.ts` 锁死了这个格式。
 
 完整需求、设计和实施任务见 [`specs/monthly-course-feedback-tracker`](../../specs/monthly-course-feedback-tracker)。
+
+## 飞书登录
+
+网页（`/feedback/`、`/cancellations/`、`/ielts/`、`/income/`）点「用飞书登录」→ `feedback-api` 的 `/auth/feishu/start` → 飞书授权 → `/auth/feishu/callback` 按 open_id 查
+`feedback_admins` → 签 CloudBase 自定义登录 ticket，跳回网页（ticket 放在 `#` 后）→ 网页 `signInWithCustomTicket`，
+再调 `bind-feishu` 把当前 CloudBase 用户 ID 写进白名单行的 `user_id`。RLS 和各云函数仍按 `user_id` 判断，业务表不用改。
+纯逻辑在 [`src/server/feishu-login.ts`](./src/server/feishu-login.ts)（有单测）。
+
+一次性配置：
+
+1. CloudBase 控制台「身份认证 → 登录方式」开启自定义登录，下载私钥文件放到本目录（`tcb_custom_login*.json` 已 gitignore），
+   `server.env` 写 `CLOUDBASE_LOGIN_KEY_FILE=文件名`。
+2. CloudBase「HTTP 访问服务」在 `app.jsjy.asia` 上加路径 `/auth` → 云函数 `feedback-api`（同 `/classroom-api` 的配法）。
+3. 飞书开放平台（`feedback-api` 用的应用）：开启网页应用登录和「获取用户基本信息」权限，
+   「安全设置 → 重定向 URL」加 `https://app.jsjy.asia/auth/feishu/callback`，发布新版本。
+4. 执行 [`migrations/202610160001_feishu_login.sql`](./migrations/202610160001_feishu_login.sql)。
+5. `server.env` 补 `FEISHU_LOGIN_BASE_URL`、`LOGIN_ALLOWED_ORIGINS`（见 `server.env.example`），然后部署函数和网页。
+
+谁能登录：飞书开放平台里这个应用的「可用范围」（当前是全员）。走完飞书授权的人第一次登录时自动写进 `feedback_admins`，不需要审批。
+要挡住某人，在飞书开发者后台把他移出可用范围（只改 `active=false` 没用，下次登录会被改回）。
+open_id 按飞书应用区分，菁仕课堂（`classroom-recorder`）后台名单里的 open_id 不能直接拿来用。

@@ -8,7 +8,7 @@
 - **已达标**：课时费 × 最低系数 > 预警线（已完成利润目标）
 - **无底薪**：课表里有课但还没填基础薪水（兼职老师）
 
-访问：<https://jingshi.vercel.app/teacher_income_tracking>（308 → CloudBase 静态托管 `/income/`）。登录账号与反馈追踪系统共用（`jsjy`，白名单表 `feedback_admins`）。
+访问：<https://jingshi.vercel.app/teacher_income_tracking>（308 → CloudBase 静态托管 `/income/`）。飞书账号登录，和反馈追踪共用登录端点（`feedback-api` 的 `/auth/feishu/*`）与白名单表 `feedback_admins`，配置见 [反馈追踪 README](../course-feedback-tracker/README.md#飞书登录)。
 
 ## 口径
 
