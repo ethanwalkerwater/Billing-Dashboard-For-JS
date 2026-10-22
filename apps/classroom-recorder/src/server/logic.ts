@@ -6,6 +6,8 @@
 export const HOUR = 3_600_000;
 export const DAY = 24 * HOUR;
 export const SEGMENT_SECONDS = 30;
+/** App 录音是 MP3 32 kbps 恒定码率：4000 字节 = 1 秒 */
+export const AUDIO_BYTES_PER_SEC = 4000;
 export const MAX_ATTEMPTS = 3;
 /** 下课（finish 里的 endedAt）2 小时后仍缺段，就用已有分段出报告 */
 export const MISSING_GRACE_MS = 2 * HOUR;
@@ -98,6 +100,8 @@ export interface LessonDoc {
   asrTaskId?: number | null;
   transcript?: string;
   gapMinutes?: number;
+  /** 实际收到的录音时长（秒），合并时按分段字节数算 */
+  audioSec?: number | null;
   summary?: string;
   editedSummary?: string;
   /** 课 = 学情报告；会议 = 结构化会议纪要 */
@@ -254,7 +258,7 @@ export function reportData(doc: LessonDoc) {
     kind: doc.kind ?? "lesson",
     date: shDate(doc.startAt),
     time: `${shTime(doc.startAt)}–${shTime(doc.endAt)}`,
-    mins: Math.round(recorded / 60_000),
+    mins: doc.audioSec != null ? Math.round(doc.audioSec / 60) : Math.round(recorded / 60_000),
     report: doc.report,
     gapMinutes: doc.gapMinutes ?? 0,
   };
@@ -409,12 +413,12 @@ const ROLE_RULE =
 const SAMPLE = `浩然家长您好，今天（10月15日）的 IG 数学课向您汇报一下：
 
 【今天学了什么】
-1. 二次函数的三种形式：一般式、顶点式、交点式，以及它们之间怎么互相转换；
-2. 用配方法求顶点坐标和对称轴；
+1. quadratic function 的三种形式：standard form、vertex form、factored form，以及它们之间怎么互相转换；
+2. 用 completing the square（配方法）求 turning point（顶点）和 line of symmetry；
 3. 做了 2 道历年真题里的作图题。
 
 【课堂表现】
-浩然配方法的步骤已经很熟练，作图题第一次就画对了开口方向和顶点。需要注意的是，审题时容易漏看“x > 0”这类条件，今天有一题因此多写了一个解。
+浩然 completing the square 的步骤已经很熟练，作图题第一次就画对了开口方向和 turning point。需要注意的是，审题时容易漏看“x > 0”这类条件，今天有一题因此多写了一个解。
 
 【课后建议】
 请孩子做题前先用笔圈出题目里的条件。下节课我们会讲二次不等式。
@@ -429,12 +433,14 @@ export interface Prompts { rules: string; parent: string; report: string; meetin
 export const DEFAULT_PROMPTS: Prompts = {
   rules: `${ROLE_RULE}
 
-可信原则：只使用转写里有依据的内容，不编造学生的表现、分数或没讲过的知识点。某一项在转写里找不到足够依据时，直接写「本课数据不足」，不要硬凑。`,
+可信原则：只使用转写里有依据的内容，不编造学生的表现、分数或没讲过的知识点。某一项在转写里找不到足够依据时，直接写「本课数据不足」，不要硬凑。
+
+英文术语：课上老师用英文讲的学科术语、考试用语和题型名（如 turning point、completing the square、Part 2、Task Response、Paper 1），直接写英文原词，不要翻译成中文，也不要写成「中文（英文）」；转写可能把英文识别错，按学科标准写法纠正拼写。课上本来就用中文讲的概念照常写中文。`,
   parent: `parentSummary 写作要求（纯文字，老师会复制到微信直接发给家长）：
 - 第一行：「{称呼}，今天（{日期}）的{课程}课向您汇报一下：」。称呼默认用「{学生}家长您好」；只有转写里明确说到对接的是妈妈或爸爸时，才写「{学生}妈妈您好」或「{学生}爸爸您好」。
 - 接着依次三段，标题各占一行：【今天学了什么】用 1. 2. 3. 编号列 1–3 条；【课堂表现】先写一个具体的进步，再写一个需要改进的地方，不空夸；【课后建议】写具体可执行的练习，转写里提到了下节课内容就补一句。
 - 最后一行：「有任何问题欢迎随时联系我～」
-- 段与段之间空一行，总长 250–400 字。用家长能看懂的话，不写分数、正确率、专注度这类评判性数字，不用教研术语，不用 Markdown 符号（不要 **、#、- ）。
+- 段与段之间空一行，总长 250–400 字。用家长能看懂的话，不写分数、正确率、专注度这类评判性数字，不用中文教研术语；英文术语照通用规则保留英文，只给最关键、家长最可能看不懂的词在第一次出现时补括号中文，整篇最多 3 处，其余英文词不加注释；加了英文也要守住 250–400 字。例：写「用 completing the square（配方法）求 turning point（顶点）」，不要写「用配方法（completing the square）求顶点（turning point）」。不用 Markdown 符号（不要 **、#、- ）。
 
 范例（只学格式和语气，不要照抄内容）：
 ${SAMPLE}`,
