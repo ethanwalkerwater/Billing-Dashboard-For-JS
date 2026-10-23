@@ -16,7 +16,7 @@ button,input,select,textarea{font:inherit;color:inherit}
 a{color:inherit}
 .mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
 .app{display:grid;grid-template-columns:220px minmax(0,1fr);min-height:100vh}
-aside{border-right:1px solid var(--border);padding:16px 12px;display:flex;flex-direction:column;gap:4px;background:var(--muted)}
+aside{border-right:1px solid var(--border);padding:16px 12px;display:flex;flex-direction:column;gap:4px;background:var(--muted);position:sticky;top:0;height:100vh;overflow-y:auto}
 .brand{display:flex;align-items:center;gap:10px;padding:4px 8px 16px;font-weight:600}
 .logo{width:28px;height:28px;border-radius:6px;background:var(--primary);color:var(--primary-fg);display:grid;place-items:center;font-size:13px;flex:none}
 .nav{display:flex;align-items:center;gap:10px;height:36px;padding:0 10px;border-radius:6px;color:var(--muted-fg);font-weight:500;text-decoration:none}
@@ -157,7 +157,8 @@ dialog.sheet{margin:0 0 0 auto;height:100%;max-height:none;width:min(380px,100%)
 @media (max-width:1100px){.split{grid-template-columns:1fr}.cmp.two{grid-template-columns:1fr}}
 @media (max-width:760px){
   .app{grid-template-columns:1fr}
-  aside{flex-direction:row;align-items:center;border-right:0;border-bottom:1px solid var(--border);padding:10px 16px;overflow-x:auto}
+  aside{flex-direction:row;align-items:center;border-right:0;border-bottom:1px solid var(--border);padding:10px 16px;overflow-x:auto;position:static;height:auto}
+  .view{display:none}
   .brand{padding:0 8px 0 0}.brand span{display:none}
   .me{margin:0 0 0 auto;padding:0 4px}
   main{padding:20px 16px 40px}
@@ -165,3 +166,13 @@ dialog.sheet{margin:0 0 0 auto;height:100%;max-height:none;width:min(380px,100%)
   .web iframe{height:640px}
 }
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+
+/* 超级管理员切换老师视角 */
+.view{margin-top:auto;padding:8px 10px 0;display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted-fg)}
+.view select{height:32px;border:1px solid var(--border);border-radius:6px;background:var(--bg);padding:0 8px;font-size:13px;color:var(--fg)}
+.view+.me{margin-top:0}
+.viewas{display:flex;align-items:center;gap:12px;margin:-8px 0 20px;padding:10px 14px;border-radius:8px;background:var(--warn-bg);color:var(--warn);font-size:13px}
+.viewas b{font-weight:600}
+.viewas button{margin-left:auto}
+.sumed{outline:none;border-radius:6px;padding:8px 10px;margin:-8px -10px;box-shadow:0 0 0 1px var(--border)}
+.sumed:focus{box-shadow:0 0 0 1px var(--ring)}

@@ -88,12 +88,14 @@ function showLogin() {
 }
 function logout() {
   token = '';
+  try { sessionStorage.removeItem('classroom-admin-view'); } catch { /* 同上 */ }
   store.del(TOKEN_KEY);
   showLogin();
 }
 
-async function api<T = any>(path: string, init: RequestInit = {}): Promise<T> {
+async function api<T = any>(path: string, init: RequestInit = {}, asSelf = false): Promise<T> {
   const headers: Record<string, string> = { authorization: `Bearer ${token}`, ...(init.headers as Record<string, string>) };
+  if (viewAs && !asSelf) headers['x-view-as'] = viewAs.openId;
   if (typeof init.body === 'string') headers['content-type'] = 'application/json';
   const response = await fetch(API + path, { ...init, headers });
   const body = await response.json().catch(() => ({}));
@@ -107,8 +109,25 @@ async function api<T = any>(path: string, init: RequestInit = {}): Promise<T> {
 const post = <T = any>(path: string, data: unknown) => api<T>(path, { method: 'POST', body: JSON.stringify(data) });
 
 let main: HTMLElement;
-/** 超级管理员看全部、管提示词和管理员；老师只看自己的 */
+/** 超级管理员看全部、管提示词和管理员；老师只看自己的。超级管理员可以切到某位老师的视角，这时界面和权限都按老师来 */
 let isAdmin = false;
+let realAdmin = false;
+let myName = '';
+let viewAs: { openId: string; name: string } | null = (() => {
+  try { return JSON.parse(sessionStorage.getItem('classroom-admin-view') ?? 'null'); } catch { return null; }
+})();
+let teacherList: { openId: string; name: string }[] = [];
+
+function setView(next: typeof viewAs) {
+  viewAs = next;
+  try { if (next) sessionStorage.setItem('classroom-admin-view', JSON.stringify(next)); else sessionStorage.removeItem('classroom-admin-view'); } catch { /* 隐私模式：只在这一页有效 */ }
+  isAdmin = realAdmin && !viewAs;
+  Object.assign(list, { rows: [], q: '', stage: '', kind: '', teacher: '', student: '', people: null });
+  shell(myName);
+  if (location.hash.replace(/^#\/?/, '') && location.hash !== '#/lessons') history.replaceState(null, '', location.pathname);
+  route();
+}
+
 function shell(name: string) {
   app.innerHTML = `<div class="app">
     <aside>
@@ -116,7 +135,10 @@ function shell(name: string) {
       <a class="nav" href="#/lessons" data-nav="lessons">${ICON.lessons}课程</a>
       ${isAdmin ? `<a class="nav" href="#/prompts" data-nav="prompts">${ICON.prompts}提示词</a>
       <a class="nav" href="#/admins" data-nav="admins">${ICON.people}管理员</a>` : ''}
-      <div class="me"><span>${esc(name)}<small>${isAdmin ? '超级管理员' : '老师'}</small></span><button id="logout">退出</button></div>
+      ${realAdmin ? `<label class="view">查看视角<select id="viewAs">
+        <option value="">全部老师（超级管理员）</option>
+        ${teacherList.map((t) => `<option value="${esc(t.openId)}" ${viewAs?.openId === t.openId ? 'selected' : ''}>${esc(t.name)} 的视角</option>`).join('')}</select></label>` : ''}
+      <div class="me"><span>${esc(name)}<small>${realAdmin ? '超级管理员' : '老师'}</small></span><button id="logout">退出</button></div>
     </aside>
     <main id="main"></main></div>`;
   main = $('#main');
@@ -127,7 +149,8 @@ function route() {
   if (!isAdmin && page !== 'lessons') page = 'lessons';
   document.querySelectorAll('[data-nav]').forEach((a) => a.toggleAttribute('aria-current', false));
   document.querySelector(`[data-nav="${page}"]`)?.setAttribute('aria-current', 'page');
-  const run = page === 'prompts' ? showPrompts() : page === 'admins' ? showAdmins() : id ? showLesson(id) : showLessons();
+  const run = (page === 'prompts' ? showPrompts() : page === 'admins' ? showAdmins() : id ? showLesson(id) : showLessons())
+    .then(() => { if (viewAs) main.insertAdjacentHTML('afterbegin', `<div class="viewas">正在以 <b>${esc(viewAs.name)}</b> 的视角查看，看到和能改的都和这位老师一样<button class="btn sm" id="viewExit">回到超级管理员</button></div>`); });
   run.catch((error: Error) => { if (token) main.innerHTML = `<div class="card empty err">${esc(error.message)}</div>`; });
 }
 
@@ -224,6 +247,8 @@ const speakerClass = (who: string, names: string[]) =>
 /** 转写编辑：按行拆开，who 为空的是对不上格式的原样行 */
 interface TLine { who: string; time: string; at: number; text: string }
 let ed: { id: string; lines: TLine[]; undo: TLine[][]; dirty: boolean } | null = null;
+/** 家长总结 / 会议纪要编辑：整段文字，同样支持划词全部替换 */
+let sed: { id: string; text: string; undo: string[]; dirty: boolean } | null = null;
 const parseLines = (t: string): TLine[] => t.split('\n').map((line) => {
   const m = line.match(LINE);
   return m ? { who: m[1], time: m[2], at: Number(m[3]) * 60 + Number(m[4]), text: m[5] } : { who: '', time: '', at: 0, text: line };
@@ -234,6 +259,7 @@ const speakerNames = (lines: TLine[]) => [...new Set(lines.map((l) => l.who).fil
 async function showLesson(id: string) {
   main.innerHTML = `<div class="crumb"><a href="#/lessons">课程</a></div><div class="empty"><span class="spin"></span></div>`;
   if (ed?.id !== id) ed = null;
+  if (sed?.id !== id) sed = null;
   const d = (detail = await api<Detail>(`/admin/lessons/${id}`));
   const done = d.stage === 'done';
   if (!d.transcript && detailTab === 'transcript' && done) detailTab = 'summary';
@@ -285,8 +311,13 @@ function renderTab() {
       ? `<button class="line" data-at="${l.at}"><span class="t mono">${mmss(l.at)}</span><span class="s ${speakerClass(l.who, names)}">${esc(l.who)}</span><span>${esc(l.text)}</span></button>`
       : `<div class="line" style="cursor:default"><span></span><span></span><span>${esc(l.text)}</span></div>`).join('')}</div></div>`;
     highlight();
+  } else if (detailTab === 'summary' && sed) {
+    $('#tabact').innerHTML = `<span class="muted edhint">选中文字可全部替换</span>
+      ${sed.undo.length ? '<button class="btn sm ghost" id="sumUndo">撤销</button>' : ''}<button class="btn sm" id="sumCancel">取消</button>
+      <button class="btn sm pri" id="sumSave" ${sed.dirty ? '' : 'disabled'}>保存</button>`;
+    $('#tabbody').innerHTML = `<div class="card panel"><div class="summary sumed" contenteditable="plaintext-only" spellcheck="false">${esc(sed.text)}</div></div>`;
   } else if (detailTab === 'summary') {
-    $('#tabact').innerHTML = `${d.editedSummary ? '<span class="badge">老师改过</span>' : ''}<button class="btn sm" id="copySummary">${ICON.copy}复制</button>`;
+    $('#tabact').innerHTML = `${d.editedSummary ? '<span class="badge">老师改过</span>' : ''}<button class="btn sm" id="sumStart">${ICON.edit}编辑</button><button class="btn sm" id="copySummary">${ICON.copy}复制</button>`;
     $('#tabbody').innerHTML = `<div class="card panel"><pre class="summary">${esc(d.editedSummary || d.summary)}</pre></div>`;
   } else {
     $('#tabact').innerHTML = `<a class="btn sm" id="editReport" href="${esc(d.reportUrl)}&edit=1" target="_blank" rel="noopener">${ICON.edit}编辑</a>
@@ -609,21 +640,27 @@ function bulk(apply: () => void) {
 }
 
 /** 只要在一句话里选中了字就弹出（拖选、双击、Shift+方向键都算） */
+/** 选中的字在哪份文字里出现几次：转写编辑时数整份转写，总结编辑时数整段总结 */
+const countPicked = (text: string) => (pickIn === 'sum' ? sed!.text.split(text).length - 1 : countIn(ed!.lines, text));
+let pickIn: 'tx' | 'sum' = 'tx';
+
 function checkPick() {
-  if (!ed || !pop.hidden && pop.querySelector('form')) return;
+  if (!(ed || sed) || !pop.hidden && pop.querySelector('form')) return;
   const sel = getSelection();
-  const box = sel?.anchorNode?.parentElement?.closest('.tx');
+  const box = sel?.anchorNode?.parentElement?.closest('.tx, .sumed');
   const text = sel?.toString() ?? '';
-  if (!sel || !box || !text.trim() || text.includes('\n') || box !== sel.focusNode?.parentElement?.closest('.tx')) return hidePop();
+  if (!sel || !box || !text.trim() || box !== sel.focusNode?.parentElement?.closest('.tx, .sumed')) return hidePop();
+  pickIn = box.classList.contains('sumed') ? 'sum' : 'tx';
+  if (pickIn === 'tx' && text.includes('\n')) return hidePop(); // 转写一句一行，跨句的选择不算
   if (text === picked && !pop.hidden) return;
   picked = text;
-  pop.innerHTML = `<button class="link" data-p="open">全部替换 · ${countIn(ed.lines, text)} 处</button>`;
+  pop.innerHTML = `<button class="link" data-p="open">全部替换 · ${countPicked(text)} 处</button>`;
   pop.hidden = false;
   const r = sel.getRangeAt(0).getBoundingClientRect();
   place(r.right - 20, r.bottom + 6);
 }
 document.addEventListener('mouseup', () => setTimeout(checkPick));
-document.addEventListener('keyup', (e) => { if ((e.target as HTMLElement).classList?.contains('tx')) checkPick(); });
+document.addEventListener('keyup', (e) => { if ((e.target as HTMLElement).closest?.('.tx, .sumed')) checkPick(); });
 document.addEventListener('mousedown', (e) => {
   if (pop.contains(e.target as Node)) { if ((e.target as HTMLElement).tagName === 'BUTTON') e.preventDefault(); } // 不让句子丢掉选区
   else if (pop.querySelector('form')) hidePop();
@@ -645,8 +682,8 @@ function renameForm(i: number, at: HTMLElement) {
 
 pop.addEventListener('click', (e) => {
   const p = (e.target as HTMLElement).closest<HTMLElement>('[data-p]')?.dataset.p;
-  if (p === 'open' && ed && picked) {
-    pop.innerHTML = `<form data-replace><label>把 ${countIn(ed.lines, picked)} 处「${esc(short(picked))}」改成</label>
+  if (p === 'open' && (ed || sed) && picked) {
+    pop.innerHTML = `<form data-replace><label>把 ${countPicked(picked)} 处「${esc(short(picked))}」改成</label>
       <input value="${esc(picked)}" aria-label="替换成"><button class="btn sm pri">全部替换</button></form>`;
     place(pop.offsetLeft, pop.offsetTop);
     pop.querySelector('input')!.focus();
@@ -661,7 +698,14 @@ pop.addEventListener('submit', (e) => {
   const to = pop.querySelector('input')!.value;
   const from = picked;
   hidePop();
-  if (ed && from && to !== from) bulk(() => ed!.lines.forEach((l) => { l.text = l.text.split(from).join(to); }));
+  if (!from || to === from) return;
+  if (pickIn === 'sum' && sed) {
+    sed.undo.push(sed.text);
+    sed.text = sed.text.split(from).join(to);
+    sed.dirty = true;
+    return renderTab();
+  }
+  if (ed) bulk(() => ed!.lines.forEach((l) => { l.text = l.text.split(from).join(to); }));
 });
 function submitRename(one: boolean) {
   const i = Number(pop.querySelector<HTMLElement>('form')!.dataset.rename);
@@ -672,19 +716,32 @@ function submitRename(one: boolean) {
   bulk(() => (one ? [ed!.lines[i]] : ed!.lines.filter((l) => l.who === from)).forEach((l) => { l.who = to; }));
 }
 
+async function sha256(text: string) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
 async function saveTranscript() {
   const d = detail!;
   const transcript = joinLines(ed!.lines);
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(d.transcript ?? ''));
-  const base = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
-  await api(`/admin/lessons/${d._id}/transcript`, { method: 'PUT', body: JSON.stringify({ transcript, base }) });
+  await api(`/admin/lessons/${d._id}/transcript`, { method: 'PUT', body: JSON.stringify({ transcript, base: await sha256(d.transcript ?? '') }) });
   Object.assign(d, { transcript, transcriptEdited: true });
   ed = null;
   toast('转写已保存');
   renderTab();
 }
-const leaveEditor = () => !ed?.dirty || confirm('转写还没保存，确定放弃这些修改？');
-window.addEventListener('beforeunload', (e) => { if (ed?.dirty) e.preventDefault(); });
+async function saveSummary() {
+  const d = detail!;
+  const text = sed!.text.replace(/\r/g, '').trim();
+  await api(`/admin/lessons/${d._id}/summary`, { method: 'PUT', body: JSON.stringify({ text, base: await sha256(d.editedSummary || d.summary || '') }) });
+  d.editedSummary = text;
+  sed = null;
+  toast(d.kind === 'meeting' ? '会议纪要已保存' : '家长总结已保存，老师在 App 里看到的也是这一版');
+  renderTab();
+}
+const dirty = () => Boolean(ed?.dirty || sed?.dirty);
+const leaveEditor = () => !dirty() || confirm('还有没保存的修改，确定放弃？');
+window.addEventListener('beforeunload', (e) => { if (dirty()) e.preventDefault(); });
 
 // ---------- 事件 ----------
 
@@ -695,6 +752,7 @@ document.addEventListener('click', (event) => {
   if (!el) return;
   const { dataset: ds, id } = el;
   if (id === 'logout') return logout();
+  if (id === 'viewExit') return setView(null);
   // 课程
   if (ds.id) return void (location.hash = `#/lessons/${ds.id}`);
   if (id === 'loadMore') return void loadLessons(true).catch((e: Error) => toast(e.message));
@@ -715,6 +773,13 @@ document.addEventListener('click', (event) => {
     return void saveTranscript().catch((e: Error) => { toast(e.message); (el as HTMLButtonElement).disabled = false; });
   }
   if (ds.who && ed) return renameForm(Number(ds.who), el);
+  if (id === 'sumStart') return (sed = { id: detail!._id, text: detail!.editedSummary || detail!.summary || '', undo: [], dirty: false }), renderTab();
+  if (id === 'sumCancel') return void ((!sed?.dirty || confirm('放弃对总结的修改？')) && ((sed = null), hidePop(), renderTab()));
+  if (id === 'sumUndo' && sed?.undo.length) return (sed.text = sed.undo.pop()!), (sed.dirty = true), renderTab();
+  if (id === 'sumSave') {
+    (el as HTMLButtonElement).disabled = true;
+    return void saveSummary().catch((e: Error) => { toast(e.message); (el as HTMLButtonElement).disabled = false; });
+  }
   if (id === 'dltxt') return download(new Blob([detail!.transcript ?? ''], { type: 'text/plain;charset=utf-8' }), `${detail!.fileName}_转写.txt`);
   if (id === 'copySummary') return void copy(detail!.editedSummary || detail!.summary || '', detail!.kind === 'meeting' ? '会议纪要' : '家长总结');
   if (ds.copy) return void copy(ds.copy, '报告链接');
@@ -745,6 +810,11 @@ document.addEventListener('input', (event) => {
     clearTimeout(searchTimer);
     searchTimer = window.setTimeout(() => loadLessons().catch((e: Error) => toast(e.message)), 300);
   }
+  if (target.classList.contains('sumed') && sed) {
+    sed.text = target.textContent ?? '';
+    sed.dirty = true;
+    $<HTMLButtonElement>('#sumSave')?.removeAttribute('disabled');
+  }
   if (target.classList.contains('tx') && ed) {
     const i = Number(target.closest<HTMLElement>('.line')!.dataset.i);
     ed.lines[i].text = (target.textContent ?? '').replace(/\s*\n\s*/g, ' ');
@@ -761,6 +831,10 @@ document.addEventListener('input', (event) => {
 });
 document.addEventListener('change', (event) => {
   const target = event.target as HTMLInputElement;
+  if (target.id === 'viewAs') {
+    const t = teacherList.find((x) => x.openId === target.value);
+    return setView(t ?? null);
+  }
   const filter = target.dataset.filter as FilterKey | undefined;
   if (filter) {
     list[filter] = target.value;
@@ -790,6 +864,7 @@ let lastHash = location.hash;
 window.addEventListener('hashchange', () => {
   if (!leaveEditor()) return history.replaceState(null, '', lastHash); // 留在编辑页，不触发路由
   if (ed && !location.hash.includes(ed.id)) ed = null;
+  if (sed && !location.hash.includes(sed.id)) sed = null;
   lastHash = location.hash;
   if (token) route();
 });
@@ -803,9 +878,18 @@ document.addEventListener('keydown', (e) => {
 
 if (!token) showLogin();
 else {
-  api<{ name: string; role: 'admin' | 'teacher' }>('/admin/me')
-    .then(({ name, role }) => {
-      isAdmin = role === 'admin';
+  api<{ name: string; role: 'admin' | 'teacher' }>('/admin/me', {}, true)
+    .then(async ({ name, role }) => {
+      realAdmin = role === 'admin';
+      myName = name;
+      if (!realAdmin) viewAs = null;
+      isAdmin = realAdmin && !viewAs;
+      if (realAdmin) {
+        // 切视角用的老师名单：上过课的老师（只取一次）
+        const { people } = await api<{ people: { teacherName: string; teacherOpenId: string }[] }>('/admin/people', {}, true).catch(() => ({ people: [] }));
+        teacherList = [...new Map(people.filter((p) => p.teacherOpenId).map((p) => [p.teacherOpenId, p.teacherName])).entries()]
+          .map(([openId, n]) => ({ openId, name: n })).sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
+      }
       shell(name);
       if (location.hash && !/^#\/(lessons|prompts|admins)/.test(location.hash)) history.replaceState(null, '', location.pathname); // 没有 # = 课程列表
       route();
