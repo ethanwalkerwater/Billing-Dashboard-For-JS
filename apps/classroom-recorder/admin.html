@@ -2,14 +2,10 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
-<meta name="color-scheme" content="light">
 <title>菁仕课堂后台</title>
-<link rel="icon" href="data:,">
+<!-- 旧地址：后台搬到 /classroom/admin/，带着 # 后面的页面和登录 token 跳过去 -->
+<script>location.replace('admin/' + location.hash)</script>
 </head>
-<body>
-<div id="app"></div>
-<script type="module" src="/src/admin/main.ts"></script>
-</body>
+<body><a href="admin/">菁仕课堂后台已搬到新地址，点这里打开</a></body>
 </html>

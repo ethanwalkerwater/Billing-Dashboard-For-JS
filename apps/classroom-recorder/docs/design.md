@@ -42,7 +42,7 @@ UI / UX 唯一依据：`docs/MVP.html`（老师端，含「随时录制」三步
 | `POST /lessons/:id/discard` | 老师在 App 里删了这节课：没出报告的不再处理（标失败、次数用满） |
 | `GET /report?t=<token>` | 公开，报告网页数据 `ReportData` |
 
-后台接口（`/admin/*`，`Authorization: Bearer <后台 token>`；`GET /admin/login` 跳飞书授权，回调后带 `#token=` 跳回 `/classroom/admin.html`）：
+后台接口（`/admin/*`，`Authorization: Bearer <后台 token>`；`GET /admin/login` 跳飞书授权，回调后带 `#token=` 跳回 `/classroom/admin/`（旧地址 admin.html 自动跳过去））：
 
 | 方法 路径 | 说明 |
 |---|---|

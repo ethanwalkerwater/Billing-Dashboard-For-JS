@@ -564,11 +564,11 @@ async function runPipeline(lessonId?: string) {
   }
 }
 
-// ---------- 后台（/classroom/admin.html）：管理员 = 环境变量 ADMIN_OPEN_IDS 里的飞书 open_id ----------
+// ---------- 后台（/classroom/admin/）：管理员 = 环境变量 ADMIN_OPEN_IDS 里的飞书 open_id ----------
 
 type AdminSession = { _id: string; openId: string; name: string; expiresAt: number };
 const ADMIN_TTL_MS = 30 * L.DAY;
-const adminUrl = () => requireEnv("REPORT_BASE_URL").replace(/report\.html$/, "admin.html");
+const adminUrl = () => requireEnv("REPORT_BASE_URL").replace(/report\.html$/, "admin/");
 const adminOpenIds = () => (process.env.ADMIN_OPEN_IDS ?? "").split(",").map((id) => id.trim()).filter(Boolean);
 const isAdmin = (openId: string) => adminOpenIds().includes(openId);
 
