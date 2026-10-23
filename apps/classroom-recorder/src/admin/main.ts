@@ -1,5 +1,5 @@
 /**
- * 菁仕课堂后台（/classroom/admin.html）：
+ * 菁仕课堂后台（/classroom/admin/）：
  * - 课程：录音、转写、家长总结、学情报告（报告直接嵌线上 report.html）
  * - 提示词：草稿只存在本机浏览器，试生成时草稿和线上各跑一次对比；「应用到全部老师」才写入新版本
  * 接口：classroom-api 的 /admin/*，飞书登录后 token 放 localStorage。
@@ -74,7 +74,7 @@ async function copy(text: string, what: string) {
 const hashToken = location.hash.match(/^#token=([\w-]+)$/)?.[1];
 if (hashToken) {
   store.set(TOKEN_KEY, hashToken);
-  history.replaceState(null, '', `${location.pathname}#/lessons`);
+  history.replaceState(null, '', location.pathname); // 地址栏只留 /classroom/admin/
 }
 let token = store.get(TOKEN_KEY) ?? hashToken ?? '';
 
@@ -765,7 +765,7 @@ else {
   api<{ name: string }>('/admin/me')
     .then(({ name }) => {
       shell(name);
-      if (!/^#\/(lessons|prompts)/.test(location.hash)) history.replaceState(null, '', `${location.pathname}#/lessons`);
+      if (location.hash && !/^#\/(lessons|prompts)/.test(location.hash)) history.replaceState(null, '', location.pathname); // 没有 # = 课程列表
       route();
     })
     .catch((error: Error) => {

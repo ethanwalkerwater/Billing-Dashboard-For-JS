@@ -4,7 +4,7 @@
 
 - 设计与接口约定：[`docs/design.md`](docs/design.md)；产品方案：[`../../docs/课堂录制.html`](../../docs/课堂录制.html)；报告网页原型：[`../../docs/classroom-report.html`](../../docs/classroom-report.html)。
 - 随时录制：屏幕右侧的悬浮按钮（几秒不碰会淡下去）或菜单栏「随时录制」，不需要课表；结束时填主题、选「课程」（出家长总结 + 学情报告）或「会议」（出会议纪要）。
-- 后台：`https://app.jsjy.asia/classroom/admin.html`，飞书登录，只放行 `ADMIN_OPEN_IDS` 里的人。按课程听 / 下载录音、看 / 下载转写、看家长总结和学情报告；改提示词，用已有课程、上传音频或粘贴转写试生成，和线上版本并排对比，确认后「应用到全部老师」。
+- 后台：`https://app.jsjy.asia/classroom/admin/`，飞书登录，只放行 `ADMIN_OPEN_IDS` 里的人。按课程听 / 下载录音、看 / 下载转写、看家长总结和学情报告；改提示词，用已有课程、上传音频或粘贴转写试生成，和线上版本并排对比，确认后「应用到全部老师」。
 - 完整报告：`https://app.jsjy.asia/classroom/report.html?t=<token>`，不需要登录，靠 32 位随机 token 防猜。「下载 PDF」调用浏览器打印，另存的文件名为 `学生_课程_日期_课堂学情报告`。
 
 ## 架构
