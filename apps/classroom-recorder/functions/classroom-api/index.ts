@@ -621,16 +621,35 @@ async function adminPeople() {
 
 async function adminLesson(id: string) {
   const [doc] = await pg<LessonDoc>("GET", LESSONS,
-    `_id=${eq(id)}&select=_id,student,course,kind,teacherName,startAt,endAt,stage,attempts,error,finish,mergedFileId,audioDeletedAt,transcript,summary,editedSummary,reportToken,promptVersion,gapMinutes,audioSec`);
+    `_id=${eq(id)}&select=_id,student,course,kind,teacherName,startAt,endAt,stage,attempts,error,finish,mergedFileId,audioDeletedAt,transcript,summary,editedSummary,reportToken,promptVersion,gapMinutes,audioSec,rawTranscript`);
   if (!doc) return fail(404, "LESSON_NOT_FOUND", "没有找到这节课");
-  const { finish, mergedFileId, ...rest } = doc;
+  const { finish, mergedFileId, rawTranscript, ...rest } = doc;
   return json(200, {
     ...rest,
+    transcriptEdited: rawTranscript != null,
     mins: L.reportData(doc).mins,
     fileName: [doc.student, doc.course, L.shDate(doc.startAt)].filter(Boolean).join("_").replace(/[\\/:*?"<>|\s]/g, ""),
     audioUrl: mergedFileId ? await signedUrl(mergedFileId, 6 * 3600) : null, // 存储同 Supabase：链接后加 &download=文件名 即按附件下载
     reportUrl: doc.reportToken ? `${requireEnv("REPORT_BASE_URL")}?t=${doc.reportToken}` : null,
   });
+}
+
+/**
+ * 后台改转写（错字、说话人改名）：整段覆盖。第一次改时把机器原文存进 rawTranscript，改坏了还能找回。
+ * base = 打开编辑时那份转写的 sha256，别人先存过就拒绝，不悄悄覆盖。会议的发言占比按新名字重算。
+ */
+async function saveTranscript(event: HttpEvent, id: string) {
+  const body = jsonBody(event);
+  const transcript = typeof body.transcript === "string" ? body.transcript.replace(/\r/g, "").trim() : "";
+  if (!transcript || transcript.length > 300_000) return fail(400, "BAD_BODY", "转写不能为空，且不超过 30 万字");
+  const doc = await getRow<LessonDoc>(LESSONS, id);
+  if (!doc?.transcript) return fail(404, "LESSON_NOT_FOUND", "这节课还没有转写");
+  if (body.base !== sha256(doc.transcript)) return fail(409, "STALE", "转写刚被别人改过，请刷新后再改");
+  const patch: Partial<LessonDoc> = { transcript };
+  if (doc.rawTranscript == null) patch.rawTranscript = doc.transcript;
+  if (doc.kind === "meeting" && doc.report && "speakers" in doc.report) patch.report = { ...doc.report, speakers: L.meetingSpeakers(transcript) };
+  await updateLesson(id, patch);
+  return json(200, { ok: true });
 }
 
 function readPrompts(value: any): L.Prompts | null {
@@ -730,9 +749,10 @@ async function adminRoute(method: string, path: string, event: HttpEvent, query:
   }
   if (method === "POST" && path === "/admin/prompts") return savePrompts(event, admin);
   if (method === "POST" && path === "/admin/preview") return previewPrompts(event, admin);
-  let m = path.match(/^\/admin\/lessons\/(rec[A-Za-z0-9]+|adhoc-[0-9a-f]{16})(\/retry)?$/);
+  let m = path.match(/^\/admin\/lessons\/(rec[A-Za-z0-9]+|adhoc-[0-9a-f]{16})(\/retry|\/transcript)?$/);
   if (m && method === "GET" && !m[2]) return adminLesson(m[1]);
-  if (m && method === "POST" && m[2]) {
+  if (m && method === "PUT" && m[2] === "/transcript") return saveTranscript(event, m[1]);
+  if (m && method === "POST" && m[2] === "/retry") {
     await pg("PATCH", LESSONS, `_id=${eq(m[1])}&stage=eq.failed`, { attempts: 0 }, "return=minimal");
     await processLesson(m[1], Date.now() + 40_000); // 从失败的那一步立刻重跑；没跑完的交给回调 / 定时器
     return json(200, { ok: true });

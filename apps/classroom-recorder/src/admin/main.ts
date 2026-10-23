@@ -9,7 +9,7 @@ import './styles.css';
 type Stage = 'recording' | 'queued' | 'transcribing' | 'summarizing' | 'done' | 'failed';
 interface Row { _id: string; student: string; course: string; kind?: 'lesson' | 'adhoc' | 'meeting'; teacherName: string; startAt: number; endAt: number; audioSec?: number | null; stage: Stage; attempts: number; promptVersion: number | null }
 interface Detail extends Row {
-  error?: string; transcript?: string; summary?: string; editedSummary?: string;
+  error?: string; transcript?: string; transcriptEdited?: boolean; summary?: string; editedSummary?: string;
   mins: number; gapMinutes?: number; fileName: string; audioUrl: string | null; audioDeletedAt?: number | null; reportUrl: string | null;
 }
 interface Prompts { rules: string; parent: string; report: string; meeting: string }
@@ -209,11 +209,24 @@ const kindTag = (r: Row) => (r.kind === 'meeting' ? ' <span class="badge">会议
 
 let detail: Detail | null = null;
 let detailTab = 'transcript';
-const LINE = /^\[(老师|学生|说话人\d+) (\d+):(\d{2})-\d+:\d{2}\] (.*)$/;
-const speakerClass = (who: string) => (who === '老师' ? 's1' : who === '学生' ? 's2' : `s${who.slice(3)}`);
+/** 「[说话人 mm:ss-mm:ss] 文本」；说话人在后台可以改成任意名字（不含空格和方括号） */
+const LINE = /^\[(.+?) ((\d+):(\d{2})-\d+:\d{2})\] (.*)$/;
+const speakerClass = (who: string, names: string[]) =>
+  who === '老师' ? 's1' : who === '学生' ? 's2' : /^说话人\d+$/.test(who) ? `s${who.slice(3)}` : `s${(names.indexOf(who) % 3) + 1}`;
+
+/** 转写编辑：按行拆开，who 为空的是对不上格式的原样行 */
+interface TLine { who: string; time: string; at: number; text: string }
+let ed: { id: string; lines: TLine[]; undo: TLine[][]; dirty: boolean } | null = null;
+const parseLines = (t: string): TLine[] => t.split('\n').map((line) => {
+  const m = line.match(LINE);
+  return m ? { who: m[1], time: m[2], at: Number(m[3]) * 60 + Number(m[4]), text: m[5] } : { who: '', time: '', at: 0, text: line };
+});
+const joinLines = (lines: TLine[]) => lines.map((l) => (l.who ? `[${l.who} ${l.time}] ${l.text}` : l.text)).join('\n');
+const speakerNames = (lines: TLine[]) => [...new Set(lines.map((l) => l.who).filter(Boolean))];
 
 async function showLesson(id: string) {
   main.innerHTML = `<div class="crumb"><a href="#/lessons">课程</a></div><div class="empty"><span class="spin"></span></div>`;
+  if (ed?.id !== id) ed = null;
   const d = (detail = await api<Detail>(`/admin/lessons/${id}`));
   const done = d.stage === 'done';
   if (!d.transcript && detailTab === 'transcript' && done) detailTab = 'summary';
@@ -245,14 +258,25 @@ async function showLesson(id: string) {
 function renderTab() {
   const d = detail!;
   document.querySelectorAll('[data-tab]').forEach((b) => b.setAttribute('aria-selected', String((b as HTMLElement).dataset.tab === detailTab)));
-  if (detailTab === 'transcript') {
-    $('#tabact').innerHTML = `<button class="btn sm" id="dltxt">${ICON.dl}下载转写</button>`;
-    $('#tabbody').innerHTML = `<div class="card panel"><div class="lines">${(d.transcript ?? '').split('\n').map((line) => {
-      const m = line.match(LINE);
-      if (!m) return `<div class="line" style="cursor:default"><span></span><span></span><span>${esc(line)}</span></div>`;
-      const at = Number(m[2]) * 60 + Number(m[3]);
-      return `<button class="line" data-at="${at}"><span class="t mono">${mmss(at)}</span><span class="s ${speakerClass(m[1])}">${m[1]}</span><span>${esc(m[4])}</span></button>`;
-    }).join('')}</div></div>`;
+  if (detailTab === 'transcript' && ed) {
+    $('#tabact').innerHTML = `<span class="muted edhint">选中文字可全部替换，点说话人可改名</span>
+      ${ed.undo.length ? '<button class="btn sm ghost" id="edUndo">撤销</button>' : ''}<button class="btn sm" id="edCancel">取消</button>
+      <button class="btn sm pri" id="edSave" ${ed.dirty ? '' : 'disabled'}>保存</button>`;
+    const names = speakerNames(ed.lines);
+    const box = document.querySelector('#tabbody .lines');
+    const top = box?.scrollTop ?? 0;
+    $('#tabbody').innerHTML = `<div class="card panel"><div class="lines editing">${ed.lines.map((l, i) => `<div class="line" data-i="${i}">${l.who
+      ? `<button class="t mono" data-at="${l.at}" title="从这里播放">${mmss(l.at)}</button><button class="s ${speakerClass(l.who, names)}" data-who="${i}" title="改名">${esc(l.who)}</button>`
+      : '<span></span><span></span>'}<span class="tx" contenteditable="plaintext-only" spellcheck="false">${esc(l.text)}</span></div>`).join('')}</div></div>`;
+    document.querySelector('#tabbody .lines')!.scrollTop = top;
+    highlight();
+  } else if (detailTab === 'transcript') {
+    $('#tabact').innerHTML = `${d.transcriptEdited ? '<span class="badge">改过</span>' : ''}<button class="btn sm" id="edStart">编辑</button><button class="btn sm" id="dltxt">${ICON.dl}下载转写</button>`;
+    const lines = parseLines(d.transcript ?? '');
+    const names = speakerNames(lines);
+    $('#tabbody').innerHTML = `<div class="card panel"><div class="lines">${lines.map((l) => l.who
+      ? `<button class="line" data-at="${l.at}"><span class="t mono">${mmss(l.at)}</span><span class="s ${speakerClass(l.who, names)}">${esc(l.who)}</span><span>${esc(l.text)}</span></button>`
+      : `<div class="line" style="cursor:default"><span></span><span></span><span>${esc(l.text)}</span></div>`).join('')}</div></div>`;
     highlight();
   } else if (detailTab === 'summary') {
     $('#tabact').innerHTML = `${d.editedSummary ? '<span class="badge">老师改过</span>' : ''}<button class="btn sm" id="copySummary">${ICON.copy}复制</button>`;
@@ -265,11 +289,11 @@ function renderTab() {
 
 function highlight() {
   const audio = $<HTMLAudioElement>('#audio');
-  const lines = [...document.querySelectorAll<HTMLElement>('.line[data-at]')];
+  const lines = [...document.querySelectorAll<HTMLElement>('.lines [data-at]')];
   if (!audio || !lines.length) return;
   let current: HTMLElement | undefined;
   for (const line of lines) if (Number(line.dataset.at) <= audio.currentTime) current = line;
-  lines.forEach((line) => line.classList.toggle('on', line === current && audio.currentTime > 0));
+  lines.forEach((line) => line.closest('.line')!.classList.toggle('on', line === current && audio.currentTime > 0));
 }
 
 function web(url: string, label: string) {
@@ -529,6 +553,111 @@ function historySheet() {
   dialog.showModal();
 }
 
+// ---------- 转写编辑：改错字、划词全部替换、说话人改名 ----------
+
+const pop = document.body.appendChild(document.createElement('div'));
+pop.className = 'pop';
+pop.hidden = true;
+let picked = '';
+const hidePop = () => { picked = ''; pop.hidden = true; };
+const short = (t: string) => (t.length > 12 ? `${t.slice(0, 12)}…` : t);
+const countIn = (lines: TLine[], text: string) => lines.reduce((n, l) => n + l.text.split(text).length - 1, 0);
+
+function place(x: number, y: number) {
+  pop.style.left = `${Math.max(8, Math.min(x, innerWidth - pop.offsetWidth - 8))}px`;
+  pop.style.top = `${Math.max(8, Math.min(y, innerHeight - pop.offsetHeight - 8))}px`;
+}
+function edited() {
+  ed!.dirty = true;
+  $<HTMLButtonElement>('#edSave')?.removeAttribute('disabled');
+}
+/** 批量操作前先存一份，供「撤销」 */
+function bulk(apply: () => void) {
+  const before = ed!.lines.map((l) => ({ ...l }));
+  apply();
+  ed!.undo.push(before);
+  ed!.dirty = true;
+  renderTab();
+}
+
+/** 只要在一句话里选中了字就弹出（拖选、双击、Shift+方向键都算） */
+function checkPick() {
+  if (!ed || !pop.hidden && pop.querySelector('form')) return;
+  const sel = getSelection();
+  const box = sel?.anchorNode?.parentElement?.closest('.tx');
+  const text = sel?.toString() ?? '';
+  if (!sel || !box || !text.trim() || text.includes('\n') || box !== sel.focusNode?.parentElement?.closest('.tx')) return hidePop();
+  if (text === picked && !pop.hidden) return;
+  picked = text;
+  pop.innerHTML = `<button class="link" data-p="open">全部替换 · ${countIn(ed.lines, text)} 处</button>`;
+  pop.hidden = false;
+  const r = sel.getRangeAt(0).getBoundingClientRect();
+  place(r.right - 20, r.bottom + 6);
+}
+document.addEventListener('mouseup', () => setTimeout(checkPick));
+document.addEventListener('keyup', (e) => { if ((e.target as HTMLElement).classList?.contains('tx')) checkPick(); });
+document.addEventListener('mousedown', (e) => {
+  if (pop.contains(e.target as Node)) { if ((e.target as HTMLElement).tagName === 'BUTTON') e.preventDefault(); } // 不让句子丢掉选区
+  else if (pop.querySelector('form')) hidePop();
+});
+
+function renameForm(i: number, at: HTMLElement) {
+  const who = ed!.lines[i].who;
+  const n = ed!.lines.filter((l) => l.who === who).length;
+  pop.innerHTML = `<form data-rename="${i}"><label>把「${esc(short(who))}」改成</label>
+    <input value="${esc(who)}" list="whoList" aria-label="新名字" maxlength="20"><datalist id="whoList">${speakerNames(ed!.lines).map((x) => `<option value="${esc(x)}">`).join('')}</datalist>
+    ${n > 1 ? '<button type="button" class="btn sm" data-p="one">只改这句</button>' : ''}<button class="btn sm pri" data-p="all">${n > 1 ? `全部 ${n} 句` : '改名'}</button></form>`;
+  pop.hidden = false;
+  const r = at.getBoundingClientRect();
+  place(r.left, r.bottom + 6);
+  const input = pop.querySelector('input')!;
+  input.focus();
+  input.select();
+}
+
+pop.addEventListener('click', (e) => {
+  const p = (e.target as HTMLElement).closest<HTMLElement>('[data-p]')?.dataset.p;
+  if (p === 'open' && ed && picked) {
+    pop.innerHTML = `<form data-replace><label>把 ${countIn(ed.lines, picked)} 处「${esc(short(picked))}」改成</label>
+      <input value="${esc(picked)}" aria-label="替换成"><button class="btn sm pri">全部替换</button></form>`;
+    place(pop.offsetLeft, pop.offsetTop);
+    pop.querySelector('input')!.focus();
+    pop.querySelector('input')!.select();
+  }
+  if (p === 'one') submitRename(true);
+});
+pop.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const form = pop.querySelector('form')!;
+  if (form.dataset.rename) return submitRename(false);
+  const to = pop.querySelector('input')!.value;
+  const from = picked;
+  hidePop();
+  if (ed && from && to !== from) bulk(() => ed!.lines.forEach((l) => { l.text = l.text.split(from).join(to); }));
+});
+function submitRename(one: boolean) {
+  const i = Number(pop.querySelector<HTMLElement>('form')!.dataset.rename);
+  const to = pop.querySelector('input')!.value.replace(/[\s[\]]/g, '').slice(0, 20); // 名字里不能有空格和方括号，否则行格式会乱
+  const from = ed!.lines[i].who;
+  hidePop();
+  if (!to || to === from) return;
+  bulk(() => (one ? [ed!.lines[i]] : ed!.lines.filter((l) => l.who === from)).forEach((l) => { l.who = to; }));
+}
+
+async function saveTranscript() {
+  const d = detail!;
+  const transcript = joinLines(ed!.lines);
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(d.transcript ?? ''));
+  const base = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+  await api(`/admin/lessons/${d._id}/transcript`, { method: 'PUT', body: JSON.stringify({ transcript, base }) });
+  Object.assign(d, { transcript, transcriptEdited: true });
+  ed = null;
+  toast('转写已保存');
+  renderTab();
+}
+const leaveEditor = () => !ed?.dirty || confirm('转写还没保存，确定放弃这些修改？');
+window.addEventListener('beforeunload', (e) => { if (ed?.dirty) e.preventDefault(); });
+
 // ---------- 事件 ----------
 
 let searchTimer = 0;
@@ -550,6 +679,14 @@ document.addEventListener('click', (event) => {
     }
     return;
   }
+  if (id === 'edStart') return (ed = { id: detail!._id, lines: parseLines(detail!.transcript ?? ''), undo: [], dirty: false }), renderTab();
+  if (id === 'edCancel') return void (leaveEditor() && ((ed = null), hidePop(), renderTab()));
+  if (id === 'edUndo' && ed?.undo.length) return (ed.lines = ed.undo.pop()!), (ed.dirty = true), renderTab();
+  if (id === 'edSave') {
+    (el as HTMLButtonElement).disabled = true;
+    return void saveTranscript().catch((e: Error) => { toast(e.message); (el as HTMLButtonElement).disabled = false; });
+  }
+  if (ds.who && ed) return renameForm(Number(ds.who), el);
   if (id === 'dltxt') return download(new Blob([detail!.transcript ?? ''], { type: 'text/plain;charset=utf-8' }), `${detail!.fileName}_转写.txt`);
   if (id === 'copySummary') return void copy(detail!.editedSummary || detail!.summary || '', detail!.kind === 'meeting' ? '会议纪要' : '家长总结');
   if (ds.copy) return void copy(ds.copy, '报告链接');
@@ -574,6 +711,11 @@ document.addEventListener('input', (event) => {
     list.q = target.value.trim();
     clearTimeout(searchTimer);
     searchTimer = window.setTimeout(() => loadLessons().catch((e: Error) => toast(e.message)), 300);
+  }
+  if (target.classList.contains('tx') && ed) {
+    const i = Number(target.closest<HTMLElement>('.line')!.dataset.i);
+    ed.lines[i].text = (target.textContent ?? '').replace(/\s*\n\s*/g, ' ');
+    edited();
   }
   if (target.id === 'ed') {
     pr.draft![pr.tab] = target.value;
@@ -603,7 +745,18 @@ document.addEventListener('change', (event) => {
     renderOut();
   }
 });
-window.addEventListener('hashchange', () => token && route());
+let lastHash = location.hash;
+window.addEventListener('hashchange', () => {
+  if (!leaveEditor()) return history.replaceState(null, '', lastHash); // 留在编辑页，不触发路由
+  if (ed && !location.hash.includes(ed.id)) ed = null;
+  lastHash = location.hash;
+  if (token) route();
+});
+// 句子里回车不换行（一句一行是转写的格式）
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') hidePop();
+  if (e.key === 'Enter' && (e.target as HTMLElement).classList?.contains('tx')) e.preventDefault();
+});
 
 // ---------- 启动 ----------
 

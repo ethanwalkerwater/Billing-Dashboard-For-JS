@@ -99,6 +99,8 @@ export interface LessonDoc {
   mergedFileId?: string;
   asrTaskId?: number | null;
   transcript?: string;
+  /** 后台第一次改转写前的机器原文 */
+  rawTranscript?: string | null;
   gapMinutes?: number;
   /** 实际收到的录音时长（秒），合并时按分段字节数算 */
   audioSec?: number | null;

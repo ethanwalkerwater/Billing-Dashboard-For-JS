@@ -35,7 +35,7 @@ classroom-api（CloudBase HTTP 云函数，/classroom-api）
 |---|---|---|
 | `classroom_auth` | 登录 state | `status` pending / done / not_teacher，10 分钟过期；App 领取 token 后删除 |
 | `classroom_sessions` | token 的 sha256 | `openId`、`name`、`scheduleName`。不存 token 明文；目前不过期，删行即吊销 |
-| `classroom_lessons` | 飞书课表 record_id | 老师 openId、学生、课程、时间；`stage`、`finish`、`asrTaskId`、`transcript`、`summary` / `editedSummary`、`report`、`reportToken`、`gapMinutes`、`audioSec`（实际录音秒数）、`copied`、`attempts` / `error`、`lockedUntil`（处理租约） |
+| `classroom_lessons` | 飞书课表 record_id | 老师 openId、学生、课程、时间；`stage`、`finish`、`asrTaskId`、`transcript`、`summary` / `editedSummary`、`report`、`reportToken`、`gapMinutes`、`audioSec`（实际录音秒数）、`rawTranscript`（后台第一次改转写前的原文）、`copied`、`attempts` / `error`、`lockedUntil`（处理租约） |
 | `classroom_segments` | (`lessonId`, `seq`) | 每段的 sha256、字节数、Storage 对象名 |
 | `classroom_prompts` | `version` | 后台保存的提示词（通用规则 / 家长总结 / 学情报告 / 会议纪要四段；早于会议纪要的版本该列为空，读取时用默认），版本号最大的一行是线上；一行都没有时用 `logic.ts` 的 `DEFAULT_PROMPTS`（版本 0）。课程的 `promptVersion` 记生成时用的版本 |
 | `classroom_admin_sessions` | token 的 sha256 | 后台登录，30 天过期 |
