@@ -311,14 +311,12 @@ function renderTab() {
       ? `<button class="line" data-at="${l.at}"><span class="t mono">${mmss(l.at)}</span><span class="s ${speakerClass(l.who, names)}">${esc(l.who)}</span><span>${esc(l.text)}</span></button>`
       : `<div class="line" style="cursor:default"><span></span><span></span><span>${esc(l.text)}</span></div>`).join('')}</div></div>`;
     highlight();
-  } else if (detailTab === 'summary' && sed) {
-    $('#tabact').innerHTML = `<span class="muted edhint">选中文字可全部替换</span>
-      ${sed.undo.length ? '<button class="btn sm ghost" id="sumUndo">撤销</button>' : ''}<button class="btn sm" id="sumCancel">取消</button>
-      <button class="btn sm pri" id="sumSave" ${sed.dirty ? '' : 'disabled'}>保存</button>`;
-    $('#tabbody').innerHTML = `<div class="card panel"><div class="summary sumed" contenteditable="plaintext-only" spellcheck="false">${esc(sed.text)}</div></div>`;
   } else if (detailTab === 'summary') {
-    $('#tabact').innerHTML = `${d.editedSummary ? '<span class="badge">老师改过</span>' : ''}<button class="btn sm" id="sumStart">${ICON.edit}编辑</button><button class="btn sm" id="copySummary">${ICON.copy}复制</button>`;
-    $('#tabbody').innerHTML = `<div class="card panel"><pre class="summary">${esc(d.editedSummary || d.summary)}</pre></div>`;
+    // 总结本身就是可编辑的文字：直接改、选中即可全部替换，停手 1 秒自动保存（和 App 一样）
+    if (sed?.id !== d._id) sed = { id: d._id, text: d.editedSummary || d.summary || '', undo: [], dirty: false };
+    $('#tabact').innerHTML = `<span class="muted edhint" id="sumState">${d.editedSummary ? '老师改过 · ' : ''}直接修改，选中文字可全部替换</span>
+      ${sed.undo.length ? '<button class="btn sm ghost" id="sumUndo">撤销替换</button>' : ''}<button class="btn sm" id="copySummary">${ICON.copy}复制</button>`;
+    $('#tabbody').innerHTML = `<div class="card panel"><div class="summary sumed" contenteditable="plaintext-only" spellcheck="false" aria-label="${d.kind === 'meeting' ? '会议纪要' : '家长总结'}">${esc(sed.text)}</div></div>`;
   } else {
     $('#tabact').innerHTML = `<a class="btn sm" id="editReport" href="${esc(d.reportUrl)}&edit=1" target="_blank" rel="noopener">${ICON.edit}编辑</a>
       <button class="btn sm" data-copy="${esc(d.reportUrl)}">${ICON.copy}复制链接</button>`;
@@ -703,7 +701,8 @@ pop.addEventListener('submit', (e) => {
     sed.undo.push(sed.text);
     sed.text = sed.text.split(from).join(to);
     sed.dirty = true;
-    return renderTab();
+    renderTab();
+    return queueSummarySave(0);
   }
   if (ed) bulk(() => ed!.lines.forEach((l) => { l.text = l.text.split(from).join(to); }));
 });
@@ -730,17 +729,39 @@ async function saveTranscript() {
   toast('转写已保存');
   renderTab();
 }
+let sumTimer = 0;
+let sumSaving: Promise<void> | null = null;
+function queueSummarySave(delay = 1000) {
+  clearTimeout(sumTimer);
+  sumTimer = window.setTimeout(() => void saveSummary(), delay);
+}
 async function saveSummary() {
+  if (sumSaving) await sumSaving; // 一次只存一份，前一份存完再比较
+  if (!sed?.dirty) return;
   const d = detail!;
-  const text = sed!.text.replace(/\r/g, '').trim();
-  await api(`/admin/lessons/${d._id}/summary`, { method: 'PUT', body: JSON.stringify({ text, base: await sha256(d.editedSummary || d.summary || '') }) });
-  d.editedSummary = text;
-  sed = null;
-  toast(d.kind === 'meeting' ? '会议纪要已保存' : '家长总结已保存，老师在 App 里看到的也是这一版');
-  renderTab();
+  const state = (t: string) => { const el = $('#sumState'); if (el) el.textContent = t; };
+  const text = sed.text.replace(/\r/g, '').trim();
+  if (!text) return state('总结不能为空，内容没有保存');
+  sed.dirty = false;
+  state('保存中…');
+  sumSaving = (async () => {
+    try {
+      await api(`/admin/lessons/${d._id}/summary`, { method: 'PUT', body: JSON.stringify({ text, base: await sha256(d.editedSummary || d.summary || '') }) });
+      d.editedSummary = text;
+      state(d.kind === 'meeting' ? '已保存' : '已保存 · 老师在 App 里看到的也是这一版');
+    } catch (e) {
+      if (sed) sed.dirty = true;
+      state((e as Error).message);
+    }
+  })();
+  await sumSaving;
+  sumSaving = null;
 }
 const dirty = () => Boolean(ed?.dirty || sed?.dirty);
-const leaveEditor = () => !dirty() || confirm('还有没保存的修改，确定放弃？');
+const leaveEditor = () => {
+  if (sed?.dirty) { clearTimeout(sumTimer); void saveSummary(); } // 总结是自动保存的，离开前把最后几个字存掉
+  return !ed?.dirty || confirm('转写还没保存，确定放弃这些修改？');
+};
 window.addEventListener('beforeunload', (e) => { if (dirty()) e.preventDefault(); });
 
 // ---------- 事件 ----------
@@ -773,15 +794,9 @@ document.addEventListener('click', (event) => {
     return void saveTranscript().catch((e: Error) => { toast(e.message); (el as HTMLButtonElement).disabled = false; });
   }
   if (ds.who && ed) return renameForm(Number(ds.who), el);
-  if (id === 'sumStart') return (sed = { id: detail!._id, text: detail!.editedSummary || detail!.summary || '', undo: [], dirty: false }), renderTab();
-  if (id === 'sumCancel') return void ((!sed?.dirty || confirm('放弃对总结的修改？')) && ((sed = null), hidePop(), renderTab()));
-  if (id === 'sumUndo' && sed?.undo.length) return (sed.text = sed.undo.pop()!), (sed.dirty = true), renderTab();
-  if (id === 'sumSave') {
-    (el as HTMLButtonElement).disabled = true;
-    return void saveSummary().catch((e: Error) => { toast(e.message); (el as HTMLButtonElement).disabled = false; });
-  }
+  if (id === 'sumUndo' && sed?.undo.length) return (sed.text = sed.undo.pop()!), (sed.dirty = true), renderTab(), queueSummarySave(0);
   if (id === 'dltxt') return download(new Blob([detail!.transcript ?? ''], { type: 'text/plain;charset=utf-8' }), `${detail!.fileName}_转写.txt`);
-  if (id === 'copySummary') return void copy(detail!.editedSummary || detail!.summary || '', detail!.kind === 'meeting' ? '会议纪要' : '家长总结');
+  if (id === 'copySummary') return void copy(sed?.text || detail!.editedSummary || detail!.summary || '', detail!.kind === 'meeting' ? '会议纪要' : '家长总结');
   if (ds.copy) return void copy(ds.copy, '报告链接');
   if (ds.admin) {
     if (!confirm(`把 ${ds.name} 设为超级管理员？他将能看到所有老师的录音和报告，并能修改提示词。`)) return;
@@ -813,7 +828,7 @@ document.addEventListener('input', (event) => {
   if (target.classList.contains('sumed') && sed) {
     sed.text = target.textContent ?? '';
     sed.dirty = true;
-    $<HTMLButtonElement>('#sumSave')?.removeAttribute('disabled');
+    queueSummarySave();
   }
   if (target.classList.contains('tx') && ed) {
     const i = Number(target.closest<HTMLElement>('.line')!.dataset.i);
@@ -868,6 +883,8 @@ window.addEventListener('hashchange', () => {
   lastHash = location.hash;
   if (token) route();
 });
+// 离开总结输入框立刻存，不等 1 秒
+document.addEventListener('focusout', (e) => { if ((e.target as HTMLElement).classList?.contains('sumed') && sed?.dirty) queueSummarySave(0); });
 // 句子里回车不换行（一句一行是转写的格式）
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') hidePop();
