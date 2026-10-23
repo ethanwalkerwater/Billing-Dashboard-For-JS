@@ -611,7 +611,11 @@ async function authenticateAdmin(event: HttpEvent): Promise<AdminSession | undef
   const token = header(event, "authorization").replace(/^Bearer\s+/i, "").trim();
   const session = token ? await getRow<AdminSession>(ADMIN_SESSIONS, sha256(token)) : undefined;
   if (!session || session.expiresAt <= Date.now()) return undefined;
-  return { ...session, role: (await isAdmin(session.openId)) ? "admin" : "teacher" };
+  const role = (await isAdmin(session.openId)) ? "admin" : "teacher";
+  // 超级管理员「切换到某位老师的视角」：之后的请求完全按这位老师的权限走
+  const viewAs = header(event, "x-view-as");
+  if (role === "admin" && /^ou_[A-Za-z0-9_-]{8,64}$/.test(viewAs)) return { ...session, openId: viewAs, role: "teacher" };
+  return { ...session, role };
 }
 
 const STAGE_FILTER: Record<string, string> = { done: "eq.done", recording: "eq.recording", failed: "eq.failed", processing: "in.(queued,transcribing,summarizing)" };
@@ -634,7 +638,7 @@ async function adminLessons(query: Record<string, string>, admin: AdminSession) 
 /** 表头筛选的候选：上过课的「老师 × 学生」去重（视图 classroom_lesson_people） */
 async function adminPeople(admin: AdminSession) {
   const mine = admin.role === "admin" ? "" : `&teacherOpenId=${eq(admin.openId)}`;
-  return json(200, { people: await pg("GET", "classroom_lesson_people", `select=teacherName,student${mine}&limit=5000`) });
+  return json(200, { people: await pg("GET", "classroom_lesson_people", `select=teacherName,student,teacherOpenId${mine}&limit=5000`) });
 }
 
 async function adminLesson(id: string, admin: AdminSession) {
@@ -667,6 +671,18 @@ async function saveTranscript(event: HttpEvent, id: string, admin: AdminSession)
   if (doc.rawTranscript == null) patch.rawTranscript = doc.transcript;
   if (doc.kind === "meeting" && doc.report && "speakers" in doc.report) patch.report = { ...doc.report, speakers: L.meetingSpeakers(transcript) };
   await updateLesson(id, patch);
+  return json(200, { ok: true });
+}
+
+/** 后台改家长总结 / 会议纪要文字：和老师在 App 里改的是同一份（editedSummary）；base 对不上说明 App 或别人刚改过 */
+async function saveSummary(event: HttpEvent, id: string, admin: AdminSession) {
+  const body = jsonBody(event);
+  const text = typeof body.text === "string" ? body.text.replace(/\r/g, "").trim() : "";
+  if (!text || text.length > 5000) return fail(400, "BAD_BODY", "总结不能为空，且不超过 5000 字");
+  const [doc] = await pg<LessonDoc>("GET", LESSONS, `_id=${eq(id)}&select=teacherOpenId,summary,editedSummary`);
+  if (!doc || !canSee(admin, doc)) return fail(404, "LESSON_NOT_FOUND", "没有找到这节课");
+  if (body.base !== sha256(doc.editedSummary || doc.summary || "")) return fail(409, "STALE", "总结刚被改过（可能是老师在 App 里改的），请刷新后再改");
+  await updateLesson(id, { editedSummary: text });
   return json(200, { ok: true });
 }
 
@@ -819,9 +835,10 @@ async function adminRoute(method: string, path: string, event: HttpEvent, query:
   if (method === "GET" && path === "/admin/people") return adminPeople(admin);
   if (method === "GET" && path === "/admin/report") return getReportForEdit(query.t ?? "", admin);
   if (method === "PUT" && path === "/admin/report") return saveReport(event, query.t ?? "", admin);
-  let m = path.match(/^\/admin\/lessons\/(rec[A-Za-z0-9]+|adhoc-[0-9a-f]{16})(\/retry|\/transcript)?$/);
+  let m = path.match(/^\/admin\/lessons\/(rec[A-Za-z0-9]+|adhoc-[0-9a-f]{16})(\/retry|\/transcript|\/summary)?$/);
   if (m && method === "GET" && !m[2]) return adminLesson(m[1], admin);
   if (m && method === "PUT" && m[2] === "/transcript") return saveTranscript(event, m[1], admin);
+  if (m && method === "PUT" && m[2] === "/summary") return saveSummary(event, m[1], admin);
   if (m && method === "POST" && m[2] === "/retry") {
     const [doc] = await pg<{ teacherOpenId: string }>("GET", LESSONS, `_id=${eq(m[1])}&select=teacherOpenId`);
     if (!doc || !canSee(admin, doc)) return fail(404, "LESSON_NOT_FOUND", "没有找到这节课");

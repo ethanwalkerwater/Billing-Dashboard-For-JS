@@ -52,6 +52,8 @@ UI / UX 唯一依据：`docs/MVP.html`（老师端，含「随时录制」三步
 | `GET /admin/me` | `{name, role}`；role = admin（超级管理员）/ teacher。老师调用的课程类接口只返回 `teacherOpenId` 是自己的，提示词、试生成、管理员名单返回 403 |
 | `GET /admin/report?t=` · `PUT /admin/report?t=` | 报告编辑：GET 取原文和 `rev`（报告 JSON 的 sha256）；PUT `{rev, report}` 只合并文字（`applyReportEdits`：必填项清空保留原文，列表项清空即删除，知识点改名同步时间轴），版本对不上 409；会议同时重写纪要文字版 |
 | `GET /admin/admins` · `PUT/DELETE /admin/admins/:openId` | 超级管理员名单（创建者来自 `ADMIN_OPEN_IDS`，不能移除）；候选 = 登录过 App 或后台的人 |
+| `PUT /admin/lessons/:id/summary` | 后台改家长总结 / 会议纪要文字（划词全部替换），写 `editedSummary`，和 App 里改的是同一份；body `{text, base}`，base = 当前文字的 sha256，对不上 409 |
+| 请求头 `x-view-as: <open_id>` | 超级管理员切到某位老师的视角：之后的请求按这位老师的权限（只看、只改他的课） |
 | `PUT /admin/lessons/:id/transcript` | 后台改转写（错字、划词全部替换、说话人改名）。body `{transcript, base}`，`base` 是打开编辑时转写的 sha256，对不上返回 409；第一次改时机器原文存进 `rawTranscript`；会议按新名字重算发言占比 |
 | `POST /admin/lessons/:id/retry` | 失败的课把 `attempts` 清零并立刻重跑 |
 | `POST /asr/callback?lesson=` | 腾讯云录音识别转完的回调（不鉴权，只按编号推进，实际状态以 DescribeTaskStatus 为准） |
