@@ -27,6 +27,7 @@ const LESSONS = "classroom_lessons";
 const SEGMENTS = "classroom_segments";
 const PROMPTS = "classroom_prompts";
 const ADMIN_SESSIONS = "classroom_admin_sessions";
+const ADMINS = "classroom_admins";
 
 /**
  * CloudBase PostgreSQL（PostgREST）。环境没开文档型数据库；表结构见 migrations/。
@@ -182,6 +183,14 @@ async function feishuUser(code: string): Promise<{ openId: string; name: string 
   return { openId: info.data.open_id, name: info.data.name ?? "" };
 }
 
+/** 「老师信息」表里认人；第一次登录、档案还没选飞书账号：按姓名认上后写回，以后都按飞书账号认 */
+async function findTeacher(openId: string, name: string) {
+  const teacherTable = { appToken: requireEnv("TEACHER_APP_TOKEN"), tableId: requireEnv("TEACHER_TABLE_ID") };
+  const match = L.matchTeacher((await feishu().listAllRecords(teacherTable)).map(parseTeacher), openId, name);
+  if (match?.bind) await feishu().updateRecord({ ...teacherTable, recordId: match.teacher.recordId, fields: { [TEACHER_FIELDS.feishu]: [{ id: openId }] } });
+  return match;
+}
+
 async function authCallback(query: Record<string, string>) {
   const state = query.state ?? "";
   const auth = state ? await getRow<{ status: string; expiresAt: number; kind?: string }>(AUTH, state) : undefined;
@@ -190,16 +199,13 @@ async function authCallback(query: Record<string, string>) {
   try {
     if (auth.kind === "admin") return await adminCallback(state, query.code);
     const { openId, name } = await feishuUser(query.code);
-    const teacherTable = { appToken: requireEnv("TEACHER_APP_TOKEN"), tableId: requireEnv("TEACHER_TABLE_ID") };
-    const match = L.matchTeacher((await feishu().listAllRecords(teacherTable)).map(parseTeacher), openId, name);
+    const match = await findTeacher(openId, name);
     if (!match) {
       await pg("PATCH", AUTH, `_id=${eq(state)}`, { status: "not_teacher" }, "return=minimal");
       await notifyAdmins(`${name || "有人"} 想登录菁仕课堂，但「老师信息」表里没有对得上的档案。请在老师信息表新增一行（姓名和飞书里一致），并选上他的「飞书账号」。`);
       return page(403, "老师档案里还没有你", `${name || "你"}，「老师信息」表里没有找到你的姓名，已通知教务添加。添加好后回到菁仕课堂再点一次「飞书登录」。`);
     }
     const { teacher } = match;
-    // 第一次登录、档案还没选飞书账号：按姓名认上后写回，以后都按飞书账号认
-    if (match.bind) await feishu().updateRecord({ ...teacherTable, recordId: teacher.recordId, fields: { [TEACHER_FIELDS.feishu]: [{ id: openId }] } });
     await pg("PATCH", AUTH, `_id=${eq(state)}`, { status: "done", openId, name: teacher.name, scheduleName: teacher.scheduleName }, "return=minimal");
     return page(200, "登录成功", `${match.bind ? `${teacher.name}，已自动关联你在「老师信息」里的档案。` : ""}可以回到菁仕课堂了，这个页面可以关闭。`);
   } catch (error) {
@@ -564,13 +570,17 @@ async function runPipeline(lessonId?: string) {
   }
 }
 
-// ---------- 后台（/classroom/admin/）：管理员 = 环境变量 ADMIN_OPEN_IDS 里的飞书 open_id ----------
+// ---------- 后台（/classroom/admin/）----------
+// 两种人：老师（「老师信息」表里有的）只看、只改自己的课和会议；超级管理员看全部、管提示词和管理员名单。
+// 超级管理员 = 环境变量 ADMIN_OPEN_IDS（创建者，后台里移不掉）+ classroom_admins 表（后台里增删）。角色每次请求现查，撤销立即生效。
 
-type AdminSession = { _id: string; openId: string; name: string; expiresAt: number };
+type AdminSession = { _id: string; openId: string; name: string; expiresAt: number; role: "admin" | "teacher" };
 const ADMIN_TTL_MS = 30 * L.DAY;
 const adminUrl = () => requireEnv("REPORT_BASE_URL").replace(/report\.html$/, "admin/");
 const adminOpenIds = () => (process.env.ADMIN_OPEN_IDS ?? "").split(",").map((id) => id.trim()).filter(Boolean);
-const isAdmin = (openId: string) => adminOpenIds().includes(openId);
+const isAdmin = async (openId: string) =>
+  adminOpenIds().includes(openId) || (await pg("GET", ADMINS, `openId=${eq(openId)}&select=openId`)).length > 0;
+const canSee = (admin: AdminSession, doc: { teacherOpenId: string }) => admin.role === "admin" || doc.teacherOpenId === admin.openId;
 
 /** 私信后台管理员；发不出去只记日志，不影响主流程 */
 async function notifyAdmins(text: string) {
@@ -586,22 +596,29 @@ async function adminCallback(state: string, code: string) {
   const claimed = await pg("DELETE", AUTH, `_id=${eq(state)}&status=eq.pending`);
   if (!claimed.length) return page(400, "登录链接已过期", "请回到后台重新登录。");
   const user = await feishuUser(code);
-  if (!isAdmin(user.openId)) return page(403, "没有后台权限", `请把这串 ID 发给管理员开通：${user.openId}`);
+  let name = user.name;
+  if (!(await isAdmin(user.openId))) {
+    const match = await findTeacher(user.openId, user.name);
+    if (!match) return page(403, "老师档案里还没有你", `${user.name || "你"}，「老师信息」表里没有找到你的姓名，请联系教务添加后再登录。`);
+    name = match.teacher.name;
+  }
   const token = randomBytes(32).toString("base64url");
-  await pg("POST", ADMIN_SESSIONS, "", [{ _id: sha256(token), openId: user.openId, name: user.name || "管理员", expiresAt: Date.now() + ADMIN_TTL_MS }], "return=minimal");
+  await pg("POST", ADMIN_SESSIONS, "", [{ _id: sha256(token), openId: user.openId, name: name || "老师", expiresAt: Date.now() + ADMIN_TTL_MS }], "return=minimal");
   return redirect(`${adminUrl()}#token=${token}`); // 放在 # 后面，不进服务器日志；网页读出后立刻从地址栏清掉
 }
 
 async function authenticateAdmin(event: HttpEvent): Promise<AdminSession | undefined> {
   const token = header(event, "authorization").replace(/^Bearer\s+/i, "").trim();
   const session = token ? await getRow<AdminSession>(ADMIN_SESSIONS, sha256(token)) : undefined;
-  return session && session.expiresAt > Date.now() ? session : undefined;
+  if (!session || session.expiresAt <= Date.now()) return undefined;
+  return { ...session, role: (await isAdmin(session.openId)) ? "admin" : "teacher" };
 }
 
 const STAGE_FILTER: Record<string, string> = { done: "eq.done", recording: "eq.recording", failed: "eq.failed", processing: "in.(queued,transcribing,summarizing)" };
 
-async function adminLessons(query: Record<string, string>) {
+async function adminLessons(query: Record<string, string>, admin: AdminSession) {
   const filters = ["select=_id,student,course,kind,teacherName,startAt,endAt,audioSec,stage,attempts,promptVersion", "order=startAt.desc", "limit=50"];
+  if (admin.role !== "admin") filters.push(`teacherOpenId=${eq(admin.openId)}`);
   if (STAGE_FILTER[query.stage]) filters.push(`stage=${STAGE_FILTER[query.stage]}`);
   if (query.kind === "meeting") filters.push("kind=eq.meeting");
   if (query.kind === "lesson") filters.push("kind=in.(lesson,adhoc)");
@@ -615,15 +632,16 @@ async function adminLessons(query: Record<string, string>) {
 }
 
 /** 表头筛选的候选：上过课的「老师 × 学生」去重（视图 classroom_lesson_people） */
-async function adminPeople() {
-  return json(200, { people: await pg("GET", "classroom_lesson_people", "select=teacherName,student&limit=5000") });
+async function adminPeople(admin: AdminSession) {
+  const mine = admin.role === "admin" ? "" : `&teacherOpenId=${eq(admin.openId)}`;
+  return json(200, { people: await pg("GET", "classroom_lesson_people", `select=teacherName,student${mine}&limit=5000`) });
 }
 
-async function adminLesson(id: string) {
+async function adminLesson(id: string, admin: AdminSession) {
   const [doc] = await pg<LessonDoc>("GET", LESSONS,
-    `_id=${eq(id)}&select=_id,student,course,kind,teacherName,startAt,endAt,stage,attempts,error,finish,mergedFileId,audioDeletedAt,transcript,summary,editedSummary,reportToken,promptVersion,gapMinutes,audioSec,rawTranscript`);
-  if (!doc) return fail(404, "LESSON_NOT_FOUND", "没有找到这节课");
-  const { finish, mergedFileId, rawTranscript, ...rest } = doc;
+    `_id=${eq(id)}&select=_id,teacherOpenId,student,course,kind,teacherName,startAt,endAt,stage,attempts,error,finish,mergedFileId,audioDeletedAt,transcript,summary,editedSummary,reportToken,promptVersion,gapMinutes,audioSec,rawTranscript`);
+  if (!doc || !canSee(admin, doc)) return fail(404, "LESSON_NOT_FOUND", "没有找到这节课");
+  const { finish, mergedFileId, rawTranscript, teacherOpenId, ...rest } = doc;
   return json(200, {
     ...rest,
     transcriptEdited: rawTranscript != null,
@@ -638,17 +656,73 @@ async function adminLesson(id: string) {
  * 后台改转写（错字、说话人改名）：整段覆盖。第一次改时把机器原文存进 rawTranscript，改坏了还能找回。
  * base = 打开编辑时那份转写的 sha256，别人先存过就拒绝，不悄悄覆盖。会议的发言占比按新名字重算。
  */
-async function saveTranscript(event: HttpEvent, id: string) {
+async function saveTranscript(event: HttpEvent, id: string, admin: AdminSession) {
   const body = jsonBody(event);
   const transcript = typeof body.transcript === "string" ? body.transcript.replace(/\r/g, "").trim() : "";
   if (!transcript || transcript.length > 300_000) return fail(400, "BAD_BODY", "转写不能为空，且不超过 30 万字");
   const doc = await getRow<LessonDoc>(LESSONS, id);
-  if (!doc?.transcript) return fail(404, "LESSON_NOT_FOUND", "这节课还没有转写");
+  if (!doc?.transcript || !canSee(admin, doc)) return fail(404, "LESSON_NOT_FOUND", "这节课还没有转写");
   if (body.base !== sha256(doc.transcript)) return fail(409, "STALE", "转写刚被别人改过，请刷新后再改");
   const patch: Partial<LessonDoc> = { transcript };
   if (doc.rawTranscript == null) patch.rawTranscript = doc.transcript;
   if (doc.kind === "meeting" && doc.report && "speakers" in doc.report) patch.report = { ...doc.report, speakers: L.meetingSpeakers(transcript) };
   await updateLesson(id, patch);
+  return json(200, { ok: true });
+}
+
+/** 网页上改报告：先取可编辑的原始数据和版本号（rev = 报告 JSON 的 sha256），保存时版本对不上就拒绝 */
+async function reportForEdit(token: string, admin: AdminSession) {
+  if (!/^[A-Za-z0-9_-]{32}$/.test(token)) return undefined;
+  const [doc] = await pg<LessonDoc>("GET", LESSONS, `reportToken=${eq(token)}&stage=eq.done&limit=1&select=_id,teacherOpenId,kind,startAt,report,rawReport,editedSummary`);
+  return doc?.report && canSee(admin, doc) ? doc : undefined;
+}
+const reportRev = (report: unknown) => sha256(JSON.stringify(report));
+
+async function getReportForEdit(token: string, admin: AdminSession) {
+  const doc = await reportForEdit(token, admin);
+  if (!doc) return fail(404, "NOT_FOUND", "没有找到这份报告，或这不是你的课");
+  return json(200, { rev: reportRev(doc.report), report: doc.report, edited: doc.rawReport != null });
+}
+
+async function saveReport(event: HttpEvent, token: string, admin: AdminSession) {
+  const body = jsonBody(event);
+  const doc = await reportForEdit(token, admin);
+  if (!doc) return fail(404, "NOT_FOUND", "没有找到这份报告，或这不是你的课");
+  if (body.rev !== reportRev(doc.report)) return fail(409, "STALE", "报告刚被别人改过，请刷新后再改");
+  const report = L.applyReportEdits(doc.kind, doc.report!, body.report);
+  const patch: Partial<LessonDoc> = { report };
+  if (doc.rawReport == null) patch.rawReport = doc.report; // 第一次改时留一份 AI 原稿
+  // 会议纪要的文字版（App 里复制、飞书私信）由报告生成，跟着更新；老师在 App 里手改过的不动
+  if (doc.kind === "meeting" && !doc.editedSummary) patch.summary = L.meetingText(report as L.MeetingReport, L.shMonthDay(doc.startAt));
+  await updateLesson(doc._id, patch);
+  const [fresh] = await pg<LessonDoc>("GET", LESSONS, `_id=${eq(doc._id)}&select=student,course,kind,teacherName,startAt,endAt,finish,report,gapMinutes,audioSec`);
+  return json(200, { ...L.reportData(fresh), rev: reportRev(fresh.report) });
+}
+
+/** 超级管理员名单：创建者（环境变量）+ 后台加的；候选 = 登录过 App 或后台的老师 */
+async function adminList() {
+  const [admins, app, web] = await Promise.all([
+    pg<{ openId: string; name: string; addedBy: string; addedAt: number }>("GET", ADMINS, "select=*&order=addedAt.asc"),
+    pg<{ openId: string; name: string }>("GET", SESSIONS, "select=openId,name&limit=5000"),
+    pg<{ openId: string; name: string }>("GET", ADMIN_SESSIONS, "select=openId,name&limit=5000"),
+  ]);
+  const names = new Map([...web, ...app].map((p) => [p.openId, p.name]));
+  return json(200, {
+    owners: adminOpenIds().map((openId) => ({ openId, name: names.get(openId) ?? "" })),
+    admins,
+    people: [...names].map(([openId, name]) => ({ openId, name })).sort((a, b) => a.name.localeCompare(b.name, "zh-CN")),
+  });
+}
+
+async function setAdmin(method: string, openId: string, event: HttpEvent, admin: AdminSession) {
+  if (adminOpenIds().includes(openId)) return fail(400, "OWNER", "创建者一直是超级管理员，不能在这里改");
+  if (method === "DELETE") {
+    await pg("DELETE", ADMINS, `openId=${eq(openId)}`);
+    return json(200, { ok: true });
+  }
+  const name = String(jsonBody(event).name ?? "").trim().slice(0, 40);
+  if (!name) return fail(400, "BAD_BODY", "缺少名字");
+  await pg("POST", ADMINS, "on_conflict=openId", [{ openId, name, addedBy: admin.name, addedAt: Date.now() }], "resolution=merge-duplicates,return=minimal");
   return json(200, { ok: true });
 }
 
@@ -740,23 +814,32 @@ async function asrStatus(taskId: number) {
 }
 
 async function adminRoute(method: string, path: string, event: HttpEvent, query: Record<string, string>, admin: AdminSession) {
-  if (method === "GET" && path === "/admin/me") return json(200, { name: admin.name });
-  if (method === "GET" && path === "/admin/lessons") return adminLessons(query);
-  if (method === "GET" && path === "/admin/people") return adminPeople();
+  if (method === "GET" && path === "/admin/me") return json(200, { name: admin.name, role: admin.role });
+  if (method === "GET" && path === "/admin/lessons") return adminLessons(query, admin);
+  if (method === "GET" && path === "/admin/people") return adminPeople(admin);
+  if (method === "GET" && path === "/admin/report") return getReportForEdit(query.t ?? "", admin);
+  if (method === "PUT" && path === "/admin/report") return saveReport(event, query.t ?? "", admin);
+  let m = path.match(/^\/admin\/lessons\/(rec[A-Za-z0-9]+|adhoc-[0-9a-f]{16})(\/retry|\/transcript)?$/);
+  if (m && method === "GET" && !m[2]) return adminLesson(m[1], admin);
+  if (m && method === "PUT" && m[2] === "/transcript") return saveTranscript(event, m[1], admin);
+  if (m && method === "POST" && m[2] === "/retry") {
+    const [doc] = await pg<{ teacherOpenId: string }>("GET", LESSONS, `_id=${eq(m[1])}&select=teacherOpenId`);
+    if (!doc || !canSee(admin, doc)) return fail(404, "LESSON_NOT_FOUND", "没有找到这节课");
+    await pg("PATCH", LESSONS, `_id=${eq(m[1])}&stage=eq.failed`, { attempts: 0 }, "return=minimal");
+    await processLesson(m[1], Date.now() + 40_000); // 从失败的那一步立刻重跑；没跑完的交给回调 / 定时器
+    return json(200, { ok: true });
+  }
+  // 以下只给超级管理员：提示词、试生成、管理员名单
+  if (admin.role !== "admin") return fail(403, "FORBIDDEN", "只有超级管理员可以操作");
+  if (method === "GET" && path === "/admin/admins") return adminList();
+  m = path.match(/^\/admin\/admins\/(ou_[A-Za-z0-9_-]{8,64})$/);
+  if (m && (method === "PUT" || method === "DELETE")) return setAdmin(method, m[1], event, admin);
   if (method === "GET" && path === "/admin/prompts") {
     const rows = await pg<PromptRow>("GET", PROMPTS, "order=version.desc&limit=30");
     return json(200, { versions: rows.length ? rows.map(withMeeting) : [await livePrompts()] });
   }
   if (method === "POST" && path === "/admin/prompts") return savePrompts(event, admin);
   if (method === "POST" && path === "/admin/preview") return previewPrompts(event, admin);
-  let m = path.match(/^\/admin\/lessons\/(rec[A-Za-z0-9]+|adhoc-[0-9a-f]{16})(\/retry|\/transcript)?$/);
-  if (m && method === "GET" && !m[2]) return adminLesson(m[1]);
-  if (m && method === "PUT" && m[2] === "/transcript") return saveTranscript(event, m[1]);
-  if (m && method === "POST" && m[2] === "/retry") {
-    await pg("PATCH", LESSONS, `_id=${eq(m[1])}&stage=eq.failed`, { attempts: 0 }, "return=minimal");
-    await processLesson(m[1], Date.now() + 40_000); // 从失败的那一步立刻重跑；没跑完的交给回调 / 定时器
-    return json(200, { ok: true });
-  }
   m = path.match(/^\/admin\/uploads\/([A-Za-z0-9_-]{8,40})\/(\d{1,2}|finish)$/);
   if (m && method === "POST") return m[2] === "finish" ? finishUpload(event, m[1]) : uploadPart(event, m[1], Number(m[2]));
   m = path.match(/^\/admin\/asr\/(\d{1,20})$/);

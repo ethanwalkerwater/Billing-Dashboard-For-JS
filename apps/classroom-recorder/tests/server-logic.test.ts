@@ -229,3 +229,26 @@ test("matchTeacher：先认飞书账号，没绑的按唯一姓名认，同名�
   assert.equal(L.matchTeacher(rows, "ou_x", ""), null);
   assert.equal(L.matchTeacher(rows, "ou_x", "陌生人"), null);
 });
+
+test("网页改报告：只改文字；清空必填项保留原文，清空列表项删掉；知识点改名同步到时间轴", () => {
+  const old: L.ClassReport = {
+    topic: "二次函数", lead: "能求顶点", content: ["配方法", "判别式"],
+    mastery: [{ name: "配方", status: "基本掌握", evidence: "会配" }, { name: "判别式", status: "需要巩固", evidence: "不熟" }],
+    performance: "积极", issue: { title: "符号", fix: "多练" }, homework: "作业", review: "复习", next: "下节",
+    timeline: [{ phase: "讲解", title: "讲配方", start: 0, end: 60, points: ["配方", "判别式"] }],
+    questions: [{ time: 5, text: "为什么", answer: "因为" }], gapMinutes: 3,
+  };
+  const out = L.applyReportEdits("lesson", old, {
+    topic: "  ", lead: "**能**求顶点", content: ["配方法", ""],
+    mastery: [{ name: "completing the square", status: "已掌握", evidence: "" }, { name: "" }],
+    timeline: [{ title: "讲 completing the square", start: 99 }], questions: [{ text: "为什么？", answer: "" }],
+  }) as L.ClassReport;
+  assert.equal(out.topic, "二次函数");
+  assert.equal(out.lead, "**能**求顶点");
+  assert.deepEqual(out.content, ["配方法"]);
+  assert.deepEqual(out.mastery, [{ name: "completing the square", status: "基本掌握", evidence: "会配" }]);
+  assert.deepEqual(out.timeline, [{ phase: "讲解", title: "讲 completing the square", start: 0, end: 60, points: ["completing the square"] }]);
+  assert.deepEqual(out.questions, [{ time: 5, text: "为什么？", answer: "" }]);
+  assert.equal(out.gapMinutes, 3);
+  assert.equal(out.homework, "作业");
+});

@@ -101,6 +101,8 @@ export interface LessonDoc {
   transcript?: string;
   /** 后台第一次改转写前的机器原文 */
   rawTranscript?: string | null;
+  /** 网页上第一次改报告前的 AI 原稿 */
+  rawReport?: ClassReport | MeetingReport | null;
   gapMinutes?: number;
   /** 实际收到的录音时长（秒），合并时按分段字节数算 */
   audioSec?: number | null;
@@ -699,5 +701,69 @@ export function parseSummary(raw: string, headings = promptHeadings(DEFAULT_PROM
       timeline: parseTimeline(r.timeline, new Set(mastery.map((m: { name: string }) => m.name))),
       questions: parseQuestions(r.questions),
     },
+  };
+}
+
+// ---------- 老师在网页上改报告：只改文字，结构、时间、掌握程度、发言统计都不变 ----------
+
+const clean = (v: unknown, max = 2000) => (typeof v === "string" ? v.replace(/\r/g, "").trim().slice(0, max) : undefined);
+/** 必填文字：没传或清空就保留原文 */
+const keep = (v: unknown, old: string) => clean(v) || old;
+/** 可删的列表项：没传保留原文，清空 = 删掉这一条（返回 null） */
+const drop = (v: unknown, old: string) => { const s = clean(v); return s === undefined ? old : s || null; };
+/** 可留空的文字（如回答、负责人） */
+const free = (v: unknown, old: string) => clean(v) ?? old;
+const at = (list: unknown, i: number): any => (Array.isArray(list) ? (list[i] ?? {}) : {});
+
+export function applyReportEdits(kind: LessonKind | undefined, old: ClassReport | MeetingReport, edited: any): ClassReport | MeetingReport {
+  const e = edited && typeof edited === "object" ? edited : {};
+  if (kind === "meeting") {
+    const o = old as MeetingReport;
+    return {
+      ...o,
+      title: keep(e.title, o.title),
+      lead: keep(e.lead, o.lead),
+      // 议题带时间，撑着时间分布图：只改字，不删
+      sections: o.sections.map((s, i) => ({
+        ...s, title: keep(at(e.sections, i).title, s.title),
+        items: s.items.map((it, j) => ({ ...it, title: keep(at(at(e.sections, i).items, j).title, it.title), conclusion: keep(at(at(e.sections, i).items, j).conclusion, it.conclusion) })),
+      })),
+      decisions: o.decisions.flatMap((d, i) => { const text = drop(at(e.decisions, i).text, d.text); return text ? [{ ...d, text }] : []; }),
+      todos: o.todos.flatMap((t, i) => {
+        const x = at(e.todos, i);
+        const task = drop(x.task, t.task);
+        return task ? [{ ...t, task, owner: free(x.owner, t.owner), due: free(x.due, t.due) }] : [];
+      }),
+      followups: o.followups.flatMap((f, i) => { const v = drop(Array.isArray(e.followups) ? e.followups[i] : undefined, f); return v ? [v] : []; }),
+    };
+  }
+  const o = old as ClassReport;
+  const renamed = new Map<string, string | null>(); // 知识点改名 / 删掉，时间轴里引用它的地方跟着变
+  const mastery = o.mastery.flatMap((m, i) => {
+    const x = at(e.mastery, i);
+    const name = drop(x.name, m.name);
+    if (name !== m.name) renamed.set(m.name, name);
+    return name ? [{ ...m, name, evidence: keep(x.evidence, m.evidence) }] : [];
+  });
+  return {
+    ...o,
+    topic: keep(e.topic, o.topic),
+    lead: keep(e.lead, o.lead),
+    content: o.content.flatMap((c, i) => { const v = drop(Array.isArray(e.content) ? e.content[i] : undefined, c); return v ? [v] : []; }),
+    mastery,
+    performance: keep(e.performance, o.performance),
+    issue: { title: keep(e.issue?.title, o.issue.title), fix: keep(e.issue?.fix, o.issue.fix) },
+    homework: keep(e.homework, o.homework),
+    review: keep(e.review, o.review),
+    next: keep(e.next, o.next),
+    ...(o.timeline && {
+      timeline: o.timeline.map((t, i) => ({
+        ...t, title: keep(at(e.timeline, i).title, t.title),
+        points: t.points.flatMap((p) => (renamed.has(p) ? (renamed.get(p) ? [renamed.get(p)!] : []) : [p])),
+      })),
+    }),
+    ...(o.questions && {
+      questions: o.questions.flatMap((q, i) => { const x = at(e.questions, i); const text = drop(x.text, q.text); return text ? [{ ...q, text, answer: free(x.answer, q.answer) }] : []; }),
+    }),
   };
 }

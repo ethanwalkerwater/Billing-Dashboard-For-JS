@@ -24,6 +24,7 @@ aside{border-right:1px solid var(--border);padding:16px 12px;display:flex;flex-d
 .nav[aria-current="page"]{background:var(--bg);color:var(--fg);box-shadow:0 1px 2px rgba(0,0,0,.06)}
 .nav svg{width:16px;height:16px}
 .me{margin-top:auto;padding:8px 10px;color:var(--muted-fg);font-size:13px;display:flex;justify-content:space-between;gap:8px}
+.me small{display:block;font-size:11px;opacity:.8}
 .me button{border:0;background:none;padding:0;cursor:pointer;color:inherit}
 .me button:hover{color:var(--fg)}
 main{min-width:0;padding:28px 32px 48px}

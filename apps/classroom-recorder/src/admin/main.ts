@@ -33,6 +33,8 @@ const ICON = {
   hist: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/></svg>',
   open: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg>',
   chev: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m7 10 5 5 5-5"/></svg>',
+  people: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8"/></svg>',
+  edit: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>',
   spark: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5 18 18M6 18l2.5-2.5M15.5 8.5 18 6"/></svg>',
 };
 
@@ -81,6 +83,7 @@ let token = store.get(TOKEN_KEY) ?? hashToken ?? '';
 function showLogin() {
   app.innerHTML = `<div class="login"><div class="card">
     <div class="brand" style="padding:0"><div class="logo">菁</div>菁仕课堂后台</div>
+    <p class="muted" style="margin:0">老师登录后看自己的课程和会议，可以改转写和报告</p>
     <a class="btn pri" href="${API}/admin/login">用飞书登录</a></div></div>`;
 }
 function logout() {
@@ -104,23 +107,27 @@ async function api<T = any>(path: string, init: RequestInit = {}): Promise<T> {
 const post = <T = any>(path: string, data: unknown) => api<T>(path, { method: 'POST', body: JSON.stringify(data) });
 
 let main: HTMLElement;
+/** 超级管理员看全部、管提示词和管理员；老师只看自己的 */
+let isAdmin = false;
 function shell(name: string) {
   app.innerHTML = `<div class="app">
     <aside>
       <div class="brand"><div class="logo">菁</div><span>菁仕课堂后台</span></div>
       <a class="nav" href="#/lessons" data-nav="lessons">${ICON.lessons}课程</a>
-      <a class="nav" href="#/prompts" data-nav="prompts">${ICON.prompts}提示词</a>
-      <div class="me"><span>${esc(name)}</span><button id="logout">退出</button></div>
+      ${isAdmin ? `<a class="nav" href="#/prompts" data-nav="prompts">${ICON.prompts}提示词</a>
+      <a class="nav" href="#/admins" data-nav="admins">${ICON.people}管理员</a>` : ''}
+      <div class="me"><span>${esc(name)}<small>${isAdmin ? '超级管理员' : '老师'}</small></span><button id="logout">退出</button></div>
     </aside>
     <main id="main"></main></div>`;
   main = $('#main');
 }
 
 function route() {
-  const [, page = 'lessons', id] = location.hash.match(/^#\/(lessons|prompts)(?:\/(rec\w+|adhoc-[0-9a-f]{16}))?/) ?? [];
+  let [, page = 'lessons', id] = location.hash.match(/^#\/(lessons|prompts|admins)(?:\/(rec\w+|adhoc-[0-9a-f]{16}))?/) ?? [];
+  if (!isAdmin && page !== 'lessons') page = 'lessons';
   document.querySelectorAll('[data-nav]').forEach((a) => a.toggleAttribute('aria-current', false));
   document.querySelector(`[data-nav="${page}"]`)?.setAttribute('aria-current', 'page');
-  const run = page === 'prompts' ? showPrompts() : id ? showLesson(id) : showLessons();
+  const run = page === 'prompts' ? showPrompts() : page === 'admins' ? showAdmins() : id ? showLesson(id) : showLessons();
   run.catch((error: Error) => { if (token) main.innerHTML = `<div class="card empty err">${esc(error.message)}</div>`; });
 }
 
@@ -160,8 +167,8 @@ async function loadLessons(append = false) {
   if (!rows) return;
   rows.innerHTML = list.rows.map((r) => `<tr data-id="${esc(r._id)}">
       <td class="mono">${when(r.startAt)}</td><td class="who">${esc(r.student || '—')}</td><td>${esc(r.course)}${r.kind === 'adhoc' ? ' <span class="badge">随时录制</span>' : ''}</td>
-      <td>${r.kind === 'meeting' ? '会议' : '课程'}</td><td>${esc(r.teacherName)}</td><td class="mono muted">${duration(r)}</td><td>${badge(r)}</td></tr>`).join('')
-    || `<tr><td colspan="7" class="empty">${list.q || FILTER_KEYS.some((key) => list[key]) ? '没有符合条件的课程' : '还没有录过课'}</td></tr>`;
+      <td>${r.kind === 'meeting' ? '会议' : '课程'}</td>${isAdmin ? `<td>${esc(r.teacherName)}</td>` : ''}<td class="mono muted">${duration(r)}</td><td>${badge(r)}</td></tr>`).join('')
+    || `<tr><td colspan="${isAdmin ? 7 : 6}" class="empty">${list.q || FILTER_KEYS.some((key) => list[key]) ? '没有符合条件的课程' : '还没有录过课'}</td></tr>`;
   $('#more').hidden = !list.more;
 }
 
@@ -181,17 +188,17 @@ function renderHead() {
   // 选了老师就只列这位老师的学生
   const students = uniq(people.filter((p) => !list.teacher || p.teacherName === list.teacher).map((p) => p.student).concat(list.student));
   $('#thead').innerHTML = `<tr><th>上课时间</th>${filterTh('student', '学生', students)}<th>课程</th>${filterTh('kind', '类型', KINDS)}
-    ${filterTh('teacher', '老师', teachers)}<th>时长</th>${filterTh('stage', '状态', STAGES)}</tr>`;
+    ${isAdmin ? filterTh('teacher', '老师', teachers) : ''}<th>时长</th>${filterTh('stage', '状态', STAGES)}</tr>`;
 }
 
 async function showLessons() {
   main.innerHTML = `
     <div class="head"><h1>课程</h1>
-      <label class="input search" for="q">${ICON.search}<input id="q" placeholder="学生、课程或老师" value="${esc(list.q)}" autocomplete="off"></label>
+      <label class="input search" for="q">${ICON.search}<input id="q" placeholder="${isAdmin ? '学生、课程或老师' : '学生或课程'}" value="${esc(list.q)}" autocomplete="off"></label>
     </div>
     <div class="card tablewrap"><table>
       <thead id="thead"></thead>
-      <tbody id="rows"><tr><td colspan="7" class="empty"><span class="spin"></span></td></tr></tbody></table></div>
+      <tbody id="rows"><tr><td colspan="${isAdmin ? 7 : 6}" class="empty"><span class="spin"></span></td></tr></tbody></table></div>
     <div class="more" id="more" hidden><button class="btn" id="loadMore">加载更多</button></div>`;
   renderHead();
   if (!list.people) {
@@ -282,7 +289,8 @@ function renderTab() {
     $('#tabact').innerHTML = `${d.editedSummary ? '<span class="badge">老师改过</span>' : ''}<button class="btn sm" id="copySummary">${ICON.copy}复制</button>`;
     $('#tabbody').innerHTML = `<div class="card panel"><pre class="summary">${esc(d.editedSummary || d.summary)}</pre></div>`;
   } else {
-    $('#tabact').innerHTML = `<button class="btn sm" data-copy="${esc(d.reportUrl)}">${ICON.copy}复制链接</button>`;
+    $('#tabact').innerHTML = `<a class="btn sm" id="editReport" href="${esc(d.reportUrl)}&edit=1" target="_blank" rel="noopener">${ICON.edit}编辑</a>
+      <button class="btn sm" data-copy="${esc(d.reportUrl)}">${ICON.copy}复制链接</button>`;
     $('#tabbody').innerHTML = web(d.reportUrl!, '');
   }
 }
@@ -553,6 +561,26 @@ function historySheet() {
   dialog.showModal();
 }
 
+// ---------- 管理员名单（只有超级管理员能进） ----------
+
+interface Person { openId: string; name: string }
+async function showAdmins() {
+  const { owners, admins, people } = await api<{ owners: Person[]; admins: Array<Person & { addedBy: string }>; people: Person[] }>('/admin/admins');
+  const ownerIds = new Set(owners.map((p) => p.openId));
+  const adminIds = new Set(admins.map((p) => p.openId));
+  const others = people.filter((p) => !ownerIds.has(p.openId) && !adminIds.has(p.openId));
+  const row = (p: Person, role: string, action: string) =>
+    `<tr style="cursor:default"><td class="who">${esc(p.name || '（还没登录过）')}</td><td class="muted">${role}</td><td style="text-align:right">${action}</td></tr>`;
+  main.innerHTML = `
+    <div class="head"><h1>管理员</h1></div>
+    <p class="muted" style="margin:-8px 0 16px">超级管理员能看到所有老师的录音和报告，能改提示词和这份名单；老师用飞书登录后只看自己的课程和会议。老师要先登录过一次 App 或后台，才会出现在下面。</p>
+    <div class="card tablewrap"><table><thead><tr><th>姓名</th><th>身份</th><th></th></tr></thead><tbody>
+      ${owners.map((p) => row(p, '超级管理员 · 创建者', '<span class="muted">不能移除</span>')).join('')}
+      ${admins.map((p) => row(p, `超级管理员 · ${esc(p.addedBy)} 添加`, `<button class="btn sm" data-unadmin="${esc(p.openId)}">取消管理员</button>`)).join('')}
+      ${others.map((p) => row(p, '老师', `<button class="btn sm" data-admin="${esc(p.openId)}" data-name="${esc(p.name)}">设为超级管理员</button>`)).join('')}
+    </tbody></table></div>`;
+}
+
 // ---------- 转写编辑：改错字、划词全部替换、说话人改名 ----------
 
 const pop = document.body.appendChild(document.createElement('div'));
@@ -690,6 +718,11 @@ document.addEventListener('click', (event) => {
   if (id === 'dltxt') return download(new Blob([detail!.transcript ?? ''], { type: 'text/plain;charset=utf-8' }), `${detail!.fileName}_转写.txt`);
   if (id === 'copySummary') return void copy(detail!.editedSummary || detail!.summary || '', detail!.kind === 'meeting' ? '会议纪要' : '家长总结');
   if (ds.copy) return void copy(ds.copy, '报告链接');
+  if (ds.admin) {
+    if (!confirm(`把 ${ds.name} 设为超级管理员？他将能看到所有老师的录音和报告，并能修改提示词。`)) return;
+    return void api(`/admin/admins/${ds.admin}`, { method: 'PUT', body: JSON.stringify({ name: ds.name }) }).then(showAdmins).catch((e: Error) => toast(e.message));
+  }
+  if (ds.unadmin) return void api(`/admin/admins/${ds.unadmin}`, { method: 'DELETE' }).then(showAdmins).catch((e: Error) => toast(e.message));
   if (id === 'retry') {
     return void post(`/admin/lessons/${detail!._id}/retry`, {})
       .then(() => { toast('已重新开始处理，几分钟内出结果'); return showLesson(detail!._id); })
@@ -745,6 +778,14 @@ document.addEventListener('change', (event) => {
     renderOut();
   }
 });
+// 在新标签页改完报告回来，把内嵌的报告刷新一下
+let reportEdited = false;
+document.addEventListener('click', (e) => { if ((e.target as HTMLElement).closest('#editReport')) reportEdited = true; });
+window.addEventListener('focus', () => {
+  const frame = document.querySelector<HTMLIFrameElement>('.web iframe');
+  if (reportEdited && frame) frame.src = frame.src;
+  reportEdited = false;
+});
 let lastHash = location.hash;
 window.addEventListener('hashchange', () => {
   if (!leaveEditor()) return history.replaceState(null, '', lastHash); // 留在编辑页，不触发路由
@@ -762,10 +803,11 @@ document.addEventListener('keydown', (e) => {
 
 if (!token) showLogin();
 else {
-  api<{ name: string }>('/admin/me')
-    .then(({ name }) => {
+  api<{ name: string; role: 'admin' | 'teacher' }>('/admin/me')
+    .then(({ name, role }) => {
+      isAdmin = role === 'admin';
       shell(name);
-      if (location.hash && !/^#\/(lessons|prompts)/.test(location.hash)) history.replaceState(null, '', location.pathname); // 没有 # = 课程列表
+      if (location.hash && !/^#\/(lessons|prompts|admins)/.test(location.hash)) history.replaceState(null, '', location.pathname); // 没有 # = 课程列表
       route();
     })
     .catch((error: Error) => {

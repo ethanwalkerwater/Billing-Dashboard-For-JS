@@ -4,8 +4,8 @@
 
 - 设计与接口约定：[`docs/design.md`](docs/design.md)；产品方案：[`../../docs/课堂录制.html`](../../docs/课堂录制.html)；报告网页原型：[`../../docs/classroom-report.html`](../../docs/classroom-report.html)。
 - 随时录制：屏幕右侧的悬浮按钮（几秒不碰会淡下去）或菜单栏「随时录制」，不需要课表；结束时填主题、选「课程」（出家长总结 + 学情报告）或「会议」（出会议纪要）。
-- 后台：`https://app.jsjy.asia/classroom/admin/`，飞书登录，只放行 `ADMIN_OPEN_IDS` 里的人。按课程听 / 下载录音、看 / 下载转写、看家长总结和学情报告；改提示词，用已有课程、上传音频或粘贴转写试生成，和线上版本并排对比，确认后「应用到全部老师」。
-- 完整报告：`https://app.jsjy.asia/classroom/report.html?t=<token>`，不需要登录，靠 32 位随机 token 防猜。「下载 PDF」调用浏览器打印，另存的文件名为 `学生_课程_日期_课堂学情报告`。
+- 后台：`https://app.jsjy.asia/classroom/admin/`，飞书登录。老师（「老师信息」表里有的）只看自己的课程和会议，可以改转写、在报告网页上改文字；超级管理员 = `ADMIN_OPEN_IDS`（创建者）+ 后台「管理员」页里加的人（`classroom_admins` 表），看全部老师。按课程听 / 下载录音、看 / 下载转写、看家长总结和学情报告；改提示词，用已有课程、上传音频或粘贴转写试生成，和线上版本并排对比，确认后「应用到全部老师」。
+- 完整报告：`https://app.jsjy.asia/classroom/report.html?t=<token>`，不需要登录，靠 32 位随机 token 防猜。只有白天模式。加 `&edit=1`（后台报告页的「编辑」）进编辑模式：用后台的登录，点文字原地改，支持简单 Markdown，版式不变；第一次改时 AI 原稿存进 `rawReport`。「下载 PDF」调用浏览器打印，另存的文件名为 `学生_课程_日期_课堂学情报告`。
 
 ## 架构
 

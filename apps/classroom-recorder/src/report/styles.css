@@ -1,6 +1,5 @@
-/* 与 docs/classroom-report.html 逐字一致；末尾三行是网页版的少量补充。 */
-:root{color-scheme:light dark;--bg:#f6f7f9;--paper:#fff;--text:#16181d;--muted:#5d6573;--line:#e3e6eb;--accent:#2f6bff;--soft:#e8efff;--ok:#177648;--warn:#92621b}
-@media(prefers-color-scheme:dark){:root{--bg:#0f1115;--paper:#171a20;--text:#eceef2;--muted:#a3aab6;--line:#2a2f38;--accent:#91b0ff;--soft:#1b2540;--ok:#74d9a6;--warn:#edc57e}}
+/* 与 docs/classroom-report.html 逐字一致（只保留白天模式）；末尾是网页版的少量补充。 */
+:root{color-scheme:light;--bg:#f6f7f9;--paper:#fff;--text:#16181d;--muted:#5d6573;--line:#e3e6eb;--accent:#2f6bff;--soft:#e8efff;--ok:#177648;--warn:#92621b}
 *{box-sizing:border-box}[hidden]{display:none!important}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.8 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;-webkit-font-smoothing:antialiased}
 a{color:var(--accent)}a:focus-visible{outline:3px solid var(--accent);outline-offset:4px}button,a{touch-action:manipulation}
 .toolbar{position:sticky;top:0;z-index:2;background:var(--paper);border-bottom:1px solid var(--line)}
@@ -35,3 +34,18 @@ section{margin-top:34px}h2{display:flex;align-items:baseline;gap:12px;font-size:
 .agenda .steps{margin-top:0}.agenda .steps li{grid-template-columns:104px minmax(0,32%) 1fr;align-items:start}
 @media(max-width:640px){.facts.four{grid-template-columns:1fr 1fr;row-gap:12px}.facts.four div:nth-child(3){border-left:0;padding-left:0}.agenda .steps li{grid-template-columns:88px 1fr}.agenda .steps li>span:last-child{grid-column:2}.todos td:nth-child(3),.todos th:nth-child(3){display:none}}
 @media print{.facts.four{grid-template-columns:repeat(4,1fr)}tr,.agenda h3{break-inside:avoid;break-after:avoid}}
+
+/* Markdown 与编辑模式（?edit=1）：只改文字，版式不动 */
+.md code{font:0.92em ui-monospace,Menlo,monospace;background:var(--bg);padding:1px 5px;border-radius:4px}
+.mdli{display:block;padding-left:1.1em;text-indent:-1.1em}
+.gone{color:var(--muted);font-style:italic;font-weight:400}
+body.editing .toolbar-inner{justify-content:space-between}
+.edit-note{color:var(--muted);font-size:13px;line-height:1.5}
+.edit-actions{display:flex;align-items:center;gap:10px;flex:none}
+.btn-ghost{padding:8px 14px;border:1px solid var(--line);border-radius:10px;color:var(--text);text-decoration:none;font-size:14px;white-space:nowrap}
+.btn-ghost:hover{background:var(--bg)}
+button.download:disabled{opacity:.45;cursor:default}
+body.editing .md{cursor:text;border-radius:4px;outline:1px dashed #c9d3e6;outline-offset:2px}
+body.editing .md:hover,body.editing .md:focus-visible{background:var(--soft);outline-color:var(--accent)}
+.mdedit{display:block;width:100%;margin:0;padding:2px 4px;font:inherit;line-height:inherit;letter-spacing:inherit;color:inherit;background:#fff;border:1px solid var(--accent);border-radius:6px;resize:none;overflow:hidden;outline:3px solid var(--soft)}
+body.editing .md{display:inline-block;max-width:100%}
