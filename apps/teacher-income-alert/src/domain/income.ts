@@ -27,6 +27,10 @@ export interface TeacherMonth {
 export interface TeacherSettings {
   baseSalary: number | null;
   unitPrice: number | null;
+  /** 课时以外的固定收入（如管理费），从预警线里扣掉，课时费要覆盖的就少这么多 */
+  extraIncome: number | null;
+  /** 教务想看的另一个系数；不填则自定义三列为空 */
+  customRate: number | null;
   note: string;
 }
 
@@ -53,7 +57,7 @@ export const STATUS_LABELS: Record<AlertStatus, string> = {
 
 export interface Evaluation {
   status: AlertStatus;
-  /** 预警线 = 基础薪水 × 底薪倍数；没底薪为 null */
+  /** 预警线 = 基础薪水 × 底薪倍数 − 额外收入；没底薪为 null */
   alertLine: number | null;
   predictedMin: number;
   predictedMax: number;
@@ -66,6 +70,12 @@ export interface Evaluation {
   hoursToAlert: number | null;
   /** 达标还要上多少小时课：|marginToTarget| ÷ (单价 × 最低系数)；已达标为 0 */
   hoursToTarget: number | null;
+  /** 课时费 × 自定义系数；没填自定义系数为 null */
+  predictedCustom: number | null;
+  /** 课时费 × 自定义系数 − 预警线；没填自定义系数或没底薪为 null */
+  marginCustom: number | null;
+  /** |marginCustom| ÷ (单价 × 自定义系数)；已越线为 0 */
+  hoursCustom: number | null;
 }
 
 const round2 = (value: number) => Math.round(value * 100) / 100;
@@ -185,14 +195,18 @@ export function evaluateTeacher(input: {
   const predictedMin = round2(lessonFee * rates.min);
   const predictedMax = round2(lessonFee * rates.max);
   const unitPrice = settings.unitPrice ?? input.unitPriceAuto;
+  const custom = settings.customRate;
+  const predictedCustom = custom ? round2(lessonFee * custom) : null;
   if (settings.baseSalary == null) {
-    return { status: "no-base", alertLine: null, predictedMin, predictedMax, marginToAlert: null, marginToTarget: null, unitPrice, hoursToAlert: null, hoursToTarget: null };
+    return { status: "no-base", alertLine: null, predictedMin, predictedMax, marginToAlert: null, marginToTarget: null, unitPrice, hoursToAlert: null, hoursToTarget: null, predictedCustom, marginCustom: null, hoursCustom: null };
   }
-  const line = round2(settings.baseSalary * rates.baseMultiplier);
+  // 额外收入和收入详情里一样进 Bonus，抵扣「基础薪水 × 1.2」：底薪 30000、额外 10000、倍数 1 时课时费 × 系数只要够 20000
+  const line = round2(settings.baseSalary * rates.baseMultiplier - (settings.extraIncome ?? 0));
   const marginToAlert = round2(predictedMax - line);
   const marginToTarget = round2(predictedMin - line);
   const hours = (margin: number, rate: number) =>
     margin >= 0 ? 0 : unitPrice ? Math.ceil((-margin / (unitPrice * rate)) * 10) / 10 : null;
+  const marginCustom = predictedCustom == null ? null : round2(predictedCustom - line);
   return {
     status: predictedMax < line ? "alert" : predictedMin > line ? "reached" : "between",
     alertLine: line,
@@ -203,5 +217,8 @@ export function evaluateTeacher(input: {
     unitPrice,
     hoursToAlert: hours(marginToAlert, rates.max),
     hoursToTarget: hours(marginToTarget, rates.min),
+    predictedCustom,
+    marginCustom,
+    hoursCustom: custom && marginCustom != null ? hours(marginCustom, custom) : null,
   };
 }
