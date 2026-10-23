@@ -89,6 +89,24 @@ tbody tr:last-child td{border-bottom:0}
 .line .s{font-size:12px;font-weight:600;padding-top:2px}
 .line .s.s2{color:var(--info)}
 .line .s.s3{color:var(--warn)}
+/* 转写编辑：时间点播放，说话人点了改名，句子直接改 */
+.editing .line{cursor:default}
+.editing .line:hover{background:none}
+.editing .line.on{background:var(--muted)}
+.editing .t,.editing .s{border:0;background:none;cursor:pointer;text-align:left;padding:2px 4px;margin:-2px 0 0 -4px;border-radius:4px;align-self:start;font-family:inherit}
+.editing .t{font-family:var(--mono)}
+.editing .t:hover,.editing .s:hover{background:var(--border)}
+.tx{outline:none;border-radius:4px;padding:0 4px;margin:0 -4px;white-space:pre-wrap}
+.tx:hover{background:var(--muted)}
+.tx:focus{background:var(--bg);box-shadow:0 0 0 1px var(--ring)}
+.edhint{font-size:12px;margin-right:4px}
+.pop{position:fixed;z-index:30;background:var(--card);border:1px solid var(--border);border-radius:8px;padding:4px;box-shadow:0 4px 16px rgba(0,0,0,.06);font-size:13px}
+.pop .link{border:0;background:none;padding:5px 10px;border-radius:6px;font-weight:600;cursor:pointer}
+.pop .link:hover{background:var(--muted)}
+.pop form{display:flex;align-items:center;gap:8px;margin:0;padding:2px 2px 2px 6px}
+.pop label{color:var(--muted-fg);white-space:nowrap}
+.pop input{width:150px;height:32px;border:1px solid var(--border);border-radius:6px;padding:0 8px;background:var(--bg);outline:none}
+.pop input:focus{border-color:var(--ring)}
 .summary{white-space:pre-wrap;max-width:62ch;line-height:1.8;margin:0;font:inherit}
 .empty{padding:48px 20px;text-align:center;color:var(--muted-fg)}
 .err{color:var(--bad)}

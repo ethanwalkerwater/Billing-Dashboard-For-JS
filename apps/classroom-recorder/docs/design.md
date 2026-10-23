@@ -49,6 +49,7 @@ UI / UX 唯一依据：`docs/MVP.html`（老师端，含「随时录制」三步
 | `GET /admin/lessons?q&stage&kind&teacher&student&before` | 课程列表，按上课时间倒序每页 50；`stage` = done / processing / recording / failed；`kind` = lesson（含随时录制的课）/ meeting，`teacher` / `student` 精确匹配；时长用 `audioSec`（合并时按分段字节数算的实际录音秒数） |
 | `GET /admin/people` | 表头筛选候选：视图 `classroom_lesson_people`（老师 × 学生去重） |
 | `GET /admin/lessons/:id` | 详情：转写、总结、`audioUrl`（6 小时签名链接）、`reportUrl` |
+| `PUT /admin/lessons/:id/transcript` | 后台改转写（错字、划词全部替换、说话人改名）。body `{transcript, base}`，`base` 是打开编辑时转写的 sha256，对不上返回 409；第一次改时机器原文存进 `rawTranscript`；会议按新名字重算发言占比 |
 | `POST /admin/lessons/:id/retry` | 失败的课把 `attempts` 清零并立刻重跑 |
 | `POST /asr/callback?lesson=` | 腾讯云录音识别转完的回调（不鉴权，只按编号推进，实际状态以 DescribeTaskStatus 为准） |
 | `GET /admin/prompts` | 最近 30 个版本，第一个是线上 |
