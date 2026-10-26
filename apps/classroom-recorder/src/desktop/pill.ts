@@ -16,16 +16,17 @@ function render() {
   const l = lessons.find(x => x.id === rec.lessonId);
   const title = esc(l?.title);
   pill.classList.toggle('hidden', rec.mode === 'idle' || rec.mode === 'gone');
-  pill.classList.toggle('warn', rec.mode === 'warn');
+  pill.classList.toggle('warn', rec.mode === 'warn' || rec.mode === 'quiet');
   pill.classList.toggle('form', rec.mode === 'naming');
   const adhoc = Boolean(l?.kind);
   let h = '';
   if (rec.mode === 'pre') h = `<span class="col"><span class="t1">${esc(l?.start)} ${title}</span><span class="t2">${esc(rec.autoStartAt)} 自动开始录制 · 麦克风正常</span></span>${WAVE('green')}<button class="btn" data-act="start">现在开始</button>`;
-  else if (rec.mode === 'recording') h = `<span class="dot"></span><span class="timer num" data-sec></span>${WAVE('red')}<span class="more"><span class="t2">${adhoc ? '随时录制' : `${title} · ${esc(rec.autoStopAt)} 自动停止`}</span><button class="btn red" data-act="stop">结束</button></span>`;
+  else if (rec.mode === 'recording') h = `<span class="dot"></span><span class="timer num" data-sec></span>${WAVE('red')}<span class="more"><span class="t2">${adhoc ? '随时录制' : `${title} · 拖堂会接着录`}</span><button class="btn red" data-act="stop">结束</button></span>`;
   else if (rec.mode === 'confirm') h = `<span class="t1">${adhoc ? '结束这段录制？' : '结束这节课的录制？'}</span><button class="btn" data-act="resume">继续录</button><button class="btn red" data-act="end">结束</button>`;
   else if (rec.mode === 'warn') h = `<span>⚠</span><span class="col"><span class="t1">没听到声音</span><span class="t2">录音仍在继续 · 检查一下麦克风</span></span>${WAVE('flat')}<select data-act="mic" aria-label="切换麦克风">${S!.mics
     .map(m => `<option value="${esc(m)}"${m === S!.mic ? ' selected' : ''}>${m === S!.mic ? '' : '切换到 '}${esc(m)}</option>`).join('')}</select>`;
-  else if (rec.mode === 'ending') h = '<span class="dot"></span><span class="col"><span class="t1 num" data-end></span><span class="t2 num">已录 <span data-sec></span></span></span><button class="btn" data-act="extend">再录 15 分钟</button><button class="btn red" data-act="end">现在停止</button>';
+  else if (rec.mode === 'quiet') h = '<span class="dot"></span><span class="col"><span class="t1">好像下课了，要结束录制吗？</span><span class="t2 num" data-end></span></span><button class="btn" data-act="keep">继续录</button><button class="btn red" data-act="end">结束</button>';
+  else if (rec.mode === 'ending') h = '<span class="dot"></span><span class="col"><span class="t1 num" data-end></span><span class="t2 num">已到下课后 30 分钟 · 已录 <span data-sec></span></span></span><button class="btn red" data-act="end">现在停止</button>';
   else if (rec.mode === 'processing') h = `<span class="spin"></span><span class="col"><span class="t1">${adhoc ? '已结束，正在整理…' : '已结束，正在整理课堂…'}</span><span class="t2">好了会通知你，可以合上电脑了</span></span>`;
   else if (rec.mode === 'naming') h = `<form data-name="${esc(rec.lessonId)}"><span class="t1">这段录音是关于什么？</span>
     <input name="topic" maxlength="30" placeholder="例如：教研周会、雅思口语试讲" autocomplete="off" aria-label="主题">
@@ -69,7 +70,7 @@ pill.addEventListener('click', e => {
   else if (act === 'stop') void call('request_stop');
   else if (act === 'resume') void call('resume_recording');
   else if (act === 'end') void call('end_recording');
-  else if (act === 'extend') void call('extend_recording');
+  else if (act === 'keep') void call('keep_recording');
 });
 // 填主题：回车或「完成」；类型取当前选中的那个
 pill.addEventListener('submit', e => {

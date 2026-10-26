@@ -11,7 +11,7 @@ use mp3lame_encoder::{Bitrate, Builder, Encoder, FlushNoGap, MonoPcm, Quality};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -21,6 +21,9 @@ const OUT_RATE: u32 = 16_000;
 const SEGMENT_SAMPLES: usize = 30 * OUT_RATE as usize;
 // ponytail: 固定阈值（约 -42 dBFS）判断「听到声音」，教室底噪偏高/麦克风很灵敏时调这里。
 const HEARD_RMS: f32 = 0.008;
+// ponytail: 固定阈值（约 -40 dBFS）判断「有人在说话」，连续 2 块（0.25 秒）才算，滤掉键盘、关门这类单下的响声。
+// 拖堂时该停不停 → 调高；老师小声讲课被问「是否结束」→ 调低。真实课堂录音攒够后按底噪实测再定。
+const VOICE_RMS: f32 = 0.01;
 
 pub enum Msg {
     Start { dir: PathBuf, seq: u32, reply: Sender<Result<(), String>> },
@@ -35,6 +38,8 @@ pub enum Msg {
 #[derive(Default)]
 pub struct Shared {
     pub heard: AtomicBool,
+    /// 最近一次听到有人说话的时间（ms）；开录、老师点「继续录」时也会刷新
+    pub voice_at: AtomicI64,
     pub mic: Mutex<String>, // 实际打开的设备名
     pub kick_upload: tokio::sync::Notify,
 }
@@ -54,7 +59,7 @@ pub fn spawn(app: AppHandle, shared: Arc<Shared>, mic: String) -> Sender<Msg> {
     let me = tx.clone();
     std::thread::Builder::new()
         .name("recorder".into())
-        .spawn(move || Rec { app, shared, tx: me, mic, stream: None, session: None, preview: false, rs: None, lvl: (0.0, 0) }.run(rx))
+        .spawn(move || Rec { app, shared, tx: me, mic, stream: None, session: None, preview: false, rs: None, lvl: (0.0, 0), voiced: 0 }.run(rx))
         .expect("spawn recorder thread");
     tx
 }
@@ -79,6 +84,7 @@ struct Rec {
     preview: bool,
     rs: Option<(u32, Resampler)>,
     lvl: (f64, usize),
+    voiced: u32,
 }
 
 impl Rec {
@@ -157,6 +163,10 @@ impl Rec {
             self.lvl = (0.0, 0);
             if rms >= HEARD_RMS {
                 self.shared.heard.store(true, Ordering::Relaxed);
+            }
+            self.voiced = if rms >= VOICE_RMS { self.voiced.saturating_add(1) } else { 0 };
+            if self.voiced >= 2 {
+                self.shared.voice_at.store(crate::engine::now_ms(), Ordering::Relaxed);
             }
             let _ = self.app.emit("level", level_of(rms));
         }

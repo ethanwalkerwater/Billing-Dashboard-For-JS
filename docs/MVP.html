@@ -287,7 +287,7 @@ a:focus-visible,button:focus-visible{outline:3px solid var(--accent);outline-off
     <button class="scene" data-s="1">② 课前 10 分钟</button>
     <button class="scene" data-s="2">③ 自动开录</button>
     <button class="scene" data-s="3">④ 麦克风异常</button>
-    <button class="scene" data-s="4">⑤ 下课后 5 分钟</button>
+    <button class="scene" data-s="4">⑤ 拖堂结束</button>
     <button class="scene" data-s="5">⑥ 课后交付</button>
     <span class="lbl" style="margin-left:8px">随时录制</span>
     <button class="scene" data-s="6">⑦ 点一下就录</button>
@@ -379,7 +379,7 @@ function renderDetail(){
       <div class="acts"><button class="primary" data-act="start">现在开始录制</button></div></div>`;
   } else if (l.status==='recording'){
     const seg = Math.floor(S.sec/30)+1;
-    body = `<div class="hero rec"><div class="big red num">${hms(S.sec)}</div><div class="sub">${isAdhoc(l) ? '随时录制 · 结束时再填主题' : '正在录制 · 预计 17:10 自动停止'}</div>
+    body = `<div class="hero rec"><div class="big red num">${hms(S.sec)}</div><div class="sub">${isAdhoc(l) ? '随时录制 · 结束时再填主题' : '正在录制 · 拖堂会接着录，下课后安静 3 分钟会问你是否结束，最晚 17:30'}</div>
       <div class="chips"><span class="chip num">本机已保存 ${seg} 段</span><span class="chip num">已上传 ${Math.max(seg-1,0)} 段</span><span class="chip ok">● 网络正常</span></div>
       <div class="acts"><button class="ghost" data-act="stop">结束录制</button></div></div>
       <p class="empty">可以关掉这个窗口，录音会继续；屏幕顶部的胶囊会一直陪着你。</p>`;
@@ -418,10 +418,10 @@ function renderPill(){
   const adhoc = isAdhoc(l);
   let h = '';
   if (S.rec==='pre') h = `<span class="col"><span class="t1">16:00 ${l.title}</span><span class="t2">15:57 自动开始录制 · 麦克风正常</span></span>${WAVE.replace('wave"','wave green"')}<button class="btn" data-act="start">现在开始</button>`;
-  else if (S.rec==='recording') h = `<span class="dot"></span><span class="timer num" id="ptimer">${hms(S.sec)}</span>${WAVE.replace('wave"','wave red"')}<span class="more"><span class="t2">${adhoc ? '随时录制' : l.title+' · 17:10 自动停止'}</span><button class="btn red" data-act="stop">结束</button></span>`;
+  else if (S.rec==='recording') h = `<span class="dot"></span><span class="timer num" id="ptimer">${hms(S.sec)}</span>${WAVE.replace('wave"','wave red"')}<span class="more"><span class="t2">${adhoc ? '随时录制' : l.title+' · 拖堂会接着录'}</span><button class="btn red" data-act="stop">结束</button></span>`;
   else if (S.rec==='confirm') h = `<span class="t1">${adhoc ? '结束这段录制？' : '结束这节课的录制？'}</span><button class="btn" data-act="resume">继续录</button><button class="btn red" data-act="end">结束</button>`;
   else if (S.rec==='warn') h = `<span>⚠</span><span class="col"><span class="t1">没听到声音</span><span class="t2">录音仍在继续 · 检查一下麦克风</span></span>${WAVE.replace('wave"','wave flat"')}<select data-act="mic"><option>MacBook Pro 麦克风</option><option>切换到 AirPods Pro</option><option>切换到 USB 领夹麦</option></select>`;
-  else if (S.rec==='ending') h = `<span class="dot"></span><span class="col"><span class="t1 num" id="pend">${ms(S.endLeft)} 后自动停止</span><span class="t2 num">已录 ${hms(S.sec)}</span></span><button class="btn" data-act="extend">再录 15 分钟</button><button class="btn red" data-act="end">现在停止</button>`;
+  else if (S.rec==='ending') h = `<span class="dot"></span><span class="col"><span class="t1">好像下课了，要结束录制吗？</span><span class="t2 num" id="pend">${ms(S.endLeft)} 后自动停止</span></span><button class="btn" data-act="extend">继续录</button><button class="btn red" data-act="end">结束</button>`;
   else if (S.rec==='name') h = `<span class="t1">这段录音是关于什么？</span>
     <input id="topic" maxlength="30" placeholder="例如：教研周会、雅思口语试讲" value="${S.topic}">
     <span class="seg">${['课程','会议'].map(k => `<button data-act="kind" data-v="${k}" class="${S.kind===k?'on':''}">${k}</button>`).join('')}</span>
@@ -518,7 +518,7 @@ document.addEventListener('click', e => {
   else if (act==='stop') askStop();
   else if (act==='resume'){ S.rec='recording'; renderAll(); }
   else if (act==='end') isAdhoc(target()) ? askName() : endRec();
-  else if (act==='extend'){ S.rec='recording'; renderAll(); caption('延长 15 分钟后，胶囊回到录制状态，17:25 再自动停止。'); }
+  else if (act==='extend'){ S.rec='recording'; renderAll(); caption('继续录后胶囊回到录制状态，接着按声音判断；最晚下课后 30 分钟（17:30）停止。'); }
   else if (act==='copy') copyLesson(S.sel, a);
   else if (act==='openwin'){ S.win=true; renderAll(); }
   else if (act==='set'){ S.win=true; renderAll(); $('#sheet').classList.remove('hidden'); }
@@ -561,7 +561,7 @@ const CAPTIONS = [
   '<b>课前 10 分钟</b>：屏幕顶部浮出胶囊，告诉老师下一节课几点开始录。<b>声波在动就说明麦克风是好的</b>，不用单独试音。',
   '<b>自动开录</b>：15:57 自动开始，胶囊变成红点和计时。鼠标移到胶囊上才会出现「结束」，平时不会误点。',
   '<b>出问题才打扰</b>：开录后一直没声音，胶囊变黄，并且直接给出可以切换的麦克风。录音全程不中断。',
-  '<b>下课后 5 分钟</b>：胶囊开始倒计时，老师可以选「再录 15 分钟」或「现在停止」。不操作的话，17:10 自动停止。',
+  '<b>拖堂结束</b>：下课后一直有人说话就接着录；连续 3 分钟没人说话，胶囊问「要结束录制吗」，1 分钟没人理就自动停止。最晚下课后 30 分钟停止。',
   '<b>课后交付</b>：录音上传完自动整理，几分钟后弹出通知。点<b>「复制总结」</b>就能去微信发给家长；同一段话也发到了飞书。点<b>「查看完整报告」</b>打开学情报告网页，可下载 PDF。',
   '<b>随时录制</b>：屏幕右侧的小圆钮，鼠标移上去展开「随时录制」，点一下就开始，<b>不需要课表</b>。<b>几秒不碰就淡成半透明</b>，不抢上课注意力，鼠标移上去恢复；可以拖到顺手的位置，设置里能关掉。',
   '<b>结束时填主题</b>：点「结束」后胶囊展开成小卡片，填主题、选「课程」或「会议」。录音已在后台上传；10 分钟不填就按「课程」处理，不会卡住。',
@@ -582,7 +582,7 @@ function setScene(n){
   if (n===1){ S.clock=15*3600+50*60; S.rec='pre'; S.sec=0; l.status='upcoming'; l.copied=false; S.sel='xiaoyu'; }
   if (n===2){ S.clock=15*3600+57*60; startRec(0); }
   if (n===3){ S.clock=16*3600+12*60; startRec(15*60); S.rec='warn'; }
-  if (n===4){ S.clock=17*3600+5*60; startRec(68*60); S.rec='ending'; S.endLeft=300; }
+  if (n===4){ S.clock=17*3600+11*60; startRec(74*60); S.rec='ending'; S.endLeft=60; }
   if (n===5){ S.clock=17*3600+10*60; S.sec=73*60; l.status='recording'; S.sel='xiaoyu'; endRec(); }
   if (n===6){ S.clock=15*3600+5*60; S.rec='idle'; S.sec=0; S.sel='haoran'; $('#fab').classList.add('peek'); later(() => { $('#fab').classList.remove('peek'); startAdhoc(0); }, 2600); }
   if (n===7){ S.clock=15*3600+5*60; startAdhoc(22*60+14); askName();

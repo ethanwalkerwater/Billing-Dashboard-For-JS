@@ -13,7 +13,7 @@ export interface Lesson {
   needsName?: boolean;
 }
 export const isMeeting = (l?: Lesson) => l?.kind === 'meeting';
-export type RecMode = 'idle' | 'pre' | 'recording' | 'confirm' | 'warn' | 'ending' | 'processing' | 'naming' | 'gone';
+export type RecMode = 'idle' | 'pre' | 'recording' | 'confirm' | 'warn' | 'quiet' | 'ending' | 'processing' | 'naming' | 'gone';
 export interface AppState {
   teacher: { name: string } | null;
   loggingIn: boolean;

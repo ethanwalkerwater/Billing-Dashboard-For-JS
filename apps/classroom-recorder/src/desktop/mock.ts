@@ -24,15 +24,15 @@ let s: AppState = {
       reportUrl: l.tx ? `https://app.jsjy.asia/classroom/report.html?t=demo-${l.id}` : undefined,
     };
   }),
-  rec: { mode: 'idle', lessonId: 'xiaoyu', sec: 0, endLeft: 300, autoStopAt: '17:10', autoStartAt: '15:57', savedSegments: 0, uploadedSegments: 0, online: true },
+  rec: { mode: 'idle', lessonId: 'xiaoyu', sec: 0, endLeft: 60, autoStopAt: '17:30', autoStartAt: '15:57', savedSegments: 0, uploadedSegments: 0, online: true },
   mics: ['MacBook Pro 麦克风', 'AirPods Pro', 'USB 领夹麦'],
   mic: 'MacBook Pro 麦克风',
   autostart: true,
   fab: true,
   toast: null,
   selectedLessonId: 'haoran',
-  version: '0.1.7',
-  updateReady: new URLSearchParams(location.search).has('update') ? '0.1.8' : null,
+  version: '0.1.8',
+  updateReady: new URLSearchParams(location.search).has('update') ? '0.1.9' : null,
 };
 
 const listeners = new Map<string, Set<(p: never) => void>>();
@@ -87,7 +87,8 @@ function setScene() {
   if (scene === '1') s.rec = { ...s.rec, mode: 'pre' };
   if (scene === '2') startRec('xiaoyu');
   if (scene === '3') startRec('xiaoyu', 15 * 60, 'warn');
-  if (scene === '4') startRec('xiaoyu', 68 * 60, 'ending');
+  if (scene === '4') startRec('xiaoyu', 63 * 60, 'quiet');
+  if (scene === 'cap') startRec('xiaoyu', 89 * 60, 'ending');
   if (scene === '5') { startRec('xiaoyu', 73 * 60); endRec(); }
   if (scene === 'adhoc') { startAdhoc(22 * 60 + 14); endAdhoc(); }
 }
@@ -104,7 +105,7 @@ const commands: Record<string, (a: Record<string, string & boolean>) => unknown>
   start_adhoc: () => startAdhoc(),
   name_adhoc: a => nameAdhoc(a.lessonId, a.topic, a.kind),
   set_fab: a => patch({ fab: a.enabled }),
-  extend_recording: () => patch({ rec: { ...rec('recording'), autoStopAt: '17:25' } }),
+  keep_recording: () => patch({ rec: rec('recording') }),
   switch_mic: a => patch({ mic: a.name, rec: s.rec.mode === 'warn' ? rec('recording') : s.rec }),
   save_summary: a => patch({ lessons: setLesson(a.lessonId, { summary: a.text }) }),
   copy_summary: async a => {

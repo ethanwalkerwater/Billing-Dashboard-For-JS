@@ -99,7 +99,7 @@ Web 端启动时 `invoke("get_state")` 拿首帧。
 `selectedLessonId` 只随一次快照发出（下一次快照即回到 null），Web 收到非空值时选中即可。
 
 ```ts
-type RecMode = "idle" | "pre" | "recording" | "confirm" | "warn" | "ending" | "processing" | "naming" | "gone"; // naming = 随时录制刚结束，胶囊变成填主题卡片
+type RecMode = "idle" | "pre" | "recording" | "confirm" | "warn" | "quiet" | "ending" | "processing" | "naming" | "gone"; // naming = 随时录制刚结束，胶囊变成填主题卡片
 interface AppState {
   teacher: { name: string } | null;       // null = 未登录，main 窗口显示登录页
   loggingIn: boolean;
@@ -125,7 +125,7 @@ interface AppState {
 
 Commands（`invoke(name, args)`）：
 `get_state`、`login`、`logout`、`start_recording { lessonId }`、`request_stop`（→ confirm）、`resume_recording`、
-`end_recording`、`extend_recording`（+15 分钟）、`switch_mic { name }`、`save_summary { lessonId, text }`、
+`end_recording`、`keep_recording`（问「是否结束」时继续录）、`switch_mic { name }`、`save_summary { lessonId, text }`、
 `copy_summary { lessonId, text }`（写剪贴板 + 保存 + 标记已复制）、`open_report { lessonId }`（系统浏览器）、
 `open_main { lessonId? }`、`hide_toast`、`start_adhoc`（随时录制）、`name_adhoc { lessonId, topic, kind }`、`set_fab { enabled }`、`resize_fab { width, height }`、`set_autostart { enabled }`、`resize_pill { width, height }`、`start_level_preview` / `stop_level_preview`（设置页试音）。
 
@@ -135,7 +135,8 @@ Commands（`invoke(name, args)`）：
   结束后胶囊（和主窗口详情）请老师填主题、选「课程 / 会议」，分段照常上传，填好才提交 finish；10 分钟不填或又开始新的录制，按「课程 · 随时录制 HH:MM」处理。连堂的课到点自动开录时会先停掉随时录制。
 
 - 拉课表：启动、登录、打开主窗口（10 分钟内不重复）、手动刷新、每天北京时间 7:00；不轮询报告状态（报告好了云端飞书私信老师）。老师可在 App 里删除某节课（只本机隐藏，录音丢弃并通知云端放弃）。开课前 10 分钟 → `pre`（胶囊出现，试音电平）；开课前 3 分钟自动开录；可提前最多 30 分钟手动开录。
-- 课表下课后 10 分钟自动停；下课后第 5 分钟进入 `ending` 倒计时，可「再录 15 分钟」/「现在停止」。手动结束需二次确认（`confirm`）。
+- 课表课下课后按声音停：下课时间后连续 3 分钟没人说话（麦克风电平约 -40 dBFS 以下）→ `quiet`，胶囊问「要结束录制吗」并倒计时 1 分钟，没人理就停，点「继续录」或又有人说话就接着按声音判断。上限下课后 30 分钟（最后 1 分钟 `ending` 倒计时，只能「现在停止」），连堂时下一节开录先到就先停。手动结束需二次确认（`confirm`）。
+- 合盖睡眠：睡着期间不录；睡醒时已过了该停的时间就立刻停，结束时间记成睡着那一刻；没过就接着录。一直不打开电脑，云端下课 2 小时后用已收到的分段出报告。
 - 开录 2 分钟仍几乎无声 → `warn`，给出可切换的麦克风；录音不中断。麦克风断开 → 自动切到系统默认。
 - 「临时取消」的课不自动录。连堂：下一节自动开录时间点先停上一节再开下一节。
 - 录制中阻止系统睡眠；关窗只隐藏到菜单栏 / 托盘；App 崩溃重启后若仍在上课时间内自动续录，已录分段继续上传。
