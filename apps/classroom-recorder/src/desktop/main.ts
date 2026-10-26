@@ -143,7 +143,7 @@ function renderDetail(l: Lesson | undefined) {
         note?.id === l.id ? `<div class="sub err" role="alert">${esc(note.text)}</div>` : ''}</div>`;
   } else if (l.status === 'recording') {
     const r = s.rec;
-    body = `<div class="hero rec"><div class="big red num" data-sec></div><div class="sub">${l.kind ? '随时录制 · 结束时再填主题，最长 3 小时' : `正在录制 · 预计 ${esc(r.autoStopAt)} 自动停止`}</div>
+    body = `<div class="hero rec"><div class="big red num" data-sec></div><div class="sub">${l.kind ? '随时录制 · 结束时再填主题，最长 3 小时' : `正在录制 · 拖堂会接着录，下课后安静 3 分钟会问你是否结束，最晚 ${esc(r.autoStopAt)}`}</div>
       <div class="chips"><span class="chip num">本机已保存 ${r.savedSegments} 段</span><span class="chip num">已上传 ${r.uploadedSegments} 段</span>${
         r.online ? '<span class="chip ok">● 网络正常</span>' : '<span class="chip warn">● 网络断开，恢复后自动补传</span>'}</div>
       <div class="acts"><button class="ghost" data-act="stop">结束录制</button></div></div>
@@ -202,7 +202,7 @@ function renderSheet() {
   </div>`);
 }
 
-const recording = () => ['recording', 'confirm', 'warn', 'ending'].includes(S?.rec.mode ?? '');
+const recording = () => ['recording', 'confirm', 'warn', 'quiet', 'ending'].includes(S?.rec.mode ?? '');
 
 /** 右键「删除」后的确认框 */
 function renderAsk() {

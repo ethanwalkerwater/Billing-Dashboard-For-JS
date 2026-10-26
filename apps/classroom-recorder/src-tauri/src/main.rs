@@ -117,8 +117,8 @@ async fn end_recording(core: St<'_>) -> R {
 }
 
 #[tauri::command]
-async fn extend_recording(core: St<'_>) -> R {
-    core.with_active(|c, g, _| c.extend(g));
+async fn keep_recording(core: St<'_>) -> R {
+    core.with_active(|c, g, now| c.keep_going(g, now));
     Ok(())
 }
 
@@ -290,7 +290,7 @@ fn main() {
             request_stop,
             resume_recording,
             end_recording,
-            extend_recording,
+            keep_recording,
             switch_mic,
             save_summary,
             copy_summary,

@@ -36,7 +36,7 @@ export function ordered(lessons: Lesson[], today: string): Row[] {
     });
 }
 
-const LIVE = ['recording', 'warn', 'ending', 'confirm'];
+const LIVE = ['recording', 'warn', 'quiet', 'ending', 'confirm'];
 /** Rust 只在状态变化时推快照；两次快照之间按本地时钟补秒。 */
 export const elapsed = (at: number) => Math.floor((Date.now() - at) / 1000);
 export const liveSec = (rec: AppState['rec'], at: number) => rec.sec + (LIVE.includes(rec.mode) ? elapsed(at) : 0);
@@ -45,7 +45,7 @@ export const liveSec = (rec: AppState['rec'], at: number) => rec.sec + (LIVE.inc
 export function tick(rec: AppState['rec'], at: number) {
   const sec = hms(liveSec(rec, at));
   document.querySelectorAll('[data-sec]').forEach(e => { e.textContent = sec; });
-  const left = ms(Math.max(0, rec.endLeft - (rec.mode === 'ending' ? elapsed(at) : 0)));
+  const left = ms(Math.max(0, rec.endLeft - (rec.mode === 'quiet' || rec.mode === 'ending' ? elapsed(at) : 0)));
   document.querySelectorAll('[data-end]').forEach(e => { e.textContent = `${left} 后自动停止`; });
 }
 

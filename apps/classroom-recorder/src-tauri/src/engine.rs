@@ -19,9 +19,10 @@ pub const MIN: i64 = 60_000;
 const PRE: i64 = 10 * MIN; // 开课前 10 分钟出胶囊
 const AUTO_START: i64 = 3 * MIN; // 开课前 3 分钟自动开录
 const MANUAL_EARLY: i64 = 30 * MIN; // 最早提前 30 分钟手动开录
-const AUTO_STOP: i64 = 10 * MIN; // 下课后 10 分钟自动停
-const ENDING: i64 = 5 * MIN; // 自动停止前 5 分钟进入倒计时
-const EXTEND: i64 = 15 * MIN;
+const LATE_START: i64 = 10 * MIN; // 下课后 10 分钟内还能自动开录（崩溃 / 晚开 App）
+const CAP: i64 = 30 * MIN; // 拖堂最多录到下课后 30 分钟
+const QUIET: i64 = 3 * MIN; // 下课后连续 3 分钟没人说话 → 胶囊问「是否结束」
+const ASK: i64 = MIN; // 问了 1 分钟没人理就停；到上限前也提前 1 分钟倒计时
 const SILENT_WARN: i64 = 2 * MIN;
 const ADHOC_MAX: i64 = 180 * MIN; // 随时录制最长 3 小时，忘了关也会停
 pub const NAME_WAIT: i64 = 10 * MIN; // 随时录制结束后 10 分钟没填主题，按默认处理，不让整理卡住
@@ -62,12 +63,21 @@ pub fn is_adhoc(id: &str) -> bool {
     id.starts_with("adhoc-")
 }
 
-/// 最晚停止时间：课表课 = 下课后 10 分钟；随时录制 = 开录后 3 小时
+/// 最晚停止时间：课表课 = 下课后 30 分钟；随时录制 = 开录后 3 小时
 fn stop_at_of(l: &Lesson) -> i64 {
     if is_adhoc(&l.id) {
         l.start_at + ADHOC_MAX
     } else {
-        l.end_at + AUTO_STOP
+        l.end_at + CAP
+    }
+}
+
+/// 按声音停的时间：下课后（或最后一次说话后，取晚的）安静 3 分钟、再问 1 分钟。随时录制不按声音停。
+fn quiet_stop(l: &Lesson, voice_at: i64) -> i64 {
+    if is_adhoc(&l.id) {
+        i64::MAX
+    } else {
+        voice_at.max(l.end_at) + QUIET + ASK
     }
 }
 
@@ -93,13 +103,14 @@ fn eligible(l: &Lesson, ended: &HashSet<String>) -> bool {
 
 /// 每秒调用一次：该开录、换课、停录还是什么都不做。
 /// 开录窗口 = [开课-3 分钟, 下课+10 分钟)，覆盖正常自动开录和崩溃/晚开 App 后的续录。
+/// active.stop_at 是实际要停的时间（上限和按声音停取早的）。
 pub fn decide(now: i64, lessons: &[Lesson], active: Option<&ActiveRef>, ended: &HashSet<String>) -> Action {
     if active.is_some_and(|a| now >= a.stop_at) {
         return Action::Stop;
     }
     let next = lessons
         .iter()
-        .filter(|l| eligible(l, ended) && now >= l.start_at - AUTO_START && now < l.end_at + AUTO_STOP)
+        .filter(|l| eligible(l, ended) && now >= l.start_at - AUTO_START && now < l.end_at + LATE_START)
         // 连堂：只会切到比正在录的更晚开始的课
         .filter(|l| active.is_none_or(|a| a.id != l.id && l.start_at > a.start_at))
         .max_by_key(|l| l.start_at);
@@ -370,6 +381,7 @@ impl Core {
             return Err(e);
         }
         self.shared.heard.store(false, Ordering::Relaxed);
+        self.shared.voice_at.store(now, Ordering::Relaxed);
         g.orphans.retain(|(id, _)| *id != lesson.id);
         g.ended.remove(&lesson.id);
         g.processing_until = None;
@@ -489,9 +501,12 @@ impl Core {
         {
             let mut g = self.lock();
             // 电脑刚睡醒、睡着时错过了每天早上那次拉课表（睡眠期间计时器不走）
-            if g.last_tick != 0 && now - g.last_tick > 15_000 && now >= next_morning(self.last_fetch.load(Ordering::Relaxed)) {
+            let slept = g.last_tick != 0 && now - g.last_tick > 15_000;
+            if slept && now >= next_morning(self.last_fetch.load(Ordering::Relaxed)) {
                 self.kick_fetch.notify_one();
             }
+            // 合盖睡眠期间麦克风没在录：睡醒发现该停了，结束时间记成睡着那一刻，而不是打开电脑的时间
+            let end = if slept { g.last_tick } else { now };
             g.last_tick = now;
             self.default_name(&mut g, now, false);
             let active_id = g.active.as_ref().map(|a| a.lesson.id.clone());
@@ -517,13 +532,13 @@ impl Core {
                 }
             }
             let action = {
-                let a = g.active.as_ref().map(|a| ActiveRef { id: &a.lesson.id, start_at: a.lesson.start_at, stop_at: a.stop_at });
+                let a = g.active.as_ref().map(|a| ActiveRef { id: &a.lesson.id, start_at: a.lesson.start_at, stop_at: self.stop_of(a) });
                 decide(now, &g.lessons, a.as_ref(), &g.ended)
             };
             match action {
-                Action::Stop => self.stop_session(&mut g, now),
+                Action::Stop => self.stop_session(&mut g, end),
                 Action::Start(id) | Action::Switch(id) if now >= g.retry_at => {
-                    self.stop_session(&mut g, now);
+                    self.stop_session(&mut g, end);
                     if let Some(l) = g.lessons.iter().find(|l| l.id == id).cloned() {
                         if let Err(e) = self.start_session(&mut g, l, now) {
                             eprintln!("[engine] auto start {id}: {e}");
@@ -551,16 +566,22 @@ impl Core {
         self.stop_session(&mut g, now_ms());
     }
 
+    /// 实际要停的时间：上限和按声音停取早的
+    fn stop_of(&self, a: &Active) -> i64 {
+        a.stop_at.min(quiet_stop(&a.lesson, self.shared.voice_at.load(Ordering::Relaxed)))
+    }
+
     // ---------- 快照与界面 ----------
 
     fn rec_view(&self, g: &Inner, now: i64) -> RecView {
         let mut r = RecView { mode: "idle", lesson_id: None, sec: 0, end_left: 0, auto_stop_at: String::new(), auto_start_at: String::new() };
         if let Some(a) = &g.active {
             let silent = !self.shared.heard.load(Ordering::Relaxed) && now - a.mic_since >= SILENT_WARN;
+            let stop = self.stop_of(a);
             r.mode = if a.confirm {
                 "confirm"
-            } else if now >= a.stop_at - ENDING {
-                "ending"
+            } else if now >= stop - ASK {
+                if stop < a.stop_at { "quiet" } else { "ending" }
             } else if silent {
                 "warn"
             } else {
@@ -568,7 +589,7 @@ impl Core {
             };
             r.lesson_id = Some(a.lesson.id.clone());
             r.sec = ((now - a.started_at) / 1000).max(0);
-            r.end_left = ((a.stop_at - now).max(0) + 999) / 1000;
+            r.end_left = ((stop - now).max(0) + 999) / 1000;
             r.auto_stop_at = hhmm(a.stop_at);
         } else if let Some((id, _)) = &g.naming {
             r.mode = "naming";
@@ -668,7 +689,7 @@ impl Core {
         let changed = s != g.last_json;
         g.last_json = s;
         g.selected = None; // 「选中某节课」只随一次快照发出
-        let pill = matches!(r.mode, "pre" | "recording" | "confirm" | "warn" | "ending" | "processing" | "naming");
+        let pill = matches!(r.mode, "pre" | "recording" | "confirm" | "warn" | "quiet" | "ending" | "processing" | "naming");
         View {
             state: changed.then_some(state),
             status: self.tray_status(g, &r, now),
@@ -824,13 +845,11 @@ impl Core {
         self.publish();
     }
 
-    pub fn extend(&self, g: &mut Inner) {
-        let Some(a) = g.active.as_mut() else { return };
-        a.stop_at += EXTEND;
-        a.confirm = false;
-        let (id, stop_at) = (a.lesson.id.clone(), a.stop_at);
-        if let Some(dir) = self.lesson_dir(&id) {
-            let _ = recorder::update(&dir, |lf| lf.stop_at = stop_at); // 崩溃续录时保留延长
+    /// 胶囊问「是否结束」时点了「继续录」：当作刚听到说话，重新按声音判断（不超过下课后 30 分钟）
+    pub fn keep_going(&self, g: &mut Inner, now: i64) {
+        if let Some(a) = g.active.as_mut() {
+            a.confirm = false;
+            self.shared.voice_at.store(now, Ordering::Relaxed);
         }
     }
 
@@ -959,7 +978,7 @@ mod tests {
         assert_eq!(pre_lesson(T0 - 4 * MIN, &ls, &none).map(|l| l.id.as_str()), Some("a"));
         assert!(pre_lesson(T0 - 11 * MIN, &ls, &none).is_none());
         assert_eq!(decide(T0 - 3 * MIN, &ls, None, &none), Action::Start("a".into()));
-        // 崩溃后晚开 App：上课中、下课后 10 分钟内都续录；之后不再录
+        // 崩溃后晚开 App：上课中、下课后 10 分钟内都续录；之后不再录（下课后录多久由声音决定）
         assert_eq!(decide(T0 + 65 * MIN, &ls, None, &none), Action::Start("a".into()));
         assert_eq!(decide(T0 + 70 * MIN, &ls, None, &none), Action::Idle);
         // 临时取消、已结束、云端已处理的课不自动录
@@ -979,7 +998,21 @@ mod tests {
         assert_eq!(decide(T0 + MIN, std::slice::from_ref(&adhoc), None, &none), Action::Idle);
         assert!(pre_lesson(T0 - 5 * MIN, std::slice::from_ref(&adhoc), &none).is_none());
         assert_eq!(stop_at_of(&adhoc), T0 + 180 * MIN);
-        assert_eq!(stop_at_of(&ls[0]), T0 + 70 * MIN);
+        assert_eq!(stop_at_of(&ls[0]), T0 + 90 * MIN);
+    }
+
+    #[test]
+    fn stop_by_voice() {
+        let l = lesson("a", T0, 60, "upcoming");
+        let end = T0 + 60 * MIN;
+        // 下课前就安静了：从下课时间起算 3 分钟，再问 1 分钟
+        assert_eq!(quiet_stop(&l, T0 + 50 * MIN), end + 4 * MIN);
+        // 拖堂：最后一次说话后 3 分钟问、4 分钟停
+        assert_eq!(quiet_stop(&l, end + 12 * MIN), end + 16 * MIN);
+        // 一直有人说话 → 到下课后 30 分钟上限停
+        assert_eq!(stop_at_of(&l).min(quiet_stop(&l, end + 29 * MIN)), end + 30 * MIN);
+        // 随时录制不按声音停
+        assert_eq!(quiet_stop(&lesson("adhoc-0123456789abcdef", T0, 180, "recording"), T0), i64::MAX);
     }
 
     #[test]
