@@ -235,3 +235,52 @@ a:focus-visible,button:focus-visible{outline:3px solid var(--accent);outline-off
   .report-cta{align-items:stretch;flex-direction:column}
   .name-form{grid-template-columns:1fr}
 }
+
+/* ---------- 暂停、结束确认（按住 1 秒） ---------- */
+.pill .btn.soft{background:transparent;color:rgba(255,255,255,.72)}
+.pill .btn.soft:hover{background:rgba(255,255,255,.14);color:#fff}
+.pill .btn.white{background:#fff;color:#111}
+.pill .btn.white:hover{background:#e8eaee}
+.pill .btn.pause::before{content:"❚❚";font-size:9px;letter-spacing:-1px;margin-right:5px;vertical-align:1px}
+.pill.paused{background:rgba(58,62,70,.95)}
+.pill .pz{width:9px;height:11px;border-left:3px solid #f5c26b;border-right:3px solid #f5c26b;flex:none}
+.pill.paused .t1{color:#f5c26b}
+.wave.amber{color:#f5c26b}
+.pill.confirm{display:flex;flex-direction:column;align-items:stretch;gap:10px;width:400px;padding:14px 14px 12px 16px;border-radius:18px;white-space:normal;cursor:default}
+.pill.confirm .t1{font-size:15px}
+.pill.confirm .t2{line-height:1.5}
+.pill.confirm .row2{display:flex;align-items:center;gap:8px}
+.pill.confirm .row2 .btn{flex:none;white-space:nowrap;padding:7px 14px}
+.pill.confirm .sp{flex:1}
+.pill .link{color:rgba(255,255,255,.72);font-size:12px;text-decoration:underline;text-underline-offset:3px;padding:0;text-align:left}
+.hold{position:relative;overflow:hidden;background:#e5484d!important;color:#fff;user-select:none;-webkit-user-select:none;touch-action:none}
+.hold::before{content:"";position:absolute;inset:0;background:rgba(0,0,0,.28);transform-origin:left;transform:scaleX(var(--p,0))}
+.hold span{position:relative}
+.hold.light{background:var(--rec)!important}
+.hero.paused{background:var(--warn-soft);border-color:transparent}
+.hero .big.amber{color:var(--warn)}
+.hero .acts .primary{min-width:110px}
+.recbtn.paused{background:var(--warn-soft);color:var(--warn)}
+.recbtn.paused i{border-radius:1px;width:8px;background:none;border-left:3px solid currentColor;border-right:3px solid currentColor}
+.row .side.pz{color:var(--warn);font-weight:600}
+.panel.ask .hint{margin-top:10px;font-size:12px;color:var(--faint)}
+.panel.ask .foot{align-items:center}
+.panel.ask .foot .left{margin-right:auto}
+.linkbtn{color:var(--accent);font-size:13px;padding:0}
+
+/* ---------- 合并反馈 ---------- */
+.dhead{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}
+.hintline{margin:14px 0 0;font-size:13px;color:var(--muted)}
+.badge2{display:inline-block;margin-left:6px;padding:0 6px;border-radius:6px;background:var(--accent-soft);color:var(--accent);font-size:11px;font-weight:600;line-height:18px;vertical-align:1px}
+.row .time2{font-size:12px;color:var(--muted);line-height:1.5}
+.parts{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:12px}
+.parts .lab{font-size:13px;color:var(--faint)}
+.parts button{font-size:12px;padding:4px 10px;border-radius:999px;background:var(--surface-2);color:var(--muted)}
+.parts button:hover{color:var(--text)}
+.pick .picks{display:flex;flex-direction:column;gap:2px;margin-top:14px;border:1px solid var(--line);border-radius:10px;padding:4px;max-height:300px;overflow:auto}
+.pick .picks label{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;cursor:pointer}
+.pick .picks label:hover{background:var(--surface-2)}
+.pick .picks label.off{opacity:.45;cursor:default}
+.pick .picks input{width:16px;height:16px;accent-color:var(--accent)}
+.pick .keep{margin-top:12px;padding:10px 12px;border-radius:10px;background:var(--accent-soft);color:var(--text);font-size:14px;line-height:1.6}
+.pick .pn{margin-left:auto;font-size:12px;color:var(--faint)}

@@ -1,6 +1,6 @@
 import './styles.css';
 import { call, isMeeting, on, onLevel, subscribe, type AppState, type Lesson } from './bridge';
-import { esc, MIC_SVG, ordered, shanghaiToday, tick } from './format';
+import { addDays, dateLabel, esc, holdToEnd, MIC_SVG, ordered, shanghaiToday, tick } from './format';
 
 const app = document.querySelector<HTMLDivElement>('#app')!;
 app.className = 'main';
@@ -21,6 +21,11 @@ let saving: Promise<unknown> = Promise.resolve();
 const inOrder = (cmd: string, args: Record<string, unknown>) => (saving = saving.catch(() => {}).then(() => call(cmd, args)));
 let note: { id: string; text: string } | null = null; // 手动开录失败的原因，显示在按钮下
 let delAsk: string | null = null; // 右键删除、正在确认的课
+let endAsk = false; // 窗口里点了「结束录制」，确认框就出在窗口里
+/** 「合并反馈」选课弹窗：mergeId = 重新选课程时那份合并反馈的编号 */
+let pick: { mergeId: string | null; student: string; current: string | null; picked: Set<string> } | null = null;
+/** 正在生成的合并反馈（等云端约 15 秒）：列表里先放一行「整理中」 */
+let merging: { id: string; ids: string[] } | null = null;
 let updMsg = ''; // 设置里「检查更新」的结果
 let installing = false;
 let refreshing = false;
@@ -33,7 +38,22 @@ const showErr = (text: string) => {
 const last = { shell: '', list: '', detail: '', sheet: '', ask: '' };
 
 const $ = <T extends HTMLElement>(s: string) => app.querySelector<T>(s);
-const lessonOf = (id: string | null) => S?.lessons.find(l => l.id === id);
+/** 课表 + 正在生成的合并反馈 */
+function lessons(): Lesson[] {
+  const all = S?.lessons ?? [];
+  if (!merging) return all;
+  const m = merging;
+  const src = m.ids.map(id => all.find(l => l.id === id)).filter((l): l is Lesson => Boolean(l)).sort((a, b) => a.startAt - b.startAt);
+  const last = src.at(-1);
+  if (!last) return all;
+  const fake: Lesson = {
+    ...all.find(l => l.id === m.id),
+    id: m.id, date: last.date, start: last.start, end: last.end, startAt: last.startAt, endAt: last.endAt,
+    title: `${last.student} · 合并反馈`, topic: last.title.split(' · ')[0], status: 'processing', copied: false, kind: 'merged', student: last.student, sources: m.ids,
+  };
+  return [...all.filter(l => l.id !== m.id), fake];
+}
+const lessonOf = (id: string | null) => lessons().find(l => l.id === id);
 const swap = (key: keyof typeof last, el: HTMLElement | null, html: string) => {
   if (!el || last[key] === html) return false;
   last[key] = html;
@@ -48,6 +68,8 @@ function render() {
     sheetOpen = false;
     last.list = last.detail = last.sheet = last.ask = '';
     delAsk = null;
+    endAsk = false;
+    pick = null;
     swap('shell', app, `${titlebar('')}<div class="login"><div class="login-card"><span class="appicon lg">${MIC_SVG}</span><h1>菁仕课堂</h1><p>用飞书登录后，课表会自动同步，到点自动录课</p>${
       s.loggingIn
         ? '<div class="waiting" role="status"><span class="spin dark"></span>已在浏览器打开飞书授权，完成后会自动回来</div>'
@@ -60,7 +82,7 @@ function render() {
     last.list = last.detail = last.sheet = last.ask = '';
   }
 
-  const rows = ordered(s.lessons, shanghaiToday());
+  const rows = ordered(lessons(), shanghaiToday());
   if (s.selectedLessonId !== asked) {
     asked = s.selectedLessonId;
     if (asked && lessonOf(asked)) sel = asked;
@@ -81,10 +103,12 @@ function render() {
   }
   const recBtn = $('[data-act="rec"]');
   if (recBtn) {
-    recBtn.classList.toggle('on', recording());
-    recBtn.querySelector('span')!.textContent = recording() ? '结束录制' : '开始录制';
+    recBtn.classList.toggle('on', recording() && !s.rec.paused);
+    recBtn.classList.toggle('paused', recording() && s.rec.paused);
+    recBtn.querySelector('span')!.textContent = !recording() ? '开始录制' : s.rec.paused ? '继续录制' : '结束录制';
   }
-  if (sheetOpen || delAsk) hidePop(); // 弹窗盖住了总结
+  if (!recording()) endAsk = false;
+  if (sheetOpen || delAsk || endAsk || pick) hidePop(); // 弹窗盖住了总结
   renderList(rows);
   renderDetail(lessonOf(sel));
   renderSheet();
@@ -97,7 +121,15 @@ const missed = (l: Lesson) => l.status === 'upcoming' && Date.now() > l.endAt + 
 const EARLY = 30 * 60_000; // 与 engine.rs MANUAL_EARLY 一致
 /** 会议纪要不发家长，不算「总结未发送」 */
 const unsent = (l: Lesson) => l.status === 'done' && !l.copied && !isMeeting(l);
-const tag = (l: Lesson) => (l.kind && !l.title.startsWith('随时录制') ? `<span class="tag">${isMeeting(l) ? '会议' : '随时录制'}</span>` : '');
+const tag = (l: Lesson) => (l.kind === 'merged' ? `<span class="badge2">${l.sources?.length ?? 0} 节</span>`
+  : l.kind && !l.title.startsWith('随时录制') ? `<span class="tag">${isMeeting(l) ? '会议' : '随时录制'}</span>` : '');
+/** 合并反馈里的几节（列表里还在的），按上课时间 */
+const sourcesOf = (l: Lesson) => (l.sources ?? []).map(id => S!.lessons.find(x => x.id === id)).filter((x): x is Lesson => Boolean(x)).sort((a, b) => a.startAt - b.startAt);
+/** 能合并的课：同一个学生、课表里的、最近 7 天 */
+const sameStudent = (student: string) => {
+  const from = addDays(shanghaiToday(), -7);
+  return S!.lessons.filter(x => !x.kind && x.student === student && x.date >= from && x.status !== 'cancelled');
+};
 const hhmm = (ms: number) => new Date(ms).toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit', hour12: false });
 
 function renderList(rows: ReturnType<typeof ordered>) {
@@ -110,14 +142,18 @@ function renderList(rows: ReturnType<typeof ordered>) {
       group = g;
     }
     const side =
-      l.status === 'recording' ? `<span class="side rec num"${l.id === s.rec.lessonId ? ' data-sec' : ''}>${l.id === s.rec.lessonId ? '' : '录制中'}</span>`
+      l.status === 'recording' && l.id === s.rec.lessonId && s.rec.paused ? '<span class="side pz">已暂停</span>'
+      : l.status === 'recording' ? `<span class="side rec num"${l.id === s.rec.lessonId ? ' data-sec' : ''}>${l.id === s.rec.lessonId ? '' : '录制中'}</span>`
       : l.needsName ? '<span class="side">待填主题</span>'
       : l.status === 'processing' ? '<span class="side">整理中</span>'
       : missed(l) ? '<span class="side">未录制</span>'
       : l.status === 'upcoming' ? '<span class="side">待开始</span>'
       : l.status === 'cancelled' ? '<span class="side">临时取消</span>'
       : `<span class="side">${unsent(l) ? '<span class="unread" title="总结还没复制"></span>' : ''}</span>`;
-    html += `<button class="row ${l.id === sel ? 'sel' : ''} ${l.status}" data-id="${esc(l.id)}"><span class="st ${l.status}"></span><span><div class="title">${esc(l.title)}${tag(l)}</div><div class="time num">${g === '更早' ? `${label} ` : ''}${esc(l.start)}–${esc(l.end)}</div></span>${side}</button>`;
+    const parts = l.kind === 'merged' ? sourcesOf(l) : [];
+    const time = parts.length ? `<div class="time2 num">${parts.map(x => `${x.date === l.date ? '' : `${x.date.slice(5).replace('-', '/')} `}${esc(x.start)}–${esc(x.end)}`).join(' · ')}</div>`
+      : `<div class="time num">${g === '更早' ? `${label} ` : ''}${esc(l.start)}–${esc(l.end)}</div>`;
+    html += `<button class="row ${l.id === sel ? 'sel' : ''} ${l.status}" data-id="${esc(l.id)}"><span class="st ${l.status}"></span><span><div class="title">${esc(l.title)}${tag(l)}</div>${time}</span>${side}</button>`;
   }
   swap('list', $('#list'), html);
 }
@@ -125,7 +161,21 @@ function renderList(rows: ReturnType<typeof ordered>) {
 function renderDetail(l: Lesson | undefined) {
   const s = S!;
   if (!l) return void swap('detail', $('#detail'), '<p class="empty">最近 7 天和明天都没有课</p>');
-  const head = `<h2>${esc(l.title)}${tag(l)}</h2><div class="meta num">${l.date.slice(5).replace('-', '/')} · ${esc(l.start)}–${esc(l.end)}${l.topic ? ` · ${esc(l.topic)}` : ''}</div>`;
+  let head = `<h2>${esc(l.title)}${tag(l)}</h2><div class="meta num">${l.date.slice(5).replace('-', '/')} · ${esc(l.start)}–${esc(l.end)}${l.topic ? ` · ${esc(l.topic)}` : ''}</div>`;
+  const busy = merging?.id === l.id;
+  if (l.kind === 'merged') {
+    const parts = sourcesOf(l);
+    head = `<div class="dhead"><div><h2>${esc(l.title)}${tag(l)}</h2><div class="meta num">${esc(l.topic)}</div></div>${busy || l.status !== 'done' ? '' : '<button class="ghost sm" data-act="merge-again">重新选课程</button>'}</div>
+      <div class="parts"><span class="lab">包含：</span>${parts.map(x => `<button data-goto="${esc(x.id)}">${dateLabel(x.date)} ${esc(x.start)}–${esc(x.end)} ↗</button>`).join('')}</div>`;
+  } else if (!l.kind && l.status === 'done' && l.student) {
+    // 同一个学生最近 7 天还有别的已出报告的课：可以选几节合并一份反馈
+    const others = sameStudent(l.student).filter(x => x.id !== l.id && x.status === 'done');
+    const today = others.filter(x => x.date === l.date).length;
+    if (others.length) {
+      head = `<div class="dhead"><div>${head}</div><button class="ghost sm" data-act="merge">合并反馈</button></div>
+        <p class="hintline">${today ? `${l.date === shanghaiToday() ? '今天' : '这天'}和${esc(l.student)}还上了 ${today} 节课，最近 7 天共 ${others.length + 1} 节` : `最近 7 天和${esc(l.student)}还上了 ${others.length} 节课`}，可以选几节合并一份反馈。</p>`;
+    }
+  }
   let body = '';
   if (l.needsName) {
     body = `<div class="card"><div class="card-h">这段录音是关于什么？ <small>10 分钟不填按「课程」处理</small></div>
@@ -141,13 +191,21 @@ function renderDetail(l: Lesson | undefined) {
         ? `<span class="sub">${hhmm(l.startAt - EARLY)} 起可以提前手动开始录制</span>`
         : '<button class="primary" data-act="start">现在开始录制</button>'}</div>${
         note?.id === l.id ? `<div class="sub err" role="alert">${esc(note.text)}</div>` : ''}</div>`;
+  } else if (l.status === 'recording' && l.id === s.rec.lessonId && s.rec.paused) {
+    body = `<div class="hero paused"><div class="big amber num">已暂停 <span data-pz></span></div>
+      <div class="sub">这段不录音 · 已录 <span class="num" data-sec></span> · 暂停 10 分钟或听到在讲课会提醒你；暂停到${l.kind ? '开录后 3 小时' : '下课后 30 分钟'}自动结束</div>
+      <div class="acts"><button class="primary" data-act="resume">继续录</button><button class="ghost" data-act="stop">结束录制</button></div></div>
+      <p class="empty">暂停期间麦克风只看音量、不录音。闲聊不用暂停也不会进家长报告，暂停是为了不留录音。</p>`;
   } else if (l.status === 'recording') {
     const r = s.rec;
     body = `<div class="hero rec"><div class="big red num" data-sec></div><div class="sub">${l.kind ? '随时录制 · 结束时再填主题，最长 3 小时' : `正在录制 · 拖堂会接着录，下课后安静 3 分钟会问你是否结束，最晚 ${esc(r.autoStopAt)}`}</div>
       <div class="chips"><span class="chip num">本机已保存 ${r.savedSegments} 段</span><span class="chip num">已上传 ${r.uploadedSegments} 段</span>${
         r.online ? '<span class="chip ok">● 网络正常</span>' : '<span class="chip warn">● 网络断开，恢复后自动补传</span>'}</div>
-      <div class="acts"><button class="ghost" data-act="stop">结束录制</button></div></div>
+      <div class="acts"><button class="primary" data-act="pause">暂停</button><button class="ghost" data-act="stop">结束录制</button></div></div>
       <p class="empty">可以关掉这个窗口，录音会继续；屏幕顶部的胶囊会一直陪着你。</p>`;
+  } else if (l.kind === 'merged' && l.status !== 'done') {
+    body = `<div class="hero"><div class="sub lead"><span class="spin dark" style="display:inline-block;vertical-align:-2px;margin-right:8px"></span>正在把 ${l.sources?.length ?? 0} 节课合并成一份反馈…</div>
+      <div class="sub">${busy ? '大约 15 秒；不用重新转写，直接用各节已经整理好的课堂记录' : '生成没成功，云端会在 30 分钟内自动重试；也可以点「重新选课程」再试一次'}</div>${busy ? '' : '<div class="acts"><button class="ghost" data-act="merge-again">重新选课程</button></div>'}</div>`;
   } else if (l.status === 'processing') {
     body = '<div class="hero"><div class="sub lead">正在整理这节课…</div><div class="sub">录音已全部上传，总结一般 10 分钟内好，好了会发到你的飞书；回到这里点右上角刷新也能看到</div></div>';
   } else if (l.status === 'cancelled') {
@@ -155,6 +213,7 @@ function renderDetail(l: Lesson | undefined) {
   } else {
     const copied = flash === l.id;
     const name = isMeeting(l) ? '会议纪要' : '家长总结';
+    const merged = l.kind === 'merged';
     body = `<div class="card">
         <div class="card-h">${name} <small>可以直接修改，复制的是改过的版本</small></div>
         <textarea class="summary" id="sum" spellcheck="false" aria-label="${name}"></textarea>
@@ -162,9 +221,11 @@ function renderDetail(l: Lesson | undefined) {
           ${l.copied && !copied ? '<span>已复制过</span>' : ''}<button class="primary${copied ? ' ok' : ''}" data-act="copy">${copied ? '已复制 ✓' : copyLabel(l)}</button></div>
       </div>${l.reportUrl ? `
       <section class="card report-cta" aria-label="${isMeeting(l) ? '会议纪要网页' : '完整课堂学情报告'}">
-        ${isMeeting(l) ? '<div><h3>会议纪要网页</h3><p>决定、待办、议题时间分布与发言占比 · 支持下载 PDF</p></div>' : '<div><h3>完整课堂学情报告</h3><p>学习内容、时间分布、掌握情况与课后建议 · 支持下载 PDF</p></div>'}
+        ${isMeeting(l) ? '<div><h3>会议纪要网页</h3><p>决定、待办、议题时间分布与发言占比 · 支持下载 PDF</p></div>'
+          : merged ? `<div><h3>合并的课堂学情报告</h3><p>${l.sources?.length ?? 0} 节课的学习内容、时间分布、掌握情况与课后建议 · 支持下载 PDF</p></div>`
+          : '<div><h3>完整课堂学情报告</h3><p>学习内容、时间分布、掌握情况与课后建议 · 支持下载 PDF</p></div>'}
         <button class="primary cta" data-act="report">${isMeeting(l) ? '查看纪要网页' : '查看完整报告'} <span aria-hidden="true">↗</span></button>
-      </section>` : ''}`;
+      </section>` : ''}${merged ? '<p class="empty">单节课的总结和报告都还在，点上面的课程可以单独看。不要这份合并反馈了，在左边列表里右键删除，单节不受影响。</p>' : ''}`;
   }
   const changed = swap('detail', $('#detail'), head + body);
   // 总结文本不进 key：老师正在输入时，服务端回推不会冲掉光标。
@@ -202,22 +263,74 @@ function renderSheet() {
   </div>`);
 }
 
-const recording = () => ['recording', 'confirm', 'warn', 'quiet', 'ending'].includes(S?.rec.mode ?? '');
+const recording = () => ['recording', 'paused', 'confirm', 'warn', 'quiet', 'ending'].includes(S?.rec.mode ?? '');
 
-/** 右键「删除」后的确认框 */
+/** 窗口里的弹窗：右键「删除」确认、「结束录制」确认（按住 1 秒）、合并反馈选课 */
 function renderAsk() {
   const el = $('#ask');
   const l = lessonOf(delAsk);
   if (!l) delAsk = null;
-  el?.classList.toggle('hidden', !l);
-  if (!l) return;
-  const extra = l.status === 'recording' ? '正在录的音会立即停止并丢弃，不会生成总结。'
+  const html = l ? deleteAsk(l) : endAsk ? endPanel() : pick ? pickPanel(pick) : '';
+  el?.classList.toggle('hidden', !html);
+  if (html) swap('ask', el, html);
+  else last.ask = '';
+}
+
+function deleteAsk(l: Lesson) {
+  const extra = l.kind === 'merged' ? '只删除这份合并反馈，单节课的总结和报告都保留。'
+    : l.status === 'recording' ? '正在录的音会立即停止并丢弃，不会生成总结。'
     : l.status === 'processing' ? '录音和正在生成的总结都会放弃。' : '';
-  swap('ask', el, `<div class="panel ask" role="alertdialog" aria-label="删除确认">
+  return `<div class="panel ask" role="alertdialog" aria-label="删除确认">
     <h3>删除「${esc(l.title)}」？</h3>
-    <p>只从菁仕课堂里删除，不会改课表。${extra}删除后不能恢复。</p>
+    <p>${l.kind === 'merged' ? '' : '只从菁仕课堂里删除，不会改课表。'}${extra}删除后不能恢复。</p>
     <div class="foot"><button class="ghost" data-act="delete-cancel">取消</button><button class="primary danger" data-act="delete-ok">删除</button></div>
-  </div>`);
+  </div>`;
+}
+
+function endPanel() {
+  const adhoc = Boolean(lessonOf(S!.rec.lessonId)?.kind);
+  return `<div class="panel ask" role="alertdialog" aria-label="结束确认"><h3>${adhoc ? '结束这段录制？' : '结束这节课的录制？'}</h3>
+    <p class="num">已录 <span data-sec></span>。结束后录音提交整理，${adhoc ? '这段' : '这节课'}不能再接着录。</p>
+    <div class="foot">${S!.rec.paused ? '' : '<button class="linkbtn left" data-act="end-pause">只是想停一会儿？改成暂停</button>'}<button class="ghost sm hold light" data-hold><span>按住 1 秒结束</span></button><button class="primary sm" data-act="end-cancel">${S!.rec.paused ? '保持暂停' : '继续录'}</button></div>
+    <div class="hint">按住按钮 1 秒才会结束，误点、连点都不会结束；按 Esc 或点外面取消。</div></div>`;
+}
+
+/** 选课：同一个学生最近 7 天的课，已出报告的才能勾；当前这节和同一天的默认勾上 */
+function pickPanel(p: NonNullable<typeof pick>) {
+  const rank = (x: Lesson) => (x.status !== 'done' ? 2 : x.id === p.current ? 0 : 1);
+  const rows = sameStudent(p.student).sort((a, b) => rank(a) - rank(b) || b.startAt - a.startAt);
+  const note = (x: Lesson) => (x.id === p.current ? '这节' : x.status === 'done' ? '' : x.status === 'processing' ? '整理中' : x.status === 'recording' ? '录制中' : missed(x) ? '没有录音' : '还没上');
+  const n = rows.filter(x => p.picked.has(x.id)).length;
+  return `<div class="panel ask pick" role="dialog" aria-label="合并反馈"><h3>合并反馈</h3>
+    <div class="keep"><b>每节课自己的反馈都会保留。</b>合并后另外多出一份，不会替换或改动单节的总结和报告。</div>
+    <div class="picks">${rows.map(x => `<label class="${x.status === 'done' ? '' : 'off'}"><input type="checkbox" data-pick="${esc(x.id)}"${p.picked.has(x.id) ? ' checked' : ''}${x.status === 'done' ? '' : ' disabled'}><span class="num">${dateLabel(x.date)} ${esc(x.start)}–${esc(x.end)}</span><span class="pn">${note(x)}</span></label>`).join('')}</div>
+    <div class="foot"><button class="ghost sm" data-act="merge-cancel">取消</button><button class="primary sm" data-act="merge-ok"${n < 2 || n > 8 ? ' disabled' : ''}>合并 ${n} 节</button></div></div>`;
+}
+
+function openPick(l: Lesson) {
+  if (l.kind === 'merged') {
+    pick = { mergeId: l.id, student: l.student ?? '', current: null, picked: new Set(l.sources) };
+  } else {
+    const picked = sameStudent(l.student ?? '').filter(x => x.status === 'done' && (x.id === l.id || x.date === l.date));
+    pick = { mergeId: null, student: l.student ?? '', current: l.id, picked: new Set(picked.map(x => x.id)) };
+  }
+  render();
+}
+
+function submitPick() {
+  if (!pick) return;
+  const all = S!.lessons;
+  const ids = [...pick.picked].filter(id => all.some(x => x.id === id && x.status === 'done'))
+    .sort((a, b) => all.find(x => x.id === a)!.startAt - all.find(x => x.id === b)!.startAt);
+  if (ids.length < 2) return;
+  const id = pick.mergeId ?? `merged-${[...crypto.getRandomValues(new Uint8Array(8))].map(b => b.toString(16).padStart(2, '0')).join('')}`;
+  pick = null;
+  merging = { id, ids };
+  if (sel) flushSave(sel);
+  sel = id;
+  drafts.delete(id);
+  render();
+  call('merge_lessons', { mergeId: id, lessonIds: ids }).catch(err => showErr(String(err))).finally(() => { merging = null; render(); });
 }
 
 function setSheet(open: boolean) {
@@ -245,7 +358,14 @@ app.addEventListener('click', e => {
     delAsk = null;
     return render();
   }
-  if (t.id === 'ask') { delAsk = null; return render(); }
+  if (t.id === 'ask') { delAsk = null; endAsk = false; pick = null; return render(); }
+  const goto = t.closest<HTMLElement>('[data-goto]')?.dataset.goto;
+  if (goto && lessonOf(goto)) {
+    if (sel) flushSave(sel);
+    sel = goto;
+    flash = null;
+    return render();
+  }
   if (t.classList.contains('sheet')) return setSheet(false);
   const act = t.closest<HTMLElement>('[data-act]')?.dataset.act;
   if (!act || !S) return;
@@ -269,7 +389,11 @@ app.addEventListener('click', e => {
     drafts.delete(id);
     call('delete_lesson', { lessonId: id }).catch(err => showErr(String(err)));
   }
-  else if (act === 'rec') void call(recording() ? 'request_stop' : 'start_adhoc').catch(err => showErr(String(err)));
+  else if (act === 'rec') {
+    if (!recording()) void call('start_adhoc').catch(err => showErr(String(err)));
+    else if (S.rec.paused) void call('resume_recording');
+    else { endAsk = true; render(); }
+  }
   else if (act === 'update') {
     updMsg = '正在检查…';
     render();
@@ -288,7 +412,14 @@ app.addEventListener('click', e => {
     note = null;
     call('start_recording', { lessonId }).catch(err => { note = { id: lessonId!, text: String(err) }; render(); });
   }
-  else if (act === 'stop') void call('request_stop');
+  else if (act === 'stop') { endAsk = true; render(); }
+  else if (act === 'pause') void call('pause_recording');
+  else if (act === 'resume') void call('resume_recording');
+  else if (act === 'end-pause') { endAsk = false; render(); void call('pause_recording'); }
+  else if (act === 'end-cancel') { endAsk = false; render(); }
+  else if (act === 'merge' || act === 'merge-again') { const l = lessonOf(sel); if (l) openPick(l); }
+  else if (act === 'merge-cancel') { pick = null; render(); }
+  else if (act === 'merge-ok') submitPick();
   else if (act === 'report') void call('open_report', { lessonId });
   else if (act === 'copy') {
     const ta = $<HTMLTextAreaElement>('#sum');
@@ -301,9 +432,15 @@ app.addEventListener('click', e => {
 });
 
 app.addEventListener('change', e => {
-  const t = e.target as HTMLSelectElement;
+  const t = e.target as HTMLInputElement;
   if (t.dataset.act === 'mic') void call('switch_mic', { name: t.value });
+  if (t.dataset.pick && pick) {
+    if (t.checked) pick.picked.add(t.dataset.pick);
+    else pick.picked.delete(t.dataset.pick);
+    render();
+  }
 });
+holdToEnd(app, () => { endAsk = false; render(); void call('end_recording'); });
 
 app.addEventListener('input', e => {
   const ta = e.target as HTMLTextAreaElement;
@@ -440,7 +577,7 @@ document.addEventListener('keydown', e => {
   if (e.key !== 'Escape') return;
   hidePop();
   hideMenu();
-  if (delAsk) { delAsk = null; render(); }
+  if (delAsk || endAsk || pick) { delAsk = null; endAsk = false; pick = null; render(); }
   setSheet(false);
 });
 window.addEventListener('beforeunload', () => { if (sel) flushSave(sel); });

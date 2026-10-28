@@ -26,6 +26,9 @@ const ASK: i64 = MIN; // 问了 1 分钟没人理就停；到上限前也提前 
 const SILENT_WARN: i64 = 2 * MIN;
 const ADHOC_MAX: i64 = 180 * MIN; // 随时录制最长 3 小时，忘了关也会停
 pub const NAME_WAIT: i64 = 10 * MIN; // 随时录制结束后 10 分钟没填主题，按默认处理，不让整理卡住
+const PAUSE_NUDGE: i64 = 10 * MIN; // 暂停满 10 分钟提醒一次（胶囊 + 通知）
+const TALK_NUDGE: i64 = MIN; // 暂停中连续 1 分钟听到有人说话，提醒「好像开始讲课了？」
+const TALK_BREAK: i64 = 10_000; // 超过 10 秒没人说话，「连续说话」重新算
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -56,11 +59,22 @@ pub struct Lesson {
     /// 随时录制已结束、还在等老师填主题（只出现在本机快照里）
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub needs_name: bool,
+    /// 课表里的课有学生；App 按它找同一个学生的课来合并反馈
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub student: String,
+    /// 合并反馈（kind = "merged"）由哪几节课合并
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sources: Vec<String>,
 }
 
 /// 随时录制：编号由 App 生成，不在课表里，不参与自动开录
 pub fn is_adhoc(id: &str) -> bool {
     id.starts_with("adhoc-")
+}
+
+/// 合并反馈：编号由 App 生成，没有录音，只在云端引用几节已出报告的课
+pub fn is_merged(id: &str) -> bool {
+    id.starts_with("merged-")
 }
 
 /// 最晚停止时间：课表课 = 下课后 30 分钟；随时录制 = 开录后 3 小时
@@ -172,6 +186,44 @@ pub struct Active {
     pub stop_at: i64,
     pub confirm: bool,
     pub mic_since: i64,
+    /// 这次暂停的开始时间；None = 在录
+    pub paused_at: Option<i64>,
+    /// 已经结束的暂停加起来多久（ms）：「已录」不算暂停
+    pub paused_ms: i64,
+    pub nudge: Nudge,
+}
+
+/// 一次暂停里的提醒：最多两次（满 10 分钟、听到讲课各一次），点了「还在聊」就不再提醒
+#[derive(Default)]
+pub struct Nudge {
+    long: bool,
+    voice: bool,
+    quiet: bool,
+    talk_since: Option<i64>,
+    /// 胶囊上正在显示的提醒："" / "long" / "voice"
+    showing: &'static str,
+}
+
+impl Nudge {
+    /// 暂停中每秒一次（from = 暂停开始，voice = 最近一次听到说话）：连续 1 分钟听到有人说话、或暂停满 10 分钟，各提醒一次。
+    /// 不会自动继续录。返回 true = 刚到 10 分钟，要弹通知
+    fn step(&mut self, now: i64, from: i64, voice: i64) -> bool {
+        if now - voice > TALK_BREAK {
+            self.talk_since = None;
+        } else if self.talk_since.is_none() {
+            self.talk_since = Some(voice.max(from));
+        }
+        if self.quiet || self.showing == "voice" {
+            return false;
+        }
+        if !self.voice && self.talk_since.is_some_and(|t| now - t >= TALK_NUDGE) {
+            (self.voice, self.showing) = (true, "voice");
+        } else if !self.long && now - from >= PAUSE_NUDGE {
+            (self.long, self.showing) = (true, "long");
+            return true;
+        }
+        false
+    }
 }
 
 #[derive(Default)]
@@ -238,6 +290,9 @@ struct RecView {
     mode: &'static str,
     lesson_id: Option<String>,
     sec: i64,
+    paused: bool,
+    paused_sec: i64,
+    nudge: &'static str,
     end_left: i64,
     auto_stop_at: String,
     auto_start_at: String,
@@ -248,6 +303,7 @@ struct View {
     status: String,
     title: String,
     recording: bool,
+    paused: bool,
     pill: bool,
     naming: bool,
     fab: bool,
@@ -258,6 +314,7 @@ struct View {
 struct TrayUi {
     status_item: Option<MenuItem<Wry>>,
     recording: bool,
+    paused: bool,
     status: String,
     title: String,
     pill: bool,
@@ -382,15 +439,20 @@ impl Core {
         }
         self.shared.heard.store(false, Ordering::Relaxed);
         self.shared.voice_at.store(now, Ordering::Relaxed);
+        self.shared.paused.store(false, Ordering::Relaxed);
         g.orphans.retain(|(id, _)| *id != lesson.id);
         g.ended.remove(&lesson.id);
         g.processing_until = None;
-        g.active = Some(Active { lesson, started_at, stop_at, confirm: false, mic_since: now });
+        // 崩溃后续录：之前的暂停照样不算进「已录」；崩溃时正暂停着的，接着暂停
+        let (paused_ms, paused_at) = recorder::read(&dir).map(|lf| (lf.pauses.iter().map(|(a, b)| b - a).sum(), lf.paused_at)).unwrap_or((0, None));
+        self.shared.paused.store(paused_at.is_some(), Ordering::Relaxed);
+        g.active = Some(Active { lesson, started_at, stop_at, confirm: false, mic_since: now, paused_at, paused_ms, nudge: Nudge::default() });
         Ok(())
     }
 
     /// 停录并落盘：等录音线程写完最后一段，再记 endedAt，然后交给上传。
     pub fn stop_session(&self, g: &mut Inner, now: i64) {
+        self.unpause(g, now); // 暂停着结束：暂停一直算到结束
         let Some(a) = g.active.take() else { return };
         let (tx, rx) = std::sync::mpsc::channel();
         if self.rec.send(Msg::Stop { reply: tx }).is_ok() {
@@ -402,7 +464,7 @@ impl Core {
             }
         }
         g.ended.insert(a.lesson.id.clone());
-        g.last_sec = (now - a.started_at) / 1000;
+        g.last_sec = (now - a.started_at - a.paused_ms) / 1000;
         g.processing_until = Some(now + 2600);
         if is_adhoc(&a.lesson.id) {
             // 随时录制：胶囊不显示「正在整理」，先请老师填主题；上一段还没填的按默认处理
@@ -531,6 +593,7 @@ impl Core {
                     }
                 }
             }
+            self.check_pause(&mut g, now);
             let action = {
                 let a = g.active.as_ref().map(|a| ActiveRef { id: &a.lesson.id, start_at: a.lesson.start_at, stop_at: self.stop_of(a) });
                 decide(now, &g.lessons, a.as_ref(), &g.ended)
@@ -574,7 +637,7 @@ impl Core {
     // ---------- 快照与界面 ----------
 
     fn rec_view(&self, g: &Inner, now: i64) -> RecView {
-        let mut r = RecView { mode: "idle", lesson_id: None, sec: 0, end_left: 0, auto_stop_at: String::new(), auto_start_at: String::new() };
+        let mut r = RecView { mode: "idle", lesson_id: None, sec: 0, paused: false, paused_sec: 0, nudge: "", end_left: 0, auto_stop_at: String::new(), auto_start_at: String::new() };
         if let Some(a) = &g.active {
             let silent = !self.shared.heard.load(Ordering::Relaxed) && now - a.mic_since >= SILENT_WARN;
             let stop = self.stop_of(a);
@@ -582,13 +645,19 @@ impl Core {
                 "confirm"
             } else if now >= stop - ASK {
                 if stop < a.stop_at { "quiet" } else { "ending" }
+            } else if a.paused_at.is_some() {
+                "paused"
             } else if silent {
                 "warn"
             } else {
                 "recording"
             };
             r.lesson_id = Some(a.lesson.id.clone());
-            r.sec = ((now - a.started_at) / 1000).max(0);
+            let paused = a.paused_at.map_or(0, |p| now - p);
+            r.sec = ((now - a.started_at - a.paused_ms - paused) / 1000).max(0);
+            r.paused = a.paused_at.is_some();
+            r.paused_sec = paused / 1000;
+            r.nudge = a.nudge.showing;
             r.end_left = ((stop - now).max(0) + 999) / 1000;
             r.auto_stop_at = hhmm(a.stop_at);
         } else if let Some((id, _)) = &g.naming {
@@ -629,6 +698,9 @@ impl Core {
                 "mode": r.mode,
                 "lessonId": r.lesson_id,
                 "sec": r.sec,
+                "paused": r.paused,
+                "pausedSec": r.paused_sec,
+                "nudge": r.nudge,
                 "endLeft": r.end_left,
                 "autoStopAt": r.auto_stop_at,
                 "autoStartAt": r.auto_start_at,
@@ -658,6 +730,9 @@ impl Core {
             return "未登录 · 打开菁仕课堂登录".into();
         }
         if let Some(a) = &g.active {
+            if r.paused {
+                return format!("❚❚ 已暂停 · 已录 {} · {}", hms(r.sec), a.lesson.title);
+            }
             return format!("● 录制中 {} · {}", hms(r.sec), a.lesson.title);
         }
         let today = chrono::Utc::now().with_timezone(&shanghai()).format("%Y-%m-%d").to_string();
@@ -683,18 +758,20 @@ impl Core {
         let mut key = state.clone();
         if let Some(rec) = key.get_mut("rec").and_then(Value::as_object_mut) {
             rec.remove("sec");
+            rec.remove("pausedSec");
             rec.remove("endLeft");
         }
         let s = key.to_string();
         let changed = s != g.last_json;
         g.last_json = s;
         g.selected = None; // 「选中某节课」只随一次快照发出
-        let pill = matches!(r.mode, "pre" | "recording" | "confirm" | "warn" | "quiet" | "ending" | "processing" | "naming");
+        let pill = matches!(r.mode, "pre" | "recording" | "paused" | "confirm" | "warn" | "quiet" | "ending" | "processing" | "naming");
         View {
             state: changed.then_some(state),
             status: self.tray_status(g, &r, now),
-            title: if g.active.is_some() { hms(r.sec).trim_start_matches("00:").to_string() } else { String::new() },
+            title: if r.paused { "已暂停".into() } else if g.active.is_some() { hms(r.sec).trim_start_matches("00:").to_string() } else { String::new() },
             recording: g.active.is_some(),
+            paused: r.paused,
             pill,
             naming: r.mode == "naming",
             // 有胶囊时胶囊就是入口，悬浮按钮让位
@@ -718,12 +795,13 @@ impl Core {
         }
         let mut ui = self.ui.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(tray) = self.app.tray_by_id("main") {
-            if ui.status_item.is_none() || ui.recording != v.recording {
-                match build_menu(&self.app, &v.status, v.recording) {
+            if ui.status_item.is_none() || ui.recording != v.recording || ui.paused != v.paused {
+                match build_menu(&self.app, &v.status, v.recording, v.paused) {
                     Ok((menu, item)) => {
                         let _ = tray.set_menu(Some(menu));
                         ui.status_item = Some(item);
                         ui.recording = v.recording;
+                        ui.paused = v.paused;
                         ui.status = v.status.clone();
                     }
                     Err(e) => eprintln!("[tray] menu: {e}"),
@@ -815,7 +893,7 @@ impl Core {
             if g.naming.as_ref().is_some_and(|(n, _)| n == id) {
                 g.naming = None;
             }
-            let cloud = dir.exists() || g.merged().iter().any(|l| l.id == id && matches!(l.status.as_str(), "recording" | "processing"));
+            let cloud = is_merged(id) || dir.exists() || g.merged().iter().any(|l| l.id == id && matches!(l.status.as_str(), "recording" | "processing"));
             if dir.exists() {
                 std::fs::remove_dir_all(&dir).map_err(|e| format!("删除本机录音失败：{e}"))?;
             }
@@ -845,11 +923,70 @@ impl Core {
         self.publish();
     }
 
-    /// 胶囊问「是否结束」时点了「继续录」：当作刚听到说话，重新按声音判断（不超过下课后 30 分钟）
+    /// 胶囊问「是否结束」时点了「继续录」：当作刚听到说话，重新按声音判断（不超过下课后 30 分钟）；暂停着的也接着录
     pub fn keep_going(&self, g: &mut Inner, now: i64) {
+        if g.active.is_some() {
+            self.shared.voice_at.store(now, Ordering::Relaxed);
+            self.unpause(g, now);
+        }
+    }
+
+    /// 暂停：录音线程照常切段、写静音，时间轴不断；「已录」停表
+    pub fn pause(&self, g: &mut Inner, now: i64) {
         if let Some(a) = g.active.as_mut() {
             a.confirm = false;
-            self.shared.voice_at.store(now, Ordering::Relaxed);
+            if a.paused_at.is_none() {
+                a.paused_at = Some(now);
+                a.nudge = Nudge::default();
+                self.shared.paused.store(true, Ordering::Relaxed);
+                if let Some(dir) = self.lesson_dir(&a.lesson.id) {
+                    if let Err(e) = recorder::update(&dir, |lf| lf.paused_at = Some(now)) {
+                        eprintln!("[engine] pause {}: {e}", a.lesson.id);
+                    }
+                }
+            }
+        }
+    }
+
+    /// 继续录（也用于收起「结束？」确认）：这段暂停记进 lesson.json，finish 时报给云端
+    pub fn unpause(&self, g: &mut Inner, now: i64) {
+        let Some(a) = g.active.as_mut() else { return };
+        a.confirm = false;
+        let Some(from) = a.paused_at.take() else { return };
+        self.shared.paused.store(false, Ordering::Relaxed);
+        a.paused_ms += now - from;
+        a.nudge = Nudge::default();
+        if let Some(dir) = self.lesson_dir(&a.lesson.id) {
+            if let Err(e) = recorder::update(&dir, |lf| {
+                lf.pauses.push((from, now));
+                lf.paused_at = None;
+            }) {
+                eprintln!("[engine] pause {}: {e}", a.lesson.id);
+            }
+        }
+        if g.toast.as_ref().is_some_and(|t| t["kind"] == "pause") {
+            g.toast = None;
+        }
+    }
+
+    /// 暂停提醒里点了「还在聊」：这次暂停不再提醒
+    pub fn still_chatting(&self, g: &mut Inner) {
+        if let Some(a) = g.active.as_mut() {
+            a.nudge.quiet = true;
+            a.nudge.showing = "";
+        }
+        if g.toast.as_ref().is_some_and(|t| t["kind"] == "pause") {
+            g.toast = None;
+        }
+    }
+
+    /// 每秒看一次暂停，满 10 分钟的那次同时弹通知
+    fn check_pause(&self, g: &mut Inner, now: i64) {
+        let Some(a) = g.active.as_mut() else { return };
+        let Some(from) = a.paused_at else { return };
+        if a.nudge.step(now, from, self.shared.voice_at.load(Ordering::Relaxed)) {
+            let id = a.lesson.id.clone();
+            g.toast = Some(json!({ "lessonId": id, "kind": "pause", "title": "已经暂停 10 分钟了", "body": "回来上课记得点「继续录」，暂停的这段不会录音" }));
         }
     }
 
@@ -925,6 +1062,7 @@ impl Core {
                 let (true, Some(summary)) = (l.status == "done" && before.get(&l.id).is_some_and(|s| s == "processing"), &l.summary) else { continue };
                 let student = l.title.rsplit(" · ").next().unwrap_or(&l.title);
                 let title = match l.kind.as_deref() {
+                    Some("merged") => continue, // 老师自己点的合并，不弹通知
                     Some("meeting") => format!("{}的会议纪要好了", l.title),
                     Some(_) => format!("{}的课堂总结好了", l.title),
                     None => format!("{student}今天的课堂总结好了"),
@@ -945,16 +1083,21 @@ fn clear_auth(g: &mut Inner) {
     g.login_gen += 1;
 }
 
-fn build_menu(app: &AppHandle, status: &str, recording: bool) -> tauri::Result<(Menu<Wry>, MenuItem<Wry>)> {
+fn build_menu(app: &AppHandle, status: &str, recording: bool, paused: bool) -> tauri::Result<(Menu<Wry>, MenuItem<Wry>)> {
     let status = MenuItem::with_id(app, "status", status, false, None::<&str>)?;
     let open = MenuItem::with_id(app, "open", "打开菁仕课堂", true, None::<&str>)?;
+    let pause = if paused { MenuItem::with_id(app, "resume", "继续录制", true, None::<&str>)? } else { MenuItem::with_id(app, "pause", "暂停录制", true, None::<&str>)? };
     let stop = MenuItem::with_id(app, "stop", "结束录制…", true, None::<&str>)?;
     let adhoc = MenuItem::with_id(app, "adhoc", "随时录制", true, None::<&str>)?;
     let settings = MenuItem::with_id(app, "settings", "设置…", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
     let (s1, s2) = (PredefinedMenuItem::separator(app)?, PredefinedMenuItem::separator(app)?);
     let mut items: Vec<&dyn IsMenuItem<Wry>> = vec![&status, &s1, &open];
-    items.push(if recording { &stop } else { &adhoc });
+    if recording {
+        items.extend([&pause as &dyn IsMenuItem<Wry>, &stop]);
+    } else {
+        items.push(&adhoc);
+    }
     items.extend([&settings as &dyn IsMenuItem<Wry>, &s2, &quit]);
     Ok((Menu::with_items(app, &items)?, status))
 }
@@ -1016,6 +1159,32 @@ mod tests {
     }
 
     #[test]
+    fn pause_nudges() {
+        let p = T0; // 暂停开始
+        // 一直有人说话：1 分钟后提醒「好像开始讲课了」，之后不再变；10 分钟那次不再弹
+        let mut n = Nudge::default();
+        for s in 1..=60 {
+            assert!(!n.step(p + s * 1000, p, p + s * 1000 - 500));
+        }
+        assert_eq!(n.showing, "");
+        assert!(!n.step(p + 61_000, p, p + 60_500));
+        assert_eq!(n.showing, "voice");
+        assert!(!n.step(p + 10 * MIN, p, p + 10 * MIN));
+        // 说话断了 10 秒以上重新算；没人说话满 10 分钟提醒一次并弹通知
+        let mut n = Nudge::default();
+        assert!(!n.step(p + 50_000, p, p + 30_000));
+        assert!(!n.step(p + 70_000, p, p + 69_000));
+        assert_eq!(n.showing, "");
+        assert!(n.step(p + 10 * MIN, p, p));
+        assert!(!n.step(p + 11 * MIN, p, p));
+        assert_eq!(n.showing, "long");
+        // 点了「还在聊」：这次暂停不再提醒
+        let mut n = Nudge { quiet: true, ..Default::default() };
+        assert!(!n.step(p + 20 * MIN, p, p + 20 * MIN));
+        assert_eq!(n.showing, "");
+    }
+
+    #[test]
     fn fetch_schedule() {
         // T0 = 北京时间 16:00：刚拉过 → 等到明早 7:00（15 小时）
         assert_eq!(fetch_wait(T0, T0), 15 * 60 * MIN);
@@ -1073,6 +1242,8 @@ mod tests {
             finished_at: None,
             failed: None,
             meta: None,
+            pauses: vec![],
+            paused_at: None,
         };
         assert_eq!(recorder::read(&dir).unwrap(), want);
         // 损坏的 lesson.json 不能被当成空记录覆盖

@@ -104,10 +104,37 @@ async fn request_stop(core: St<'_>) -> R {
     Ok(())
 }
 
+/// 继续录：收起「结束？」确认；暂停着的接着录
 #[tauri::command]
 async fn resume_recording(core: St<'_>) -> R {
+    core.with_active(|c, g, now| c.unpause(g, now));
+    Ok(())
+}
+
+/// 暂停着点了「结束」又反悔：只收起确认，接着暂停
+#[tauri::command]
+async fn cancel_stop(core: St<'_>) -> R {
     core.with_active(|_, g, _| g.active.iter_mut().for_each(|a| a.confirm = false));
     Ok(())
+}
+
+#[tauri::command]
+async fn pause_recording(core: St<'_>) -> R {
+    core.with_active(|c, g, now| c.pause(g, now));
+    Ok(())
+}
+
+/// 暂停提醒里点了「还在聊」
+#[tauri::command]
+async fn still_chatting(core: St<'_>) -> R {
+    core.with_active(|c, g, _| c.still_chatting(g));
+    Ok(())
+}
+
+/// 选几节课合并一份反馈；merge_id 由前端生成（重新选课程时沿用原来的）
+#[tauri::command]
+async fn merge_lessons(core: St<'_>, merge_id: String, lesson_ids: Vec<String>) -> R {
+    cloud::merge(core.inner(), &merge_id, &lesson_ids).await
 }
 
 #[tauri::command]
@@ -249,6 +276,8 @@ fn on_menu(app: AppHandle, id: String) {
     match id.as_str() {
         "open" => show_main(&app),
         "stop" => core.with_active(|_, g, _| g.active.iter_mut().for_each(|a| a.confirm = true)),
+        "pause" => core.with_active(|c, g, now| c.pause(g, now)),
+        "resume" => core.with_active(|c, g, now| c.unpause(g, now)),
         "adhoc" => {
             if let Err(e) = core.start_adhoc() {
                 eprintln!("[menu] adhoc: {e}");
@@ -289,6 +318,10 @@ fn main() {
             resize_fab,
             request_stop,
             resume_recording,
+            pause_recording,
+            cancel_stop,
+            still_chatting,
+            merge_lessons,
             end_recording,
             keep_recording,
             switch_mic,

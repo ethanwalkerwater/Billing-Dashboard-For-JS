@@ -40,6 +40,8 @@ pub struct Shared {
     pub heard: AtomicBool,
     /// 最近一次听到有人说话的时间（ms）；开录、老师点「继续录」时也会刷新
     pub voice_at: AtomicI64,
+    /// 老师点了暂停：照常切段（时间轴不断），但写进去的是静音；音量照看，用来提醒「好像开始讲课了」
+    pub paused: AtomicBool,
     pub mic: Mutex<String>, // 实际打开的设备名
     pub kick_upload: tokio::sync::Notify,
 }
@@ -176,6 +178,9 @@ impl Rec {
         }
         let mut out = Vec::with_capacity(buf.len() * OUT_RATE as usize / rate as usize + 2);
         self.rs.as_mut().unwrap().1.process(buf, &mut out);
+        if self.shared.paused.load(Ordering::Relaxed) {
+            out.fill(0.0);
+        }
         s.mp3.reserve(out.len() * 5 / 4 + 7200);
         if let Err(e) = s.enc.encode_to_vec(MonoPcm(&out[..]), &mut s.mp3) {
             eprintln!("[recorder] encode: {e:?}");
@@ -320,6 +325,10 @@ pub struct LessonFile {
     pub failed: Option<String>,
     /// 随时录制结束时老师填的主题和类型；填好（或 10 分钟后按默认）才提交 finish
     pub meta: Option<AdhocMeta>,
+    /// 老师点了暂停的时段（ms），finish 时报给云端，档案里标成「暂停」
+    pub pauses: Vec<(i64, i64)>,
+    /// 正在暂停（开始时间）：崩溃重启后续录时接着暂停，不能悄悄录上真声音
+    pub paused_at: Option<i64>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]

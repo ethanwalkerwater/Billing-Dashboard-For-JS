@@ -5,6 +5,7 @@
  *   定时触发（每 30 分钟，兜底：失败重试、回调丢失、App 没回来的课、清理过期录音） runPipeline
  *   tcb fn invoke {"action":"tick"}                 手动推进一次
  *   tcb fn invoke {"action":"tick","lessonId":"rec…"} 只推进某节课
+ *   {"action":"rebuild","lessonId":"rec…"}            按现在的流程重出报告，只返回不写库（scripts/rebuild-archive.ts 逐节调用）
  */
 import { createHash, randomBytes } from "node:crypto";
 
@@ -101,7 +102,7 @@ const LEASE_MS = 6 * 60_000; // > 函数超时 300 s，进程被杀后 6 分钟�
 
 interface HttpEvent {
   httpMethod?: string; path?: string; headers?: Record<string, string>; queryStringParameters?: Record<string, string>;
-  body?: string; isBase64Encoded?: boolean; Type?: string; TriggerName?: string; action?: string; lessonId?: string;
+  body?: string; isBase64Encoded?: boolean; Type?: string; TriggerName?: string; action?: string; lessonId?: string; prompts?: L.Prompts;
 }
 type Session = { _id: string; openId: string; name: string; scheduleName: string };
 
@@ -245,8 +246,14 @@ async function listLessons(session: Session) {
   const byId = new Map(docs.map((doc) => [doc._id, doc]));
   const adhoc = await pg<LessonDoc>("GET", LESSONS,
     `teacherOpenId=${eq(session.openId)}&kind=in.(adhoc,meeting)&startAt=gte.${from}&startAt=lt.${to}&select=_id,course,kind,startAt,endAt,stage,copied,summary,editedSummary,reportToken`);
+  const merged = await pg<LessonDoc>("GET", LESSONS,
+    `teacherOpenId=${eq(session.openId)}&kind=eq.merged&startAt=gte.${from}&startAt=lt.${to}&select=_id,student,course,kind,startAt,endAt,stage,copied,summary,editedSummary,reportToken,sources`);
   const base = requireEnv("REPORT_BASE_URL");
-  return json(200, { lessons: [...lessons.map((lesson) => L.toLesson(lesson, byId.get(lesson.id), base)), ...adhoc.map((doc) => L.adhocLesson(doc, base))] });
+  return json(200, { lessons: [
+    ...lessons.map((lesson) => L.toLesson(lesson, byId.get(lesson.id), base)),
+    ...adhoc.map((doc) => L.adhocLesson(doc, base)),
+    ...merged.map((doc) => L.mergedLesson(doc, base)),
+  ] });
 }
 
 /** 第一次碰到某节课时回查课表，确认是这位老师的课再建档；之后只比对 teacherOpenId */
@@ -311,9 +318,15 @@ async function finishLesson(event: HttpEvent, session: Session, id: string) {
   if (!segments || !valid) return fail(400, "BAD_BODY", "需要 startedAt、endedAt 和 segments[{seq, sha256, bytes}]");
   const lesson = await ownLesson(id, session, header(event, "x-device"));
   if (typeof lesson === "string") return ownFail(lesson);
+  // 老师点暂停的时段（0.1.9 起的 App 才有），出档案时标成「暂停」
+  const pauses = (Array.isArray(body.pauses) ? body.pauses : [])
+    .filter((p: any) => Number.isFinite(Date.parse(p?.start)) && Date.parse(p?.end) > Date.parse(p?.start))
+    .slice(0, 200)
+    .map((p: any) => ({ start: String(p.start), end: String(p.end) }));
   const finish = {
     startedAt: String(body.startedAt), endedAt: String(body.endedAt),
     segments: segments.map((s: any) => ({ seq: s.seq, sha256: String(s.sha256), bytes: Number(s.bytes) || 0 })),
+    ...(pauses.length ? { pauses } : {}),
   };
   const missing = L.missingSeqs(finish.segments, lesson.segments);
   if (lesson.stage === "recording" || lesson.stage === "queued") {
@@ -332,8 +345,47 @@ async function finishLesson(event: HttpEvent, session: Session, id: string) {
  * ponytail: 删除恰好撞上正在跑的处理时，那一轮写回的阶段会盖掉这里；极少见，后台看到再手动处理
  */
 async function discardLesson(session: Session, id: string) {
+  // 合并反馈没有录音，删掉就是整行删掉；单节课不受影响
+  if (L.isMergedId(id)) {
+    await pg("DELETE", LESSONS, `_id=${eq(id)}&teacherOpenId=${eq(session.openId)}&kind=eq.merged`, undefined, "return=minimal");
+    return json(200, { ok: true });
+  }
   await pg("PATCH", LESSONS, `_id=${eq(id)}&teacherOpenId=${eq(session.openId)}&stage=neq.done`,
     { stage: "failed", attempts: L.MAX_ATTEMPTS, error: "老师在 App 里删除了这节课", updatedAt: Date.now() }, "return=minimal");
+  return json(200, { ok: true });
+}
+
+/**
+ * 老师选几节课合并一份反馈：同一个学生、最近 7 天、已出报告的课表课。编号由 App 生成；同一个编号再提交 = 「重新选课程」，覆盖重出。
+ * 生成约 15 秒，在这次请求里直接做完；失败的交给定时器重试。单节课的行一个字都不改。
+ */
+async function saveMerge(event: HttpEvent, session: Session, id: string) {
+  const raw = jsonBody(event).lessonIds;
+  const ids = [...new Set(Array.isArray(raw) ? raw.map(String) : [])];
+  if (ids.length < 2 || ids.length > L.MERGE_MAX || !ids.every((x) => /^rec[A-Za-z0-9]+$/.test(x))) return fail(400, "BAD_BODY", `请选 2–${L.MERGE_MAX} 节课`);
+  const rows = await pg<LessonDoc>("GET", LESSONS, `_id=${inList(ids)}&teacherOpenId=${eq(session.openId)}&select=_id,student,course,kind,stage,startAt,endAt`);
+  const { from } = L.lessonWindow(Date.now());
+  if (rows.length !== ids.length || rows.some((r) => r.stage !== "done" || (r.kind ?? "lesson") !== "lesson" || r.startAt < from)) {
+    return fail(400, "NOT_MERGEABLE", "只能合并最近 7 天已出报告的课，请刷新后重选");
+  }
+  const student = rows[0].student;
+  if (!student || rows.some((r) => r.student !== student)) return fail(400, "NOT_MERGEABLE", "只能合并同一个学生的课");
+  const existing = await getRow<LessonDoc>(LESSONS, id);
+  if (existing && (existing.teacherOpenId !== session.openId || existing.kind !== "merged")) return fail(409, "CONFLICT", "编号冲突，请再试一次");
+  if (existing && existing.lockedUntil > Date.now()) return fail(409, "BUSY", "这份合并反馈正在生成，请稍等");
+  rows.sort((a, b) => a.startAt - b.startAt);
+  const last = rows.at(-1)!;
+  const now = Date.now();
+  // 日期、时间跟最后一节：App 列表里排在它后面，最后一节还在「最近 7 天」里它就一直在
+  await pg("POST", LESSONS, "on_conflict=_id", [{
+    _id: id, teacherOpenId: session.openId, teacherName: session.name, student, course: last.course, location: "", kind: "merged",
+    sources: rows.map((r) => r._id), startAt: last.startAt, endAt: last.endAt,
+    stage: "summarizing", attempts: 0, lockedUntil: 0, error: "", copied: false, editedSummary: null, rawReport: null,
+    reportToken: existing?.reportToken ?? null, createdAt: existing?.createdAt ?? now, updatedAt: now,
+  }], "resolution=merge-duplicates,return=minimal");
+  await processLesson(id, Date.now() + 100_000);
+  const [done] = await pg<{ stage: Stage }>("GET", LESSONS, `_id=${eq(id)}&select=stage`);
+  if (done?.stage === "failed") return fail(502, "GENERATE_FAILED", "合并反馈生成失败，30 分钟内会自动重试");
   return json(200, { ok: true });
 }
 
@@ -346,8 +398,9 @@ async function ownedPatch(id: string, session: Session, patch: Record<string, un
 
 async function getReport(token: string) {
   if (!/^[A-Za-z0-9_-]{32}$/.test(token)) return fail(404, "NOT_FOUND", "未找到这份课堂报告");
-  const [doc] = await pg<LessonDoc>("GET", LESSONS, `reportToken=${eq(token)}&stage=eq.done&limit=1&select=student,course,kind,teacherName,startAt,endAt,finish,report,gapMinutes,audioSec`);
-  return doc ? json(200, L.reportData(doc)) : fail(404, "NOT_FOUND", "未找到这份课堂报告");
+  // 有报告就给：合并反馈「重新选课程」重出期间（或重出失败），家长手里的链接仍是上一版
+  const [doc] = await pg<LessonDoc>("GET", LESSONS, `reportToken=${eq(token)}&report=not.is.null&limit=1&select=student,course,kind,teacherName,startAt,endAt,finish,report,archive,gapMinutes,audioSec`);
+  return doc ? json(200, L.reportData(doc)) : fail(404, "NOT_FOUND", "未找到这份课堂报告"); // reportData 只带出算好的数字，档案本身（含闲聊）不出后台
 }
 
 // ---------- 处理流水线 ----------
@@ -379,24 +432,88 @@ async function withRoles(transcript: string): Promise<string> {
   }
 }
 
-/** 转写 → 家长总结 + 学情报告；流水线和后台预览共用 */
-async function generate(meta: L.PromptMeta, transcript: string, prompts: L.Prompts) {
+/**
+ * 转写 → 课堂时间档案 → 家长总结 + 学情报告；流水线、后台预览、重建旧报告共用。
+ * 第一步整节课一次抽档案（超过 12 万字才切开），程序检查；第二步只拿学习环节：A 写总结和报告，B 用 A 的知识点名归章节。
+ */
+async function generate(meta: L.PromptMeta, transcript: string, prompts: L.Prompts, pauses: Array<[number, number]> = []) {
+  const archive = L.applyPauses(await extractArchive(transcript, prompts), pauses);
+  return { archive, ...(await writeReport(meta, archive, prompts)) };
+}
+
+/** 第一步：整节课 → 课堂时间档案 */
+async function extractArchive(transcript: string, prompts: L.Prompts) {
   if (!transcript.trim()) throw new Error("转写为空：录音里没有识别到有效语音");
-  const chunks = L.chunkTranscript(transcript);
-  const material = chunks.length === 1
-    ? transcript
-    : (await Promise.all(chunks.map((chunk, index) => chat([{ role: "user", content: L.chunkPrompt(chunk, index, chunks.length, prompts.rules) }]))))
-        .map((notes, index) => `【第 ${index + 1} 段】\n${notes}`)
-        .join("\n\n");
-  const messages = L.summaryMessages(meta, material, chunks.length > 1, prompts);
+  const chunks = L.chunkTranscript(transcript, L.ARCHIVE_CHARS);
+  // ponytail: 输出上限 8000 token 够 3 小时内的课（实测 2 小时约 5000）；更长的课被截断会走重试再失败，到时把切段阈值调小
+  const extract = (retry = "") => Promise.all(chunks.map((chunk) => chat([{ role: "user", content: L.archivePrompt(chunk, prompts.rules, retry) }], true, 8000)));
+  try {
+    return L.parseArchive(await extract(), transcript);
+  } catch (error) {
+    return L.parseArchive(await extract(`上次的输出不符合要求：${(error as Error).message}。`), transcript);
+  }
+}
+
+/** 第二步：档案里的学习环节 → 家长总结 + 学情报告（合并反馈也走这里） */
+async function writeReport(meta: L.PromptMeta, archive: L.Archive, prompts: L.Prompts) {
+  const messages = L.reportMessages(meta, archive, prompts);
   const headings = L.promptHeadings(prompts);
   const raw = await chat(messages, true);
+  let out: ReturnType<typeof L.parseSummary>;
   try {
-    return L.parseSummary(raw, headings);
+    out = L.parseSummary(raw, headings);
   } catch (error) {
     const retry = await chat([...messages, { role: "assistant", content: raw }, { role: "user", content: `上面的输出不符合要求：${(error as Error).message}。请重新只输出符合结构的 JSON。` }], true);
-    return L.parseSummary(retry, headings);
+    out = L.parseSummary(retry, headings);
   }
+  const points = out.report.mastery.map((m) => m.name);
+  let chapters = await chat([{ role: "user", content: L.chapterPrompt(archive, points) }], true);
+  const problem = L.chapterProblem(chapters, archive);
+  if (problem) chapters = await chat([{ role: "user", content: L.chapterPrompt(archive, points, `${problem}请重新归组。`) }], true);
+  return { parentSummary: out.parentSummary, report: L.assembleReport(out.report, archive, chapters) }; // 重试后还不合格，由程序修正
+}
+
+/** 录音开始的时刻：App 上报的 startedAt，没有就用课表时间 */
+const recStartOf = (doc: Pick<LessonDoc, "finish" | "startAt">) => Date.parse(doc.finish?.startedAt ?? "") || doc.startAt;
+/**
+ * finish 里的暂停时段 → 录音里的秒（按「真实时刻 − 开录时刻」换算）。
+ * 录音中间断过（崩溃续录、合盖睡眠）时真实时间和录音时间对不上，换算出来会落在讲课上，宁可不标暂停
+ */
+function pausesOf(doc: Pick<LessonDoc, "finish" | "startAt" | "audioSec">): Array<[number, number]> {
+  const pauses = doc.finish?.pauses ?? [];
+  const wall = (Date.parse(doc.finish?.endedAt ?? "") - recStartOf(doc)) / 1000;
+  if (!pauses.length || doc.audioSec == null || !(Math.abs(wall - doc.audioSec) <= 60)) return [];
+  return pauses.map((p) => [(Date.parse(p.start) - recStartOf(doc)) / 1000, (Date.parse(p.end) - recStartOf(doc)) / 1000]);
+}
+const metaOf = (doc: LessonDoc): L.PromptMeta => ({ student: doc.student, course: doc.course, teacher: doc.teacherName, monthDay: L.shMonthDay(doc.startAt) });
+
+/**
+ * 合并反馈：不重新转写、不重抽档案，把各节的档案接起来，只重写总结和报告（约 15 秒）。
+ * 档案上线前的旧课没有档案，补抽一次存回那节课（不改它自己的总结和报告）。
+ */
+async function mergedReport(doc: LessonDoc, prompts: L.Prompts) {
+  const ids = doc.sources ?? [];
+  const rows = ids.length
+    ? await pg<LessonDoc>("GET", LESSONS, `_id=${inList(ids)}&teacherOpenId=${eq(doc.teacherOpenId)}&select=_id,student,course,teacherName,startAt,endAt,stage,finish,transcript,archive,gapMinutes,audioSec`)
+    : [];
+  if (rows.length < 2 || rows.length !== ids.length || rows.some((r) => r.stage !== "done")) throw new Error("要合并的课有的已经删除或还没出报告，请重新选课程");
+  rows.sort((a, b) => a.startAt - b.startAt);
+  for (const row of rows) {
+    if (row.archive) continue;
+    row.archive = L.applyPauses(await extractArchive(row.transcript ?? "", prompts), pausesOf(row));
+    await updateLesson(row._id, { archive: row.archive });
+  }
+  const archive = L.mergeArchives(rows.map((r) => ({ lessonId: r._id, archive: r.archive!, recStart: recStartOf(r), plan: (r.endAt - r.startAt) / 1000 })));
+  const last = rows.at(-1)!;
+  const parts = archive.parts!;
+  const meta: L.PromptMeta = {
+    ...metaOf(last),
+    monthDay: L.shMonthDay(parts.at(-1)!.clock0 + parts.at(-1)!.start * 1000),
+    merged: { labels: L.partLabels(parts, true, true), days: [...new Set(parts.map((p) => L.shMonthDay(p.clock0 + p.start * 1000)))] },
+  };
+  const gapMinutes = rows.reduce((sum, r) => sum + (r.gapMinutes ?? 0), 0);
+  const { parentSummary, report } = await writeReport(meta, archive, prompts);
+  return { parentSummary, archive, report: { ...report, gapMinutes }, gapMinutes };
 }
 
 /** 转写 → 结构化会议纪要 + 纯文本；分段规则同 generate */
@@ -471,12 +588,16 @@ async function runStep(doc: LessonDoc, step: L.Step): Promise<Partial<LessonDoc>
     const { report, text } = await meetingMinutes({ topic: doc.course, monthDay: L.shMonthDay(doc.startAt) }, doc.transcript ?? "", prompts.meeting);
     return { stage: "done", summary: text, report, reportToken: randomBytes(24).toString("base64url"), promptVersion: prompts.version, error: "" };
   }
+  if (step.action === "summarize" && doc.kind === "merged") {
+    const prompts = await livePrompts();
+    const { parentSummary, report, archive, gapMinutes } = await mergedReport(doc, prompts);
+    return { stage: "done", summary: parentSummary, report, archive, gapMinutes, reportToken: doc.reportToken || randomBytes(24).toString("base64url"), promptVersion: prompts.version, error: "" };
+  }
   if (step.action === "summarize") {
     const prompts = await livePrompts();
-    const meta = { student: doc.student, course: doc.course, teacher: doc.teacherName, monthDay: L.shMonthDay(doc.startAt) };
-    const { parentSummary, report } = await generate(meta, doc.transcript ?? "", prompts);
+    const { parentSummary, report, archive } = await generate(metaOf(doc), doc.transcript ?? "", prompts, pausesOf(doc));
     return {
-      stage: "done", summary: parentSummary, report: { ...report, gapMinutes: doc.gapMinutes ?? 0 }, reportToken: randomBytes(24).toString("base64url"),
+      stage: "done", summary: parentSummary, report: { ...report, gapMinutes: doc.gapMinutes ?? 0 }, archive, reportToken: randomBytes(24).toString("base64url"),
       promptVersion: prompts.version, error: "",
     };
   }
@@ -506,6 +627,7 @@ async function processLesson(id: string, deadline: number) {
       if (patch.transcript !== undefined) await removeObjects(Object.values(doc.segments).map((s) => s.fileId));
       doc = { ...doc, ...patch };
       if (doc.stage === "done") {
+        if (doc.kind === "merged") break; // 老师自己在 App 里点的合并，App 里直接看到，不再私信
         const title = doc.kind === "meeting" ? `${doc.course}的会议纪要好了` : doc.student ? `${doc.student}今天的课堂总结好了` : `${doc.course}的课堂总结好了`;
         await notifyTeacher(doc, `${title}\n\n${doc.summary}${doc.reportToken ? `\n\n完整报告：${requireEnv("REPORT_BASE_URL")}?t=${doc.reportToken}` : ""}`);
         break;
@@ -516,7 +638,9 @@ async function processLesson(id: string, deadline: number) {
     const attempts = (doc.attempts ?? 0) + 1;
     await updateLesson(id, { stage: "failed", failedStage: doc.stage as Stage, attempts, error: (error as Error).message?.slice(0, 500) ?? String(error) });
     if (attempts >= L.MAX_ATTEMPTS) {
-      await notifyTeacher(doc, `${[doc.course, doc.student].filter(Boolean).join(" · ")}（${L.shMonthDay(doc.startAt)}）的录音处理失败：${(error as Error).message}。请联系教务。`);
+      await notifyTeacher(doc, doc.kind === "merged"
+        ? `${doc.student}的合并反馈生成失败：${(error as Error).message}。可以在菁仕课堂里点「重新选课程」再试。`
+        : `${[doc.course, doc.student].filter(Boolean).join(" · ")}（${L.shMonthDay(doc.startAt)}）的录音处理失败：${(error as Error).message}。请联系教务。`);
     }
   } finally {
     await pg("PATCH", LESSONS, `_id=${eq(id)}`, { lockedUntil: 0 }, "return=minimal");
@@ -554,6 +678,19 @@ async function expireAudio() {
     await removeObjects([...segments.map((s) => s.fileId), ...(row.mergedFileId ? [row.mergedFileId] : [])]);
     await updateLesson(row._id, { mergedFileId: null, audioDeletedAt: Date.now() });
   }
+}
+
+/**
+ * 按现在的流程给一节已出报告的课重新生成学情报告和课堂时间档案，只返回、不写库：
+ * scripts/rebuild-archive.ts 先试跑出预览给人看，确认后把同一份结果写库。prompts 不传就用线上版本。
+ */
+async function rebuild(lessonId: string, override?: L.Prompts) {
+  const doc = await getLesson(lessonId);
+  if (!doc || doc.stage !== "done" || doc.kind === "meeting" || !doc.transcript?.trim()) return { ok: false, error: "不是有转写的已完成课程" };
+  const prompts = override ?? (await livePrompts());
+  const out = await generate(metaOf(doc), doc.transcript, prompts, pausesOf(doc));
+  const report = { ...out.report, gapMinutes: doc.gapMinutes ?? 0 };
+  return { ok: true, parentSummary: out.parentSummary, archive: out.archive, reportData: L.reportData({ ...doc, report, archive: out.archive }) };
 }
 
 async function runPipeline(lessonId?: string) {
@@ -621,11 +758,12 @@ async function authenticateAdmin(event: HttpEvent): Promise<AdminSession | undef
 const STAGE_FILTER: Record<string, string> = { done: "eq.done", recording: "eq.recording", failed: "eq.failed", processing: "in.(queued,transcribing,summarizing)" };
 
 async function adminLessons(query: Record<string, string>, admin: AdminSession) {
-  const filters = ["select=_id,student,course,kind,teacherName,startAt,endAt,audioSec,stage,attempts,promptVersion", "order=startAt.desc", "limit=50"];
+  const filters = ["select=_id,student,course,kind,teacherName,startAt,endAt,audioSec,stage,attempts,promptVersion,stats:archive->stats", "order=startAt.desc", "limit=50"];
   if (admin.role !== "admin") filters.push(`teacherOpenId=${eq(admin.openId)}`);
   if (STAGE_FILTER[query.stage]) filters.push(`stage=${STAGE_FILTER[query.stage]}`);
   if (query.kind === "meeting") filters.push("kind=eq.meeting");
   if (query.kind === "lesson") filters.push("kind=in.(lesson,adhoc)");
+  if (query.kind === "merged") filters.push("kind=eq.merged");
   if (query.teacher) filters.push(`teacherName=${eq(query.teacher.slice(0, 40))}`);
   if (query.student) filters.push(`student=${eq(query.student.slice(0, 40))}`);
   if (/^\d+$/.test(query.before ?? "")) filters.push(`startAt=lt.${query.before}`);
@@ -643,13 +781,20 @@ async function adminPeople(admin: AdminSession) {
 
 async function adminLesson(id: string, admin: AdminSession) {
   const [doc] = await pg<LessonDoc>("GET", LESSONS,
-    `_id=${eq(id)}&select=_id,teacherOpenId,student,course,kind,teacherName,startAt,endAt,stage,attempts,error,finish,mergedFileId,audioDeletedAt,transcript,summary,editedSummary,reportToken,promptVersion,gapMinutes,audioSec,rawTranscript`);
+    `_id=${eq(id)}&select=_id,teacherOpenId,student,course,kind,teacherName,startAt,endAt,stage,attempts,error,finish,mergedFileId,audioDeletedAt,transcript,summary,editedSummary,reportToken,promptVersion,gapMinutes,audioSec,rawTranscript,archive,sources`);
   if (!doc || !canSee(admin, doc)) return fail(404, "LESSON_NOT_FOUND", "没有找到这节课");
+  // 合并反馈：列出由哪几节合并，后台点过去看单节
+  const sourceLessons = doc.sources?.length
+    ? (await pg<{ _id: string; startAt: number; endAt: number }>("GET", LESSONS, `_id=${inList(doc.sources)}&select=_id,startAt,endAt`)).sort((a, b) => a.startAt - b.startAt)
+    : undefined;
   const { finish, mergedFileId, rawTranscript, teacherOpenId, ...rest } = doc;
   return json(200, {
     ...rest,
     transcriptEdited: rawTranscript != null,
+    sourceLessons,
     mins: L.reportData(doc).mins,
+    // 课堂时间档案页按真实时钟画：录音开始时刻 = App 上报的 startedAt
+    recStart: Date.parse(finish?.startedAt ?? "") || doc.startAt,
     fileName: [doc.student, doc.course, L.shDate(doc.startAt)].filter(Boolean).join("_").replace(/[\\/:*?"<>|\s]/g, ""),
     audioUrl: mergedFileId ? await signedUrl(mergedFileId, 6 * 3600) : null, // 存储同 Supabase：链接后加 &download=文件名 即按附件下载
     reportUrl: doc.reportToken ? `${requireEnv("REPORT_BASE_URL")}?t=${doc.reportToken}` : null,
@@ -711,7 +856,7 @@ async function saveReport(event: HttpEvent, token: string, admin: AdminSession) 
   // 会议纪要的文字版（App 里复制、飞书私信）由报告生成，跟着更新；老师在 App 里手改过的不动
   if (doc.kind === "meeting" && !doc.editedSummary) patch.summary = L.meetingText(report as L.MeetingReport, L.shMonthDay(doc.startAt));
   await updateLesson(doc._id, patch);
-  const [fresh] = await pg<LessonDoc>("GET", LESSONS, `_id=${eq(doc._id)}&select=student,course,kind,teacherName,startAt,endAt,finish,report,gapMinutes,audioSec`);
+  const [fresh] = await pg<LessonDoc>("GET", LESSONS, `_id=${eq(doc._id)}&select=student,course,kind,teacherName,startAt,endAt,finish,report,archive,gapMinutes,audioSec`);
   return json(200, { ...L.reportData(fresh), rev: reportRev(fresh.report) });
 }
 
@@ -768,30 +913,29 @@ async function previewPrompts(event: HttpEvent, admin: AdminSession) {
   const body = jsonBody(event);
   const prompts = readPrompts(body.prompts);
   if (!prompts) return fail(400, "BAD_BODY", "四段提示词都不能为空，且每段不超过 20000 字");
-  let transcript: string;
-  let base: Omit<ReturnType<typeof L.reportData>, "report">;
-  let startAt = Date.now();
+  // 已有课程用它自己的信息；粘贴 / 上传的转写拼一节假课，课表时间 = 转写长度
+  let doc: LessonDoc;
   if (typeof body.lessonId === "string") {
-    const doc = await getRow<LessonDoc>(LESSONS, body.lessonId);
-    if (!doc) return fail(404, "LESSON_NOT_FOUND", "没有找到这节课");
-    transcript = doc.transcript ?? "";
-    const { report: _report, ...rest } = L.reportData(doc);
-    base = rest;
-    startAt = doc.startAt;
+    const row = await getRow<LessonDoc>(LESSONS, body.lessonId);
+    if (!row) return fail(404, "LESSON_NOT_FOUND", "没有找到这节课");
+    doc = row;
   } else {
-    transcript = String(body.transcript ?? "");
+    const transcript = String(body.transcript ?? "");
     const last = [...transcript.matchAll(/-(\d+):(\d{2})\]/g)].at(-1);
-    base = { student: "", course: "", kind: "lesson", teacher: admin.name, date: L.shDate(startAt), time: "", mins: last ? Math.round(Number(last[1]) + Number(last[2]) / 60) : 0, gapMinutes: 0 };
+    const secs = last ? Number(last[1]) * 60 + Number(last[2]) : 0;
+    doc = { student: "", course: "", teacherName: admin.name, kind: "lesson", startAt: Date.now(), endAt: Date.now() + secs * 1000, audioSec: secs, gapMinutes: 0, transcript } as LessonDoc;
   }
+  const transcript = doc.transcript ?? "";
   if (!transcript.trim()) return fail(400, "NO_TRANSCRIPT", "这节课还没有转写内容");
   if (transcript.length > 200_000) return fail(400, "TOO_LONG", "转写超过 20 万字");
+  const monthDay = L.shMonthDay(doc.startAt);
   try {
     if (body.kind === "meeting") {
-      const out = await meetingMinutes({ topic: base.course || "会议", monthDay: L.shMonthDay(startAt) }, transcript, prompts.meeting);
-      return json(200, { parentSummary: out.text, reportData: { ...base, kind: "meeting", report: out.report } });
+      const out = await meetingMinutes({ topic: doc.course || "会议", monthDay }, transcript, prompts.meeting);
+      return json(200, { parentSummary: out.text, reportData: L.reportData({ ...doc, kind: "meeting", report: out.report, archive: null }) });
     }
-    const out = await generate({ student: base.student, course: base.course, teacher: base.teacher, monthDay: L.shMonthDay(startAt) }, transcript, prompts);
-    return json(200, { parentSummary: out.parentSummary, reportData: { ...base, kind: "lesson", report: out.report } });
+    const out = await generate({ student: doc.student, course: doc.course, teacher: doc.teacherName, monthDay }, transcript, prompts);
+    return json(200, { parentSummary: out.parentSummary, reportData: L.reportData({ ...doc, kind: doc.kind === "meeting" ? "lesson" : doc.kind, report: out.report, archive: out.archive }) });
   } catch (error) {
     return fail(422, "GENERATE_FAILED", `生成失败：${(error as Error).message}`);
   }
@@ -835,7 +979,7 @@ async function adminRoute(method: string, path: string, event: HttpEvent, query:
   if (method === "GET" && path === "/admin/people") return adminPeople(admin);
   if (method === "GET" && path === "/admin/report") return getReportForEdit(query.t ?? "", admin);
   if (method === "PUT" && path === "/admin/report") return saveReport(event, query.t ?? "", admin);
-  let m = path.match(/^\/admin\/lessons\/(rec[A-Za-z0-9]+|adhoc-[0-9a-f]{16})(\/retry|\/transcript|\/summary)?$/);
+  let m = path.match(/^\/admin\/lessons\/(rec[A-Za-z0-9]+|adhoc-[0-9a-f]{16}|merged-[0-9a-f]{16})(\/retry|\/transcript|\/summary)?$/);
   if (m && method === "GET" && !m[2]) return adminLesson(m[1], admin);
   if (m && method === "PUT" && m[2] === "/transcript") return saveTranscript(event, m[1], admin);
   if (m && method === "PUT" && m[2] === "/summary") return saveSummary(event, m[1], admin);
@@ -872,6 +1016,7 @@ let hardStop = Date.now() + 280_000;
 export async function main(event: HttpEvent) {
   hardStop = Date.now() + 280_000;
   if (typeof event.httpMethod !== "string") {
+    if (event.action === "rebuild" && event.lessonId) return await rebuild(event.lessonId, readPrompts(event.prompts) ?? undefined);
     if (event.Type === "Timer" || event.TriggerName || event.action === "tick") {
       await runPipeline(event.lessonId);
       return { ok: true };
@@ -899,9 +1044,13 @@ export async function main(event: HttpEvent) {
     if (method === "GET" && path === "/me") return json(200, { teacher: { name: session.name } });
     if (method === "GET" && path === "/lessons") return await listLessons(session);
 
-    const match = path.match(/^\/lessons\/(rec[A-Za-z0-9]+|adhoc-[0-9a-f]{16})\/(segments\/(\d{1,5})|finish|summary|copied|discard)$/);
+    const merge = path.match(/^\/merges\/(merged-[0-9a-f]{16})$/);
+    if (merge && method === "POST") return await saveMerge(event, session, merge[1]);
+
+    const match = path.match(/^\/lessons\/(rec[A-Za-z0-9]+|adhoc-[0-9a-f]{16}|merged-[0-9a-f]{16})\/(segments\/(\d{1,5})|finish|summary|copied|discard)$/);
     if (match) {
       const [, id, action, seq] = match;
+      if (L.isMergedId(id) && (seq !== undefined || action === "finish")) return fail(404, "NOT_FOUND", "接口不存在"); // 合并反馈没有录音
       if (method === "POST" && seq !== undefined) return await uploadSegment(event, session, id, Number(seq));
       if (method === "POST" && action === "finish") return await finishLesson(event, session, id);
       if (method === "PUT" && action === "summary") {

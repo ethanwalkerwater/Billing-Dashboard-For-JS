@@ -273,6 +273,11 @@ async fn upload_lesson(core: &Arc<Core>, dir: &Path, id: &str) -> Result<(), Api
         body["topic"] = json!(m.topic);
         body["kind"] = json!(m.kind);
     }
+    // 崩溃时正暂停着、之后没再续录的：暂停算到结束
+    let pauses: Vec<(i64, i64)> = lf.pauses.iter().copied().chain(lf.paused_at.filter(|p| *p < ended_at).map(|p| (p, ended_at))).collect();
+    if !pauses.is_empty() {
+        body["pauses"] = json!(pauses.iter().map(|(a, b)| json!({ "start": iso(*a), "end": iso(*b) })).collect::<Vec<_>>());
+    }
     let v: Value = core.call(Method::POST, &format!("/lessons/{id}/finish"), |rb| rb.json(&body)).await?.json().await.map_err(|_| ApiError::Net)?;
     let missing: Vec<u32> = v["missing"].as_array().map(|a| a.iter().filter_map(|x| x.as_u64().map(|n| n as u32)).collect()).unwrap_or_default();
     let n = lf.segments.len();
@@ -290,6 +295,19 @@ async fn upload_lesson(core: &Arc<Core>, dir: &Path, id: &str) -> Result<(), Api
     }
     core.publish();
     Ok(())
+}
+
+// ---------- 合并反馈 ----------
+
+/// 选好的几节课交给云端合并成一份反馈（约 15 秒，云端在这次请求里做完），然后重新拉一次课表，列表里就有了。
+/// 同一个编号再提交 = 「重新选课程」。生成失败时那一项已经建好，列表里显示「整理中」，云端会自动重试。
+pub async fn merge(core: &Arc<Core>, id: &str, lessons: &[String]) -> Result<(), String> {
+    if !crate::engine::is_merged(id) || !crate::engine::safe_id(id) || !lessons.iter().all(|l| crate::engine::safe_id(l)) {
+        return Err("课程编号无效".into());
+    }
+    let res = core.call(Method::POST, &format!("/merges/{id}"), |rb| rb.json(&json!({ "lessonIds": lessons })).timeout(Duration::from_secs(150))).await;
+    let _ = fetch_once(core).await;
+    res.map(|_| ()).map_err(String::from)
 }
 
 // ---------- 总结 ----------

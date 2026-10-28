@@ -14,19 +14,32 @@ interface MeetingReport {
 }
 
 interface ReportData {
-  kind?: 'lesson' | 'adhoc' | 'meeting';
+  kind?: 'lesson' | 'adhoc' | 'meeting' | 'merged';
   student: string; course: string; teacher: string; date: string; time: string; mins: number; gapMinutes: number;
+  /** 课堂时间档案算好的数字（logic.ts lessonClock）；没有档案的报告没有 */
+  clock?: {
+    recStart: number; first: number; last: number; full: boolean; total: number; over: number; cats: Array<[string, number]>; points: Array<[string, number]>;
+    /** 合并反馈的各节：秒数落在哪一节，就按那一节的 recStart 换成真实时刻 */
+    parts?: Array<{ start: number; end: number; recStart: number }>;
+  };
   report: {
     topic: string; lead: string; content: string[];
     mastery: Array<{ name: string; status: string; evidence: string }>;
     performance: string; issue: { title: string; fix: string }; homework: string; review: string; next: string;
-    timeline?: Array<{ phase: string; title: string; start: number; end: number; points: string[] }>;
+    chapters?: Array<{ start: number; end: number; real: number; cat: string; title: string; point: string }>;
     questions?: Array<{ time: number | null; text: string; answer: string }>;
   };
 }
 
-// 顺序与 logic.ts PHASES 一致，下标对应 styles.css 的 .p0–.p6 配色
-const PHASES = ['复习', '讲解', '例题', '练习', '答疑', '总结', '其他'];
+// 会议板块轮流用 .p0–.p6 七种颜色；课的章节类别顺序同 logic.ts CHAPTER_CATS，对应 .k0–.k5
+const PALETTE = 7;
+const CATS = ['新知讲解', '例题精讲', '错题讲评', '当堂练习', '方法总结', '学习规划'];
+const PLAN_POINT = '试卷分析与学习规划';
+/** 录音里的秒 → 上海时间 HH:MM */
+const hm = (recStart: number, s: number) => new Date(recStart + s * 1000 + 8 * 3_600_000).toISOString().slice(11, 16);
+/** 合并反馈：秒数 s 在第几节（从 0 起） */
+const partAt = (c: NonNullable<ReportData['clock']>, s: number) => Math.max(0, (c.parts ?? []).filter(p => p.start <= s).length - 1);
+const at = (c: NonNullable<ReportData['clock']>, s: number) => hm(c.parts?.[partAt(c, s)].recStart ?? c.recStart, s);
 const clock = (s: number) => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(Math.round(s % 60)).padStart(2, '0')}`;
 const minutes = (s: number) => `${Math.max(1, Math.round(s / 60))} 分钟`;
 const pct = (part: number, whole: number) => `${Math.round((part / whole) * 100)}%`;
@@ -60,33 +73,35 @@ function message(title: string, body: string) {
   root.innerHTML = `<h1>${h(title)}</h1><p>${h(body)}</p>`;
 }
 
-/** 课堂时间轴：整条按真实时间铺开（中间没记录的空当留白），下面是各环节合计和逐段列表 */
-function timelineSection(t: NonNullable<ReportData['report']['timeline']>) {
-  const end = t.at(-1)!.end;
-  const total = t.reduce((sum, s) => sum + s.end - s.start, 0);
-  const byPhase = PHASES.map((phase, i) => ({ phase, i, secs: t.filter(s => s.phase === phase).reduce((sum, s) => sum + s.end - s.start, 0) })).filter(p => p.secs > 0);
-  const cls = (phase: string) => `p${Math.max(0, PHASES.indexOf(phase))}`;
-  return `<div class="tl" role="img" aria-label="${h(byPhase.map(p => `${p.phase}${minutes(p.secs)}`).join('，'))}">${t.map(s => `<i class="${cls(s.phase)}" style="left:${(s.start / end) * 100}%;width:${((s.end - s.start) / end) * 100}%" title="${h(`${clock(s.start)}–${clock(s.end)} ${s.phase} · ${s.title}`)}"></i>`).join('')}</div>
-    <div class="tl-axis"><span>00:00</span><span>${clock(end / 2)}</span><span>${clock(end)}</span></div>
-    <ul class="legend">${byPhase.map(p => `<li><i class="p${p.i}"></i>${p.phase}<b>${minutes(p.secs)}</b><span>${pct(p.secs, total)}</span></li>`).join('')}</ul>
-    <ol class="steps">${t.map((s, i) => `<li><span class="when">${clock(s.start)}–${clock(s.end)}</span><i class="${cls(s.phase)}"></i><b>${h(s.phase)}</b><span>${T(`timeline.${i}.title`, s.title)}</span></li>`).join('')}</ol>`;
+/** 课堂时间分布：按章节首尾相接的彩色条（没有空白），下面一行一章；课间不单列，章节时间上留空档。合并反馈按「第 N 节」分组 */
+function chapterSection(c: NonNullable<ReportData['clock']>, chapters: NonNullable<ReportData['report']['chapters']>, labels: string[]) {
+  const real = chapters.reduce((sum, ch) => sum + ch.real, 0) || 1;
+  const k = (cat: string) => `k${Math.max(0, CATS.indexOf(cat))}`;
+  const parts = c.parts;
+  const axis = parts
+    ? `<span></span><span>${parts.length} 节${c.full ? '共' : '学习时间共'} ${c.total} 分钟</span><span></span>`
+    : `<span>${hm(c.recStart, c.first)} 开始</span><span>${c.full ? '共' : '学习时间共'} ${c.total} 分钟</span><span>${hm(c.recStart, c.last)} 下课</span>`;
+  const head = (i: number) => {
+    if (!parts || (i && partAt(c, chapters[i - 1].start) === partAt(c, chapters[i].start))) return '';
+    const n = partAt(c, chapters[i].start);
+    return `<div class="part-h">第 ${n + 1} 节 · ${h(labels[n] ?? '')} · ${minutes(parts[n].end - parts[n].start)}</div>`;
+  };
+  return `<div class="flow" role="img" aria-label="${h(c.cats.map(([cat, n]) => `${cat}${n}分钟`).join('，'))}">${chapters.map((ch, i) => `<i class="${k(ch.cat)}${head(i) && i ? ' gap' : ''}" style="width:${(ch.real / real) * 100}%"></i>`).join('')}</div>
+    <div class="tl-axis">${axis}</div>
+    <ul class="legend">${c.cats.map(([cat, n]) => `<li><i class="${k(cat)}"></i>${h(cat)}<b>${n} 分钟</b><span>${pct(n, c.total)}</span></li>`).join('')}</ul>
+    <div class="chs">${chapters.map((ch, i) => `${head(i)}<div class="ch"><span class="when">${at(c, ch.start)}<span class="to">–${at(c, ch.end)}</span></span><i class="${k(ch.cat)}"></i><b>${h(ch.cat)}</b><span>${T(`chapters.${i}.title`, ch.title)}</span></div>`).join('')}</div>`;
 }
 
-/** 知识点用时：一段讲了几个知识点就平分这段时间；占比按整节课算 */
-function pointTimeSection(t: NonNullable<ReportData['report']['timeline']>) {
-  const total = t.reduce((sum, s) => sum + s.end - s.start, 0);
-  const secs = new Map<string, number>();
-  for (const s of t) for (const p of s.points) secs.set(p, (secs.get(p) ?? 0) + (s.end - s.start) / s.points.length);
-  const rows = [...secs].sort((a, b) => b[1] - a[1]);
-  if (!rows.length) return '';
-  const max = rows[0][1];
-  return `<div class="bars">${rows.map(([name, v]) => `<div class="bar"><span>${h(name)}</span><div class="track"><i style="width:${(v / max) * 100}%"></i></div><b>${minutes(v)} · ${pct(v, total)}</b></div>`).join('')}</div>`;
+/** 知识点用时：每一章归到它主要讲的知识点，合计 = 上面的分钟数 */
+function pointTimeSection(c: NonNullable<ReportData['clock']>) {
+  const max = c.points[0]?.[1] || 1;
+  return `<p class="sub">合计 ${c.total} 分钟，与${c.full ? '课堂时长' : '上面的学习时间'}一致</p><div class="bars">${c.points.map(([name, n]) => `<div class="bar"><span>${h(name)}</span><div class="track"><i class="${name === PLAN_POINT ? 'k5' : ''}" style="width:${(n / max) * 100}%"></i></div><b>${n} 分钟 · ${pct(n, c.total)}</b></div>`).join('')}</div>`;
 }
 
 /** 会议纪要网页：版式见 docs/meeting-report.html */
 function renderMeeting(d: ReportData, m: MeetingReport) {
   const at = (t: number | null) => (t === null ? '' : clock(t));
-  const sections = m.sections.map((s, i) => ({ ...s, i: i % PHASES.length, secs: s.items.reduce((a, it) => a + it.end - it.start, 0) }));
+  const sections = m.sections.map((s, i) => ({ ...s, i: i % PALETTE, secs: s.items.reduce((a, it) => a + it.end - it.start, 0) }));
   const items = sections.flatMap(s => s.items.map(it => ({ ...it, i: s.i, section: s.title })));
   const end = Math.max(...items.map(it => it.end));
   const total = sections.reduce((a, s) => a + s.secs, 0);
@@ -116,18 +131,17 @@ function renderMeeting(d: ReportData, m: MeetingReport) {
 function render(d: ReportData) {
   if (d.kind === 'meeting') return renderMeeting(d, d.report as unknown as MeetingReport);
   const r = d.report;
-  const timeline = r.timeline ?? [];
+  const chapters = r.chapters ?? [];
   const questions = r.questions ?? [];
-  const pointTime = timeline.length ? pointTimeSection(timeline) : '';
-  // 旧报告没有时间轴 / 提问，对应板块整块不显示，编号顺延
+  const c = chapters.length ? d.clock : undefined;
+  // 没有课堂时间档案的报告（档案上线前的、预览旧数据）不显示时间分布和知识点用时，编号顺延
   const top: Array<[string, string]> = [
     ['本课学习内容', `<ul>${r.content.map((line, i) => `<li>${T(`content.${i}`, line.replace(/^\d+\.\s*/, ''))}</li>`).join('')}</ul>`],
-    ...(timeline.length ? [['课堂时间分布', timelineSection(timeline)] as [string, string]] : []),
-    ...(pointTime ? [['知识点用时', pointTime] as [string, string]] : []),
+    ...(c ? [['课堂时间分布', chapterSection(c, chapters, d.time.split('、'))], ['知识点用时', pointTimeSection(c)]] as Array<[string, string]> : []),
     ['知识点掌握情况', `<div class="table-wrap"><table><thead><tr><th scope="col">知识点</th><th scope="col">课堂表现</th><th scope="col">判断依据</th></tr></thead><tbody>${r.mastery.map((m, i) => `<tr><td>${T(`mastery.${i}.name`, m.name)}</td><td class="${m.status === '需要巩固' ? 'practice' : 'good'}">${h(m.status)}</td><td class="evidence">${T(`mastery.${i}.evidence`, m.evidence)}</td></tr>`).join('')}</tbody></table></div>`],
   ];
   const bottom: Array<[string, string]> = [
-    ...(questions.length ? [['主动提问', `<p class="meta">${h(d.student || '学生')}这节课主动提了 ${questions.length} 个问题：</p><div class="qs">${questions.map((q, i) => `<figure class="q">${q.time === null ? '' : `<span class="when">${clock(q.time)}</span>`}<blockquote>“${T(`questions.${i}.text`, q.text)}”</blockquote>${q.answer || editing ? `<figcaption>${T(`questions.${i}.answer`, q.answer)}</figcaption>` : ''}</figure>`).join('')}</div>`] as [string, string]] : []),
+    ...(questions.length ? [['主动提问', `<p class="meta">${h(d.student || '学生')}${c?.parts ? '这几节课' : '这节课'}主动提了 ${questions.length} 个问题：</p><div class="qs">${questions.map((q, i) => `<figure class="q">${q.time === null ? '' : `<span class="when">${c?.parts ? at(c, q.time) : clock(q.time)}</span>`}<blockquote>“${T(`questions.${i}.text`, q.text)}”</blockquote>${q.answer || editing ? `<figcaption>${T(`questions.${i}.answer`, q.answer)}</figcaption>` : ''}</figure>`).join('')}</div>`] as [string, string]] : []),
     ['学生课堂表现', `<p class="insight">${T('performance', r.performance)}</p>`],
     ['易错点与改进方法', `<div class="issue"><b>${T('issue.title', r.issue.title)}</b><p>${T('issue.fix', r.issue.fix)}</p></div>`],
     ['课后巩固计划', `<div class="plan"><div><h3>作业与练习</h3><p>${T('homework', r.homework)}</p></div><div><h3>复习方法</h3><p>${T('review', r.review)}</p></div></div>`],
@@ -138,11 +152,11 @@ function render(d: ReportData) {
   document.title = `${d.student}_${d.course}_${d.date}_课堂学情报告`; // 打印另存 PDF 时浏览器用它作文件名
   root.innerHTML = `
     <div class="brand"><span class="mark">菁</span>菁仕教育</div>
-    <div class="eyebrow">课堂学情报告</div><h1>${[h(d.course), T('topic', r.topic)].filter(Boolean).join(' · ')}</h1>
+    <div class="eyebrow">课堂学情报告${c?.parts ? ` · ${c.parts.length} 节课合并` : ''}</div><h1>${[h(d.course), T('topic', r.topic)].filter(Boolean).join(' · ')}</h1>
     <p class="meta">${[d.student, teacher, d.date.replaceAll('-', '.'), d.time].filter(Boolean).map(h).join(' · ')}</p>
     ${d.gapMinutes > 0 ? `<p class="meta">录音缺失约 ${h(d.gapMinutes)} 分钟，以下内容依据已收到的录音整理。</p>` : ''}
     <p class="lead">${T('lead', r.lead)}</p>
-    <div class="facts"><div><small>学生</small><b>${h(d.student || '—')}</b></div><div><small>课堂记录时长</small><b>${h(d.mins)} 分钟</b></div><div><small>学习重点</small><b>${r.mastery.length} 项</b></div></div>
+    <div class="facts"><div><small>学生</small><b>${h(d.student || '—')}</b></div><div><small>${c ? `课堂时长${c.parts ? ` · ${c.parts.length} 节` : ''}${c.over ? `<em>比计划多 ${c.over} 分钟</em>` : ''}` : '课堂记录时长'}</small><b>${h(d.mins)} 分钟</b></div><div><small>学习重点</small><b>${r.mastery.length} 项</b></div></div>
     ${top.map(section).join('')}
     <div class="report-bottom">
       ${bottom.map((s, i) => section(s, top.length + i)).join('')}

@@ -20,11 +20,11 @@ let s: AppState = {
     const date = addDays(l.date, shift);
     return {
       id: l.id, date, start, end, startAt: epoch(date, start), endAt: epoch(date, end), title: l.title, topic: l.topic,
-      status: l.status, copied: l.copied, summary: l.tx ? summaryOf(l.id) : undefined,
+      status: l.status, copied: l.copied, summary: l.tx ? summaryOf(l.id) : undefined, student: l.title.split(' · ')[1],
       reportUrl: l.tx ? `https://app.jsjy.asia/classroom/report.html?t=demo-${l.id}` : undefined,
     };
   }),
-  rec: { mode: 'idle', lessonId: 'xiaoyu', sec: 0, endLeft: 60, autoStopAt: '17:30', autoStartAt: '15:57', savedSegments: 0, uploadedSegments: 0, online: true },
+  rec: { mode: 'idle', lessonId: 'xiaoyu', sec: 0, paused: false, pausedSec: 0, nudge: '', endLeft: 60, autoStopAt: '17:30', autoStartAt: '15:57', savedSegments: 0, uploadedSegments: 0, online: true },
   mics: ['MacBook Pro 麦克风', 'AirPods Pro', 'USB 领夹麦'],
   mic: 'MacBook Pro 麦克风',
   autostart: true,
@@ -40,8 +40,23 @@ const emit = (event: string, payload: unknown) => listeners.get(event)?.forEach(
 const patch = (p: Partial<AppState>) => { s = { ...s, ...p }; emit('app-state', s); };
 const setLesson = (id: string, p: Partial<Lesson>) => s.lessons.map(l => (l.id === id ? { ...l, ...p } : l));
 const rec = (mode: AppState['rec']['mode'], sec = s.rec.sec): AppState['rec'] => ({
-  ...s.rec, mode, sec, savedSegments: Math.floor(sec / 30) + 1, uploadedSegments: Math.floor(sec / 30),
+  ...s.rec, mode, sec, paused: false, pausedSec: 0, nudge: '', savedSegments: Math.floor(sec / 30) + 1, uploadedSegments: Math.floor(sec / 30),
 });
+const pause = (nudge: AppState['rec']['nudge'] = '', pausedSec = 0) => patch({ rec: { ...s.rec, mode: 'paused', paused: true, pausedSec, nudge } });
+
+// 合并反馈：1.5 秒后「生成好」
+function merge(id: string, ids: string[]) {
+  return new Promise<void>(resolve => later(() => {
+    const src = ids.map(x => s.lessons.find(l => l.id === x)!).sort((a, b) => a.startAt - b.startAt);
+    const last = src.at(-1)!;
+    const lesson: Lesson = {
+      ...last, id, title: `${last.student} · 合并反馈`, topic: last.title.split(' · ')[0], kind: 'merged', sources: ids, copied: false,
+      summary: summaryOf('haoran'), reportUrl: 'https://app.jsjy.asia/classroom/report.html?t=demo-merged',
+    };
+    patch({ lessons: [...s.lessons.filter(l => l.id !== id), lesson] });
+    resolve();
+  }, 1500));
+}
 const timers: number[] = [];
 const later = (fn: () => void, ms: number) => timers.push(window.setTimeout(fn, ms));
 
@@ -90,6 +105,10 @@ function setScene() {
   if (scene === '4') startRec('xiaoyu', 63 * 60, 'quiet');
   if (scene === 'cap') startRec('xiaoyu', 89 * 60, 'ending');
   if (scene === '5') { startRec('xiaoyu', 73 * 60); endRec(); }
+  if (scene === 'paused') { startRec('xiaoyu', 49 * 60); pause('', 3 * 60 + 12); }
+  if (scene === 'voice') { startRec('xiaoyu', 49 * 60); pause('voice', 4 * 60); }
+  if (scene === 'long') { startRec('xiaoyu', 49 * 60); pause('long', 10 * 60); }
+  if (scene === 'confirm') { startRec('xiaoyu', 49 * 60); s.rec = rec('confirm'); }
   if (scene === 'adhoc') { startAdhoc(22 * 60 + 14); endAdhoc(); }
 }
 setScene();
@@ -101,6 +120,10 @@ const commands: Record<string, (a: Record<string, string & boolean>) => unknown>
   start_recording: a => startRec(a.lessonId),
   request_stop: () => patch({ rec: rec('confirm') }),
   resume_recording: () => patch({ rec: rec('recording') }),
+  pause_recording: () => pause(),
+  cancel_stop: () => patch({ rec: { ...s.rec, mode: s.rec.paused ? 'paused' : 'recording' } }),
+  still_chatting: () => patch({ rec: { ...s.rec, nudge: '' } }),
+  merge_lessons: a => merge(a.mergeId, a.lessonIds as unknown as string[]),
   end_recording: () => (s.lessons.find(l => l.id === s.rec.lessonId)?.kind ? endAdhoc() : endRec()),
   start_adhoc: () => startAdhoc(),
   name_adhoc: a => nameAdhoc(a.lessonId, a.topic, a.kind),

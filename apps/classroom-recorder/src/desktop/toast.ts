@@ -18,7 +18,10 @@ subscribe(s => {
   shown = key;
   $('#toastTitle').textContent = t.title;
   $('#toastBody').textContent = t.body;
-  copy.textContent = isMeeting(s.lessons.find(l => l.id === t.lessonId)) ? '复制纪要' : '复制总结';
+  // 暂停满 10 分钟的提醒：按钮换成「继续录」，不提飞书
+  const pause = t.kind === 'pause';
+  copy.textContent = pause ? '继续录' : isMeeting(s.lessons.find(l => l.id === t.lessonId)) ? '复制纪要' : '复制总结';
+  el.querySelector<HTMLElement>('.feishu')!.hidden = pause;
   // 先以隐藏态排版一帧，再移除 hidden，才有 MVP 的滑入动画。
   el.classList.add('hidden');
   requestAnimationFrame(() => requestAnimationFrame(() => el.classList.remove('hidden')));
@@ -32,6 +35,7 @@ const close = (delay: number) => setTimeout(() => {
 copy.addEventListener('click', async () => {
   const t = S?.toast;
   if (!t) return;
+  if (t.kind === 'pause') return void call('resume_recording'); // Rust 继续录时会收起这条通知
   const text = S!.lessons.find(l => l.id === t.lessonId)?.summary ?? t.body;
   await call('copy_summary', { lessonId: t.lessonId, text });
   copy.textContent = '已复制 ✓';
