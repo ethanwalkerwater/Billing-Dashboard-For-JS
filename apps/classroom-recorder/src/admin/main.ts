@@ -7,10 +7,20 @@
 import './styles.css';
 
 type Stage = 'recording' | 'queued' | 'transcribing' | 'summarizing' | 'done' | 'failed';
-interface Row { _id: string; student: string; course: string; kind?: 'lesson' | 'adhoc' | 'meeting'; teacherName: string; startAt: number; endAt: number; audioSec?: number | null; stage: Stage; attempts: number; promptVersion: number | null }
+/** 课堂时间档案（logic.ts Archive）；时间是录音里的秒 */
+interface Stats { first: number; last: number; learn: number; brk: number; chat: number; share: number }
+interface Archive {
+  segments: Array<{ start: number; end: number; kind: string; title: string; detail: string }>; moments: unknown[]; stats: Stats;
+  /** 合并反馈的各节：秒数 t 的真实时刻 = clock0 + t × 1000 */
+  parts?: Array<{ lessonId: string; start: number; end: number; clock0: number; plan: number }>;
+}
+interface Row { _id: string; student: string; course: string; kind?: 'lesson' | 'adhoc' | 'meeting' | 'merged'; teacherName: string; startAt: number; endAt: number; audioSec?: number | null; stage: Stage; attempts: number; promptVersion: number | null; stats?: Stats | null }
 interface Detail extends Row {
   error?: string; transcript?: string; transcriptEdited?: boolean; summary?: string; editedSummary?: string;
   mins: number; gapMinutes?: number; fileName: string; audioUrl: string | null; audioDeletedAt?: number | null; reportUrl: string | null;
+  archive?: Archive | null; recStart: number;
+  /** 合并反馈由哪几节合并 */
+  sourceLessons?: Array<{ _id: string; startAt: number; endAt: number }>;
 }
 interface Prompts { rules: string; parent: string; report: string; meeting: string }
 interface Version extends Prompts { version: number; createdAt: number; createdBy: string }
@@ -145,7 +155,7 @@ function shell(name: string) {
 }
 
 function route() {
-  let [, page = 'lessons', id] = location.hash.match(/^#\/(lessons|prompts|admins)(?:\/(rec\w+|adhoc-[0-9a-f]{16}))?/) ?? [];
+  let [, page = 'lessons', id] = location.hash.match(/^#\/(lessons|prompts|admins)(?:\/(rec\w+|adhoc-[0-9a-f]{16}|merged-[0-9a-f]{16}))?/) ?? [];
   if (!isAdmin && page !== 'lessons') page = 'lessons';
   document.querySelectorAll('[data-nav]').forEach((a) => a.toggleAttribute('aria-current', false));
   document.querySelector(`[data-nav="${page}"]`)?.setAttribute('aria-current', 'page');
@@ -161,7 +171,7 @@ const list = { rows: [] as Row[], q: '', stage: '', kind: '', teacher: '', stude
 type FilterKey = 'stage' | 'kind' | 'teacher' | 'student';
 const FILTER_KEYS: FilterKey[] = ['teacher', 'student', 'kind', 'stage'];
 const STAGES = [['done', '已完成'], ['processing', '转写中'], ['recording', '录制中'], ['failed', '失败']];
-const KINDS = [['lesson', '课程'], ['meeting', '会议']];
+const KINDS = [['lesson', '课程'], ['meeting', '会议'], ['merged', '合并反馈']];
 
 function status(row: Row): [string, string] {
   if (row.stage === 'done') return ['已完成', 'b-ok'];
@@ -173,8 +183,12 @@ const badge = (row: Row) => {
   const [text, cls] = status(row);
   return `<span class="badge ${cls}"><i></i>${text}</span>`;
 };
-/** 实际录到的时长；合并录音前还不知道 */
-const duration = (r: Row) => (r.audioSec == null ? '—' : r.audioSec < 60 ? `${r.audioSec || '&lt;1'} 秒` : `${Math.round(r.audioSec / 60)} 分钟`);
+/** 有课堂时间档案：实际上课（第一句到最后一句）；否则实际录到的时长，合并录音前还不知道 */
+const duration = (r: Row) => (r.stats ? `${Math.round((r.kind === 'merged' ? r.stats.learn + r.stats.brk + r.stats.chat : r.stats.last - r.stats.first) / 60)} 分钟` // 合并反馈不算两节之间
+  : r.audioSec == null ? '—' : r.audioSec < 60 ? `${r.audioSec || '&lt;1'} 秒` : `${Math.round(r.audioSec / 60)} 分钟`);
+/** 学习时间占上课时间（不含课间）；不到 70% 标黄：家长报告不显示「比计划多」，时长只算学习时间 */
+const LEARN_SHARE = 0.7;
+const share = (r: Row) => (r.stats ? `<span class="badge ${r.stats.share < LEARN_SHARE ? 'b-warn' : 'b-plain'}">${Math.round(r.stats.share * 100)}%</span>` : '<span class="muted">—</span>');
 
 async function loadLessons(append = false) {
   const seq = ++list.seq;
@@ -189,9 +203,9 @@ async function loadLessons(append = false) {
   const rows = $('#rows');
   if (!rows) return;
   rows.innerHTML = list.rows.map((r) => `<tr data-id="${esc(r._id)}">
-      <td class="mono">${when(r.startAt)}</td><td class="who">${esc(r.student || '—')}</td><td>${esc(r.course)}${r.kind === 'adhoc' ? ' <span class="badge">随时录制</span>' : ''}</td>
-      <td>${r.kind === 'meeting' ? '会议' : '课程'}</td>${isAdmin ? `<td>${esc(r.teacherName)}</td>` : ''}<td class="mono muted">${duration(r)}</td><td>${badge(r)}</td></tr>`).join('')
-    || `<tr><td colspan="${isAdmin ? 7 : 6}" class="empty">${list.q || FILTER_KEYS.some((key) => list[key]) ? '没有符合条件的课程' : '还没有录过课'}</td></tr>`;
+      <td class="mono">${when(r.startAt)}</td><td class="who">${esc(r.student || '—')}</td><td>${esc(r.course)}${kindTag(r)}</td>
+      <td>${r.kind === 'meeting' ? '会议' : r.kind === 'merged' ? '合并反馈' : '课程'}</td>${isAdmin ? `<td>${esc(r.teacherName)}</td>` : ''}<td class="mono muted">${duration(r)}</td><td class="mono">${share(r)}</td><td>${badge(r)}</td></tr>`).join('')
+    || `<tr><td colspan="${isAdmin ? 8 : 7}" class="empty">${list.q || FILTER_KEYS.some((key) => list[key]) ? '没有符合条件的课程' : '还没有录过课'}</td></tr>`;
   $('#more').hidden = !list.more;
 }
 
@@ -211,7 +225,7 @@ function renderHead() {
   // 选了老师就只列这位老师的学生
   const students = uniq(people.filter((p) => !list.teacher || p.teacherName === list.teacher).map((p) => p.student).concat(list.student));
   $('#thead').innerHTML = `<tr><th>上课时间</th>${filterTh('student', '学生', students)}<th>课程</th>${filterTh('kind', '类型', KINDS)}
-    ${isAdmin ? filterTh('teacher', '老师', teachers) : ''}<th>时长</th>${filterTh('stage', '状态', STAGES)}</tr>`;
+    ${isAdmin ? filterTh('teacher', '老师', teachers) : ''}<th>时长</th><th title="学习时间占上课时间（不含课间）">学习占比</th>${filterTh('stage', '状态', STAGES)}</tr>`;
 }
 
 async function showLessons() {
@@ -221,7 +235,7 @@ async function showLessons() {
     </div>
     <div class="card tablewrap"><table>
       <thead id="thead"></thead>
-      <tbody id="rows"><tr><td colspan="${isAdmin ? 7 : 6}" class="empty"><span class="spin"></span></td></tr></tbody></table></div>
+      <tbody id="rows"><tr><td colspan="${isAdmin ? 8 : 7}" class="empty"><span class="spin"></span></td></tr></tbody></table></div>
     <div class="more" id="more" hidden><button class="btn" id="loadMore">加载更多</button></div>`;
   renderHead();
   if (!list.people) {
@@ -233,7 +247,7 @@ async function showLessons() {
 }
 
 /** 随时录制的标记；课表里的课不标 */
-const kindTag = (r: Row) => (r.kind === 'meeting' ? ' <span class="badge">会议</span>' : r.kind === 'adhoc' ? ' <span class="badge">随时录制</span>' : '');
+const kindTag = (r: Row) => (r.kind === 'meeting' ? ' <span class="badge">会议</span>' : r.kind === 'adhoc' ? ' <span class="badge">随时录制</span>' : r.kind === 'merged' ? ' <span class="badge">合并反馈</span>' : '');
 
 // ---------- 课程详情 ----------
 
@@ -268,14 +282,16 @@ async function showLesson(id: string) {
     d.stage === 'failed' ? `<div class="card panel" style="margin-bottom:16px"><div class="row" style="justify-content:space-between">
         <span class="err">${esc(d.error || '处理失败')}</span><button class="btn sm" id="retry">重新处理</button></div></div>`
     : d.stage === 'recording' ? '<div class="card empty">正在上课录制，下课后自动转写</div>'
+    : !done && d.kind === 'merged' ? '<div class="card empty">正在生成合并反馈，通常 15 秒左右</div>'
     : !done && !d.transcript ? '<div class="card empty">正在转写，通常下课后几分钟内完成</div>'
     : '';
-  const tabs = [['transcript', '转写', Boolean(d.transcript)], ['summary', d.kind === 'meeting' ? '会议纪要' : '家长总结', done], ['report', d.kind === 'meeting' ? '纪要网页' : '学情报告', done && Boolean(d.reportUrl)]]
+  const tabs = [['transcript', '转写', Boolean(d.transcript)], ['summary', d.kind === 'meeting' ? '会议纪要' : '家长总结', done], ['report', d.kind === 'meeting' ? '纪要网页' : '学情报告', done && Boolean(d.reportUrl)], ['archive', '时间档案', done && Boolean(d.archive)]]
     .filter(([, , show]) => show);
   main.innerHTML = `
     <div class="crumb"><a href="#/lessons">课程</a><span>/</span><span>${esc(d.student || d.course)}</span></div>
     <div class="head"><div><h1>${esc([d.student, d.course].filter(Boolean).join(' · '))}${kindTag(d)}</h1>
-      <div class="muted" style="margin-top:4px">${esc(d.teacherName)} · ${when(d.startAt)}${d.promptVersion != null && done ? ` · 提示词 ${d.promptVersion ? `v${d.promptVersion}` : '默认'}` : ''}${d.gapMinutes ? ` · 录音缺失约 ${d.gapMinutes} 分钟` : ''}</div></div>
+      <div class="muted" style="margin-top:4px">${esc(d.teacherName)} · ${when(d.startAt)}${d.promptVersion != null && done ? ` · 提示词 ${d.promptVersion ? `v${d.promptVersion}` : '默认'}` : ''}${d.gapMinutes ? ` · 录音缺失约 ${d.gapMinutes} 分钟` : ''}</div>
+      ${d.sourceLessons ? `<div class="muted" style="margin-top:4px">由 ${d.sourceLessons.length} 节合并：${d.sourceLessons.map((l) => `<a href="#/lessons/${esc(l._id)}">${when(l.startAt)}</a>`).join('、')}，单节课的总结和报告都保留</div>` : ''}</div>
       ${badge(d)}</div>
     ${d.audioUrl ? `<div class="card player"><audio id="audio" controls preload="metadata" src="${esc(d.audioUrl)}"></audio>
       <a class="btn sm" href="${esc(`${d.audioUrl}&download=${encodeURIComponent(`${d.fileName}.mp3`)}`)}">${ICON.dl}MP3</a></div>`
@@ -317,11 +333,58 @@ function renderTab() {
     $('#tabact').innerHTML = `<span class="muted edhint" id="sumState">${d.editedSummary ? '老师改过 · ' : ''}直接修改，选中文字可全部替换</span>
       ${sed.undo.length ? '<button class="btn sm ghost" id="sumUndo">撤销替换</button>' : ''}<button class="btn sm" id="copySummary">${ICON.copy}复制</button>`;
     $('#tabbody').innerHTML = `<div class="card panel"><div class="summary sumed" contenteditable="plaintext-only" spellcheck="false" aria-label="${d.kind === 'meeting' ? '会议纪要' : '家长总结'}">${esc(sed.text)}</div></div>`;
+  } else if (detailTab === 'archive') {
+    $('#tabact').innerHTML = '<span class="muted edhint">只在后台：老师本人和超级管理员可见</span>';
+    $('#tabbody').innerHTML = archiveView(d);
   } else {
     $('#tabact').innerHTML = `<a class="btn sm" id="editReport" href="${esc(d.reportUrl)}&edit=1" target="_blank" rel="noopener">${ICON.edit}编辑</a>
       <button class="btn sm" data-copy="${esc(d.reportUrl)}">${ICON.copy}复制链接</button>`;
     $('#tabbody').innerHTML = web(d.reportUrl!, '');
   }
+}
+
+// ---------- 课堂时间档案（后台）：真实时钟、全部环节（含闲聊）、晚开始、学习占比 ----------
+
+const LEARN_KINDS = ['讲解', '讲题', '练习', '答疑', '复习总结', '学习规划'];
+const KIND_CLASS: Record<string, string> = { 讲解: 'z1', 讲题: 'z1', 练习: 'z2', 答疑: 'z3', 复习总结: 'z4', 学习规划: 'z5', 课堂交流: 'z6', 课间休息: 'zr', 课前: 'zr', 课后: 'zr' };
+const KIND_ORDER = ['讲解', '讲题', '练习', '答疑', '复习总结', '学习规划', '课堂交流', '课间休息', '课前', '课后'];
+const clockOf = (ms: number) => when(ms).slice(6);
+const mins = (s: number) => `${Math.max(Math.round(s / 60), s > 0 ? 1 : 0)} 分钟`;
+
+function archiveView(d: Detail) {
+  const a = d.archive!;
+  const st = a.stats;
+  const segs = a.segments;
+  // 合并反馈：秒数落在哪一节就按哪一节的真实时刻显示；时长按各节相加
+  const part = (s: number) => a.parts?.filter((p) => p.start <= s).at(-1);
+  const at = (s: number) => clockOf((part(s)?.clock0 ?? d.recStart) + s * 1000);
+  const end = segs.at(-1)!.end;
+  const span = a.parts ? a.parts.reduce((sum, p) => sum + p.end - p.start, 0) : st.last - st.first;
+  const plan = a.parts ? a.parts.reduce((sum, p) => sum + p.plan, 0) : (d.endAt - d.startAt) / 1000;
+  const planned = d.kind === 'lesson' || d.kind === 'merged';
+  const late = Math.round((d.recStart + st.first * 1000 - d.startAt) / 60_000);
+  const low = st.share < LEARN_SHARE;
+  const by = KIND_ORDER.map((k) => [k, segs.filter((s) => s.kind === k).reduce((sum, s) => sum + s.end - s.start, 0)] as const).filter(([, v]) => v);
+  const kv = [
+    ['计划', a.parts ? `${a.parts.length} 节共 ${mins(plan)}` : d.kind === 'lesson' ? `${clockOf(d.startAt)}–${clockOf(d.endAt)}` : '随时录制'],
+    ['实际（第一句–最后一句）', `${at(st.first)}–${at(st.last)}`],
+    ['实际上课', `${mins(span)}${planned ? `（${span >= plan ? '+' : '−'}${mins(Math.abs(span - plan))}）` : ''}`],
+    ['开始', d.kind !== 'lesson' ? '—' : late > 2 ? `晚 ${late} 分钟` : late < -2 ? `早 ${-late} 分钟` : '准时'],
+    ['学习时间', `${mins(st.learn)} · ${Math.round(st.share * 100)}%`],
+    ['课堂交流', mins(st.chat)],
+    ['课间', st.brk ? mins(st.brk) : '无'],
+    ['环节 / 课堂瞬间', `${segs.length} / ${a.moments.length}`],
+  ];
+  return `<div class="card panel arch">
+    <div class="note ${low ? 'warn' : 'ok'}">${low
+      ? `课堂交流 ${mins(st.chat)}，学习时间只占上课时间（不含课间）的 ${Math.round(st.share * 100)}%。家长报告不显示「比计划多」，时长只算学习时间；闲聊的内容不会出现在家长报告里。`
+      : `学习时间占上课时间（不含课间）的 ${Math.round(st.share * 100)}%。家长报告的时长按整节课算${span - plan >= 180 && planned ? `，并显示「比计划多 ${Math.round((span - plan) / 60)} 分钟」` : ''}。`}</div>
+    <div class="kv">${kv.map(([k, v]) => `<div><span>${k}</span><b>${esc(v)}</b></div>`).join('')}</div>
+    <div class="rtl" role="img" aria-label="${esc(by.map(([k, v]) => `${k}${mins(v)}`).join('，'))}">${segs.map((s) => `<i class="${KIND_CLASS[s.kind] ?? 'z6'}" style="left:${(s.start / end) * 100}%;width:${((s.end - s.start) / end) * 100}%" title="${esc(`${at(s.start)}–${at(s.end)} ${s.kind} · ${s.title}`)}"></i>`).join('')}</div>
+    <div class="axis mono"><span>${at(0)} 开始录音</span><span>${at(end / 2)}</span><span>${at(end)}</span></div>
+    <ul class="lg">${by.map(([k, v]) => `<li><i class="${KIND_CLASS[k]}"></i>${k}<b>${mins(v)}</b></li>`).join('')}</ul>
+    <table class="segs"><tbody>${segs.map((s) => `<tr class="${LEARN_KINDS.includes(s.kind) ? '' : 'off'}"><td class="mono">${at(s.start)}–${at(s.end)}</td><td><i class="${KIND_CLASS[s.kind] ?? 'z6'}"></i>${esc(s.kind)}</td><td><b>${esc(s.title)}</b>　${esc(s.detail)}</td></tr>`).join('')}</tbody></table>
+  </div>`;
 }
 
 function highlight() {
@@ -369,7 +432,7 @@ const live = () => pr.versions[0];
 const pick = (p: Prompts): Prompts => ({ rules: p.rules, parent: p.parent, report: p.report, meeting: p.meeting });
 /** 选中「会议纪要」栏时，测试用会议、生成会议纪要；其余三栏测试课程 */
 const meetingMode = () => pr.tab === 'meeting';
-const doneFor = () => pr.done.filter((l) => (l.kind === 'meeting') === meetingMode());
+const doneFor = () => pr.done.filter((l) => l.kind !== 'merged' && (l.kind === 'meeting') === meetingMode()); // 合并反馈没有转写，试不了提示词
 const changed = () => KEYS.filter((k) => pr.draft![k] !== live()[k]);
 
 async function showPrompts() {

@@ -20,7 +20,9 @@ classroom-api（CloudBase HTTP 云函数，/classroom-api）
   └─ finish 时立即推进；转写完成由腾讯云回调 /asr/callback 推进；每 30 分钟定时器兜底（失败重试、回调丢失、App 没回来的课、清理过期录音）：
        queued → 按序拼接 MP3 → 腾讯云录音文件识别（说话人分离，带 CallbackUrl）
        → transcribing → 大模型判断哪个说话人是老师，转写标成「老师 / 学生」，删掉分段只留 merged.mp3
-       → summarizing → 大模型（超过 12000 字先分段摘要再汇总）
+       → summarizing → ① 整节课一次抽「课堂时间档案」（环节首尾相接、课堂瞬间、作业 / 下节课等事项；超过 12 万字才切开），程序检查
+                     ② 只拿学习环节（闲聊、课前课后、课间不交给模型）写家长总结和报告 → ③ 用报告的知识点名把学习环节归成 8–12 章
+                     作业、下节课、章节时间、各类分钟数由程序按档案算（会议纪要仍是超过 12000 字先分段摘要再汇总）
        → done：生成报告 token，飞书私信老师
 报告网页（静态托管 /classroom/report.html，src/report）
 ```
@@ -35,14 +37,14 @@ classroom-api（CloudBase HTTP 云函数，/classroom-api）
 |---|---|---|
 | `classroom_auth` | 登录 state | `status` pending / done / not_teacher，10 分钟过期；App 领取 token 后删除 |
 | `classroom_sessions` | token 的 sha256 | `openId`、`name`、`scheduleName`。不存 token 明文；目前不过期，删行即吊销 |
-| `classroom_lessons` | 飞书课表 record_id | 老师 openId、学生、课程、时间；`stage`、`finish`、`asrTaskId`、`transcript`、`summary` / `editedSummary`、`report`、`reportToken`、`gapMinutes`、`audioSec`（实际录音秒数）、`rawTranscript`（后台第一次改转写前的原文）、`copied`、`attempts` / `error`、`lockedUntil`（处理租约） |
+| `classroom_lessons` | 飞书课表 record_id | 老师 openId、学生、课程、时间；`stage`、`finish`、`asrTaskId`、`transcript`、`summary` / `editedSummary`、`report`、`archive`（课堂时间档案，含闲聊，只在后台看）、`reportToken`、`gapMinutes`、`audioSec`（实际录音秒数）、`rawTranscript`（后台第一次改转写前的原文）、`copied`、`attempts` / `error`、`lockedUntil`（处理租约）；`kind = merged` 的行是老师选几节课合并的一份反馈，`sources` = 那几节的编号，没有录音和转写（见 docs/design.md「合并反馈」） |
 | `classroom_segments` | (`lessonId`, `seq`) | 每段的 sha256、字节数、Storage 对象名 |
 | `classroom_prompts` | `version` | 后台保存的提示词（通用规则 / 家长总结 / 学情报告 / 会议纪要四段；早于会议纪要的版本该列为空，读取时用默认），版本号最大的一行是线上；一行都没有时用 `logic.ts` 的 `DEFAULT_PROMPTS`（版本 0）。课程的 `promptVersion` 记生成时用的版本 |
 | `classroom_admin_sessions` | token 的 sha256 | 后台登录，30 天过期 |
 
 Storage 桶 `classroom`（私有）：分段 `{lessonId}/{seq}.mp3`（转写入库后删除）与合并后的 `{lessonId}/merged.mp3`（保留 30 天后删除，转写和总结一直保留），后台测试上传的音频在 `preview/{随机 ID}/audio`（分块拼好即删，拼好的音频不自动清理），腾讯云识别用 6 小时签名链接（`fullSignedURL`）下载。
 
-处理失败会记 `stage = failed`、`failedStage`、`error`，下一分钟从失败的那一步重试，累计 3 次后停止并私信老师。下课 2 小时后仍缺分段，就用已有分段出报告，报告页注明「录音缺失约 X 分钟」。某节课要重跑：把 `stage` 改回 `queued`（或 `summarizing`）、`attempts` 改为 0，再 `tcb fn invoke classroom-api --params '{"action":"tick","lessonId":"rec…"}'`。
+处理失败会记 `stage = failed`、`failedStage`、`error`，下一分钟从失败的那一步重试，累计 3 次后停止并私信老师。下课 2 小时后仍缺分段，就用已有分段出报告，报告页注明「录音缺失约 X 分钟」。档案上线时重出存量报告用 `scripts/rebuild-archive.ts`（先试跑出对比页，确认后把同一份结果写库；家长总结不动）。某节课要重跑：把 `stage` 改回 `queued`（或 `summarizing`）、`attempts` 改为 0，再 `tcb fn invoke classroom-api --params '{"action":"tick","lessonId":"rec…"}'`。
 
 ## 需要在后台配置的内容
 

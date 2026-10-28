@@ -6,6 +6,7 @@ import type { LessonDoc } from "../src/server/logic";
 
 // 2026-10-15 13:30 上海 = 05:30 UTC
 const START = Date.UTC(2026, 9, 15, 5, 30);
+const HOUR_MS = 3_600_000;
 
 const record = (fields: Record<string, unknown>) => ({ record_id: "recA", fields: { 上课时间: START, ...fields } });
 
@@ -88,24 +89,140 @@ test("大模型 JSON：容忍代码块、去掉 markdown 和编号；缺字段�
   assert.throws(() => L.parseSummary("抱歉，我无法完成"), /JSON/);
 });
 
-test("时间轴与学生提问：时间转成秒、重叠截断、未知知识点和环节类型被纠正；旧提示词没输出也能出报告", () => {
-  const out = validJson() as any;
-  out.report.timeline = [
-    { phase: "讲解", title: "配方法", start: "05:00", end: "20:00", points: ["配方法", "不存在的知识点"] },
-    { phase: "开场", title: "寒暄", start: "00:00", end: "05:30", points: [] },
-    { phase: "练习", title: "真题", start: "18:00", end: "65:10", points: ["配方法"] },
-    { phase: "练习", title: "坏时间", start: "30:00", end: "29:00", points: [] },
-  ];
-  out.report.questions = [{ time: "12:05", text: "为什么要配方？", answer: "顶点式能直接看出顶点" }, { time: "?", text: "  " }];
-  const r = L.parseSummary(JSON.stringify(out)).report;
-  assert.deepEqual(r.timeline, [
-    { phase: "其他", title: "寒暄", start: 0, end: 330, points: [] },
-    { phase: "讲解", title: "配方法", start: 330, end: 1200, points: ["配方法"] },
-    { phase: "练习", title: "真题", start: 1200, end: 3910, points: ["配方法"] },
+// 一节 2 小时的课：课前 5 分钟、闲聊、课间 20 分钟，时间是录音里的秒
+const seg = (start: string, end: string, kind: string, title = kind) => ({ start, end, kind, title, detail: `${title}的说明` });
+const archiveJson = () => ({
+  segments: [
+    seg("00:00", "05:00", "课前"),
+    seg("05:00", "20:00", "学习规划", "试卷分析"),
+    seg("20:00", "40:00", "讲题", "第 1 题"),
+    seg("39:00", "50:00", "课堂交流", "聊游戏"), // 和上一段重叠 1 分钟
+    seg("50:30", "60:00", "讲解", "配方法"), // 和上一段空 30 秒
+    seg("60:00", "80:00", "课间休息"),
+    seg("80:00", "100:00", "练习", "第 2 题"),
+    seg("100:00", "125:00", "复习总结", "总结"),
+    seg("125:00", "126:00", "课后"),
+    seg("130:00", "129:00", "讲题", "坏时间"),
+  ],
+  moments: [{ time: "21:00", type: "答对", text: "X=3" }, { time: "45:00", type: "提问", text: "你玩什么游戏？" }, { time: "?", type: "答错", text: "" }],
+  facts: [
+    { time: "59:00", type: "下节课", text: "下半节讲应用题" },
+    { time: "110:00", type: "作业", text: "第 3 题再做一遍" },
+    { time: "120:00", type: "下节课", text: "下次讲二次不等式" },
+  ],
+});
+
+test("课堂时间档案：重叠截断、小空当并进前一段、类别不认识算闲聊；空当太多报错重试；统计只算第一句到最后一句", () => {
+  const a = L.parseArchive("```json\n" + JSON.stringify(archiveJson()) + "\n```");
+  assert.deepEqual(a.segments.map((s) => [s.start / 60, s.end / 60, s.kind]), [
+    [0, 5, "课前"], [5, 20, "学习规划"], [20, 40, "讲题"], [40, 50.5, "课堂交流"], [50.5, 60, "讲解"],
+    [60, 80, "课间休息"], [80, 100, "练习"], [100, 125, "复习总结"], [125, 126, "课后"],
   ]);
-  assert.deepEqual(r.questions, [{ time: 725, text: "为什么要配方？", answer: "顶点式能直接看出顶点" }]);
-  const old = L.parseSummary(JSON.stringify(validJson())).report;
-  assert.deepEqual([old.timeline, old.questions], [[], []]);
+  assert.deepEqual(a.stats, { first: 300, last: 7500, learn: 5370, brk: 1200, chat: 630, share: 5370 / 6000 });
+  assert.equal(a.moments.length, 2);
+  assert.deepEqual(L.archiveFacts(a), { homework: ["第 3 题再做一遍"], next: ["下次讲二次不等式"] }); // 「下半节」在最后 30 分钟之前，不算
+
+  const gappy = archiveJson();
+  gappy.segments.splice(2, 1); // 漏掉 20 分钟
+  assert.throws(() => L.parseArchive(JSON.stringify(gappy)), /20 分钟没有归进/);
+  // 空当里没人说话（安静做题、课间）不算漏切，并进前一段
+  const quiet = L.parseArchive(JSON.stringify(gappy), "[老师 05:00-05:10] 先看试卷\n[学生 50:40-50:45] 配方");
+  assert.deepEqual(quiet.segments.slice(1, 3).map((s) => [s.start / 60, s.end / 60]), [[5, 39], [39, 50.5]]);
+  assert.throws(() => L.parseArchive(JSON.stringify(gappy), "[老师 25:00-25:10] 第 1 题"), /19 分钟没有归进/);
+  const odd = archiveJson();
+  odd.segments[1].kind = "开场";
+  assert.equal(L.parseArchive(JSON.stringify(odd)).segments[1].kind, "课堂交流");
+  // 超长的课分段抽：各段直接拼起来
+  const [x, y] = [archiveJson(), archiveJson()];
+  x.segments = x.segments.slice(0, 4);
+  y.segments = y.segments.slice(4);
+  assert.equal(L.parseArchive([JSON.stringify(x), JSON.stringify(y)]).segments.length, 9);
+});
+
+test("写报告只拿学习环节：闲聊、课前课后、闲聊里的提问都不交给模型；作业和下节课由程序填", () => {
+  const a = L.parseArchive(JSON.stringify(archiveJson()));
+  const [, user] = L.reportMessages({ student: "浩然", course: "IG数学", teacher: "王芳", monthDay: "10月15日" }, a);
+  assert.match(user.content, /第 1 题/);
+  assert.doesNotMatch(user.content, /聊游戏|你玩什么游戏|课前的说明|课间休息的说明/);
+  assert.match(user.content, /作业：第 3 题再做一遍\n下节课：下次讲二次不等式/);
+  const parsed = L.parseSummary(JSON.stringify(validJson()));
+  const r = L.assembleReport(parsed.report, a, "坏输出");
+  assert.equal(r.homework, "第 3 题再做一遍");
+  assert.equal(r.next, "下次讲二次不等式");
+  const none = L.assembleReport(parsed.report, { ...a, facts: [] }, "");
+  assert.deepEqual([none.homework, none.next], ["课上没有明确布置作业", "具体内容待老师安排"]);
+});
+
+test("章节：不合格说清原因让模型重试；仍不合格由程序修正（接上编号、跨课间拆开、类别兜底、多于 12 章合并）", () => {
+  const a = L.parseArchive(JSON.stringify(archiveJson()));
+  const ch = (chapters: unknown[]) => JSON.stringify({ chapters });
+  // 学习环节 0 试卷分析、1 第 1 题、2 配方法 | 课间 | 3 第 2 题、4 总结：共 5 个，章数 5–5
+  const good = ch([
+    { from: 0, to: 0, cat: "学习规划", title: "试卷分析", point: "随便" },
+    { from: 1, to: 1, cat: "错题讲评", title: "第 1 题", point: "配方法" },
+    { from: 2, to: 2, cat: "新知讲解", title: "配方法", point: "不在列表" },
+    { from: 3, to: 3, cat: "当堂练习", title: "第 2 题", point: "判别式" },
+    { from: 4, to: 4, cat: "方法总结", title: "总结", point: "配方法" },
+  ]);
+  assert.equal(L.chapterProblem(good, a), "");
+  assert.match(L.chapterPrompt(a, ["配方法", "判别式"]), /2. 50:30–60:00 讲解｜配方法｜配方法的说明\n—— 课间休息 ——\n3. 80:00/);
+  const built = L.buildChapters(good, a, ["配方法", "判别式"]);
+  assert.deepEqual(built.map((c) => [c.start / 60, c.end / 60, c.real / 60, c.cat, c.point]), [
+    [5, 20, 15, "学习规划", "试卷分析与学习规划"],
+    [20, 50.5, 20, "错题讲评", "配方法"], // 闲聊并进前一章
+    [50.5, 60, 9.5, "新知讲解", "配方法"], // 知识点不认识，沿用上一章的；课间不单列，停在课间开始
+    [80, 100, 20, "当堂练习", "判别式"],
+    [100, 125, 25, "方法总结", "配方法"],
+  ]);
+
+  // 闲聊多的课：每章就是学习环节的真实起止，不挂闲聊
+  const chatty = { ...a, stats: { ...a.stats, share: 0.5 } };
+  assert.deepEqual(L.buildChapters(good, chatty, ["配方法"]).slice(0, 2).map((c) => [c.start / 60, c.end / 60]), [[5, 20], [20, 40]]);
+
+  const crossing = ch([{ from: 0, to: 4, cat: "上课", title: "整节课", point: "配方法" }]);
+  assert.match(L.chapterProblem(crossing, a), /必须是 5–5 章/);
+  const fixed = L.buildChapters(crossing, a, ["配方法"]);
+  assert.deepEqual(fixed.map((c) => [c.start / 60, c.end / 60, c.cat]), [[5, 60, "例题精讲"], [80, 125, "例题精讲"]]);
+  assert.equal(L.buildChapters("不是 JSON", a, ["配方法"]).length, 2);
+
+  // 40 个学习环节归成 20 章：程序把最短的并进相邻较长的，直到 12 章
+  const many = { segments: Array.from({ length: 40 }, (_, i) => seg(`${i * 3}:00`, `${i * 3 + 3}:00`, "讲题", `题${i}`)), moments: [], facts: [] };
+  const big = L.parseArchive(JSON.stringify(many));
+  const twenty = ch(Array.from({ length: 20 }, (_, i) => ({ from: i * 2, to: i * 2 + 1, cat: "例题精讲", title: `章${i}`, point: "配方法" })));
+  assert.match(L.chapterProblem(twenty, big), /20 章，必须是 8–12 章/);
+  const merged = L.buildChapters(twenty, big, ["配方法"]);
+  assert.equal(merged.length, 12);
+  assert.equal(merged.reduce((sum, c) => sum + c.real, 0), 40 * 180);
+});
+
+test("家长页时间：学习占比够 70% 按课堂时长摊开、否则只算学习时间（课间照样摊）；比计划多 3 分钟以上才显示；分钟数加起来不差", () => {
+  const a = L.parseArchive(JSON.stringify(archiveJson()));
+  const chapters = L.buildChapters(JSON.stringify({ chapters: [
+    { from: 0, to: 0, cat: "学习规划", title: "试卷分析", point: "" },
+    { from: 1, to: 2, cat: "错题讲评", title: "第 1 题", point: "配方法" },
+    { from: 3, to: 4, cat: "当堂练习", title: "第 2 题", point: "判别式" },
+  ] }), a, ["配方法", "判别式"]);
+  const doc = { archive: a, report: { chapters } as L.ClassReport, startAt: START, endAt: START + 115 * 60_000, finish: { startedAt: new Date(START - 5 * 60_000).toISOString(), endedAt: "", segments: [] } };
+  const c = L.lessonClock(doc)!;
+  assert.deepEqual([c.full, c.total, c.over], [true, 120, 5]); // 05:00–125:00，比计划 115 分钟多 5
+  assert.deepEqual(c.cats, [["错题讲评", 40], ["当堂练习", 60], ["学习规划", 20]]);
+  assert.equal(c.points.reduce((sum, [, n]) => sum + n, 0), 120);
+  const data = L.reportData({ ...doc, student: "浩然", course: "IG数学", teacherName: "王芳" } as unknown as LessonDoc);
+  assert.deepEqual([data.time, data.mins], ["13:30–15:30", 120]);
+
+  const chatty = { ...a, stats: { ...a.stats, share: 0.45 } };
+  const low = L.lessonClock({ ...doc, archive: chatty })!;
+  assert.deepEqual([low.full, low.total, low.over], [false, Math.round((a.stats.learn + a.stats.brk) / 60), 0]);
+  assert.equal(L.lessonClock({ ...doc, endAt: START + 118 * 60_000 })!.over, 0);
+  assert.equal(L.lessonClock({ ...doc, archive: null }), undefined);
+  assert.deepEqual(L.apportion([["a", 1], ["b", 1], ["c", 1]], 10), [["a", 4], ["b", 3], ["c", 3]]);
+});
+
+test("学生提问：只收像问题的（6 字以上、带问号或疑问词）", () => {
+  const out = validJson() as any;
+  out.report.questions = [{ time: "12:05", text: "为什么要配方？", answer: "顶点式能直接看出顶点" }, { time: "13:00", text: "选 dog" }, { time: "?", text: "这个忘记除 2 了" }];
+  assert.deepEqual(L.parseSummary(JSON.stringify(out)).report.questions, [{ time: 725, text: "为什么要配方？", answer: "顶点式能直接看出顶点" }]);
+  assert.deepEqual(L.parseSummary(JSON.stringify(validJson())).report.questions, []);
 });
 
 test("流水线推进：齐了就合并；缺段等到下课 2 小时后带缺失时长继续；失败最多重试 3 次", () => {
@@ -158,7 +275,7 @@ test("上海时区的 7 天窗口与报告数据", () => {
 
 test("提示词：占位符换成本课信息；标题校验跟着家长总结提示词走", () => {
   const meta = { student: "浩然", course: "IG数学", teacher: "徐翰超", monthDay: "10月15日" };
-  const [system, user] = L.summaryMessages(meta, "[说话人1 00:00-00:05] 你好", false);
+  const [system, user] = L.reportMessages(meta, L.parseArchive(JSON.stringify(archiveJson())));
   assert.match(system.content, /说话人N/);
   assert.match(user.content, /今天（10月15日）的IG数学课/);
   assert.match(user.content, /「浩然家长您好」/);
@@ -230,25 +347,82 @@ test("matchTeacher：先认飞书账号，没绑的按唯一姓名认，同名�
   assert.equal(L.matchTeacher(rows, "ou_x", "陌生人"), null);
 });
 
-test("网页改报告：只改文字；清空必填项保留原文，清空列表项删掉；知识点改名同步到时间轴", () => {
+test("网页改报告：只改文字；清空必填项保留原文，清空列表项删掉；知识点改名同步到章节", () => {
   const old: L.ClassReport = {
     topic: "二次函数", lead: "能求顶点", content: ["配方法", "判别式"],
     mastery: [{ name: "配方", status: "基本掌握", evidence: "会配" }, { name: "判别式", status: "需要巩固", evidence: "不熟" }],
     performance: "积极", issue: { title: "符号", fix: "多练" }, homework: "作业", review: "复习", next: "下节",
-    timeline: [{ phase: "讲解", title: "讲配方", start: 0, end: 60, points: ["配方", "判别式"] }],
+    chapters: [{ start: 0, end: 60, real: 50, cat: "新知讲解", title: "讲配方", point: "配方" }, { start: 60, end: 90, real: 30, cat: "当堂练习", title: "练判别式", point: "判别式" }],
     questions: [{ time: 5, text: "为什么", answer: "因为" }], gapMinutes: 3,
   };
   const out = L.applyReportEdits("lesson", old, {
     topic: "  ", lead: "**能**求顶点", content: ["配方法", ""],
     mastery: [{ name: "completing the square", status: "已掌握", evidence: "" }, { name: "" }],
-    timeline: [{ title: "讲 completing the square", start: 99 }], questions: [{ text: "为什么？", answer: "" }],
+    chapters: [{ title: "讲 completing the square", start: 99, cat: "学习规划" }], questions: [{ text: "为什么？", answer: "" }],
   }) as L.ClassReport;
   assert.equal(out.topic, "二次函数");
   assert.equal(out.lead, "**能**求顶点");
   assert.deepEqual(out.content, ["配方法"]);
   assert.deepEqual(out.mastery, [{ name: "completing the square", status: "基本掌握", evidence: "会配" }]);
-  assert.deepEqual(out.timeline, [{ phase: "讲解", title: "讲 completing the square", start: 0, end: 60, points: ["completing the square"] }]);
+  assert.deepEqual(out.chapters, [
+    { start: 0, end: 60, real: 50, cat: "新知讲解", title: "讲 completing the square", point: "completing the square" },
+    { start: 60, end: 90, real: 30, cat: "当堂练习", title: "练判别式", point: "判别式" }, // 知识点删了，章节归属不丢时间
+  ]);
   assert.deepEqual(out.questions, [{ time: 5, text: "为什么？", answer: "" }]);
   assert.equal(out.gapMinutes, 3);
   assert.equal(out.homework, "作业");
+});
+
+test("暂停：暂停的时段从档案里挖出来标成「暂停 N 分钟」，算上课时间不算学习时间；不到 30 秒的不管", () => {
+  const a = L.parseArchive(JSON.stringify(archiveJson()));
+  const p = L.applyPauses(a, [[45 * 60, 55 * 60]]);
+  assert.deepEqual(p.segments.slice(3, 6).map((s) => [s.start / 60, s.end / 60, s.kind, s.title]), [
+    [40, 45, "课堂交流", "聊游戏"], [45, 55, "课堂交流", "暂停 10 分钟"], [55, 60, "讲解", "配方法"],
+  ]);
+  assert.deepEqual([p.stats.learn, p.stats.chat, p.stats.first, p.stats.last], [5370 - 270, 300 + 600, 300, 7500]);
+  assert.equal(L.applyPauses(a, [[100, 120]]), a);
+  // 课前等学生、课后和家长单聊时的暂停不撑长课堂时长
+  assert.equal(L.applyPauses(a, [[0, 280]]), a);
+  assert.equal(L.applyPauses(a, [[125 * 60, 200 * 60]]), a);
+  // 暂停到录音结束之后：只挖到最后一个环节为止
+  assert.equal(L.applyPauses(a, [[124 * 60, 200 * 60]]).segments.at(-1)!.end, 126 * 60);
+});
+
+test("合并反馈：几节的档案接成一条时间线（两节之间 5 分钟），时长按各节相加；跨天时列出日期；提示词分节", () => {
+  const a = L.parseArchive(JSON.stringify(archiveJson()));
+  const recA = START - 5 * 60_000; // 第一句 05:00 = 13:30
+  const items = (recB: number) => [
+    { lessonId: "recA", archive: a, recStart: recA, plan: 115 * 60 },
+    { lessonId: "recB", archive: a, recStart: recB, plan: 115 * 60 },
+  ];
+  const m = L.mergeArchives(items(START + 175 * 60_000)); // 第二节第一句 16:30
+  assert.deepEqual(m.parts!.map((p) => [p.lessonId, p.start, p.end]), [["recA", 0, 7200], ["recB", 7500, 14700]]);
+  assert.equal(m.segments.length, 7 + 1 + 7); // 去掉课前课后，中间一段「两节之间」
+  assert.deepEqual(m.segments[7], { start: 7200, end: 7500, kind: "课间休息", title: "两节之间", detail: "" });
+  assert.deepEqual(m.stats, { first: 0, last: 14700, learn: 2 * 5370, brk: 2 * 1200, chat: 2 * 630, share: 5370 / 6000 });
+  assert.deepEqual(L.archiveFacts(m).homework, ["第 3 题再做一遍", "第 3 题再做一遍"]);
+
+  const chapters = L.buildChapters("坏输出", m, ["配方法"]);
+  assert.equal(chapters.length, 4); // 课间、两节之间都拆开
+  const doc = { student: "浩然", course: "IG数学", teacherName: "王芳", kind: "merged", startAt: START, endAt: START, archive: m, report: { chapters } as L.ClassReport } as unknown as LessonDoc;
+  const c = L.lessonClock(doc)!;
+  assert.deepEqual([c.total, c.over, c.recStart], [240, 10, START]);
+  assert.deepEqual(c.parts!.map((p) => (p.recStart + p.start * 1000 - START) / 60_000), [0, 180]);
+  const data = L.reportData(doc);
+  assert.deepEqual([data.date, data.time, data.mins], ["2026-10-15", "13:30–15:30、16:30–18:30", 240]);
+
+  const [, user] = L.reportMessages({ student: "浩然", course: "IG数学", teacher: "王芳", monthDay: "10月15日", merged: { labels: L.partLabels(m.parts!, true, true), days: ["10月15日"] } }, m);
+  assert.match(user.content, /这是 2 节课合并的一份反馈（10月15日 13:30–15:30、10月15日 16:30–18:30）/);
+  assert.doesNotMatch(user.content, /这两次课/);
+  assert.match(user.content, /—— 第 2 节 ——\n5\. /);
+  assert.match(L.chapterPrompt(m, ["配方法"]), /—— 第 1 节 ——\n0\. [\s\S]*—— 课间休息 ——\n3\. [\s\S]*—— 第 2 节 ——\n5\. /);
+
+  const twoDays = L.mergeArchives(items(START + 24 * 3_600_000 - 5 * 60_000));
+  assert.equal(L.reportData({ ...doc, archive: twoDays }).time, "10.15 13:30–15:30、10.16 13:30–15:30");
+  const [, user2] = L.reportMessages({ student: "浩然", course: "IG数学", teacher: "王芳", monthDay: "10月16日", merged: { labels: L.partLabels(twoDays.parts!, true), days: ["10月15日", "10月16日"] } }, twoDays);
+  assert.match(user2.content, /第一行写成「\{称呼\}，这两次课（10月15日、10月16日）的IG数学课向您汇报一下：」/);
+
+  const row = L.mergedLesson({ _id: "merged-0123456789abcdef", student: "浩然", course: "IG数学", startAt: START, endAt: START + HOUR_MS, stage: "done", sources: ["recA", "recB"], summary: "总结", reportToken: "tok" } as unknown as LessonDoc, "https://x/report.html");
+  assert.deepEqual([row.title, row.kind, row.sources, row.status, row.reportUrl], ["浩然 · 合并反馈", "merged", ["recA", "recB"], "done", "https://x/report.html?t=tok"]);
+  assert.ok(L.isMergedId(row.id) && !L.isAdhocId(row.id));
 });

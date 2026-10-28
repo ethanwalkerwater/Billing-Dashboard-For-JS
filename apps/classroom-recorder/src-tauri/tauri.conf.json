@@ -1,7 +1,7 @@
 {
   "$schema": "../../../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "菁仕课堂",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "identifier": "asia.jsjy.classroom",
   "build": {
     "devUrl": "http://127.0.0.1:4181",

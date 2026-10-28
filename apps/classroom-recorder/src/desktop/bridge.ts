@@ -7,26 +7,33 @@ export type LessonStatus = 'upcoming' | 'recording' | 'processing' | 'done' | 'c
 export interface Lesson {
   id: string; date: string; start: string; end: string; startAt: number; endAt: number;
   title: string; topic: string; status: LessonStatus; copied: boolean; summary?: string; reportUrl?: string;
-  /** 随时录制：adhoc = 课程，meeting = 会议；课表里的课没有 */
-  kind?: 'adhoc' | 'meeting';
+  /** 随时录制：adhoc = 课程，meeting = 会议；merged = 老师选几节课合并的一份反馈；课表里的课没有 */
+  kind?: 'adhoc' | 'meeting' | 'merged';
   /** 随时录制已结束、等老师填主题 */
   needsName?: boolean;
+  /** 课表里的课有学生，按它找同一个学生的课来合并 */
+  student?: string;
+  /** 合并反馈由哪几节课合并 */
+  sources?: string[];
 }
 export const isMeeting = (l?: Lesson) => l?.kind === 'meeting';
-export type RecMode = 'idle' | 'pre' | 'recording' | 'confirm' | 'warn' | 'quiet' | 'ending' | 'processing' | 'naming' | 'gone';
+export type RecMode = 'idle' | 'pre' | 'recording' | 'paused' | 'confirm' | 'warn' | 'quiet' | 'ending' | 'processing' | 'naming' | 'gone';
 export interface AppState {
   teacher: { name: string } | null;
   loggingIn: boolean;
   lessons: Lesson[];
   rec: {
     mode: RecMode; lessonId: string | null; sec: number; endLeft: number; autoStopAt: string; autoStartAt: string;
+    /** 暂停着（「结束？」确认时 mode 是 confirm，靠它知道底下是不是暂停）；pausedSec = 这次暂停了多久；nudge = 胶囊上的暂停提醒 */
+    paused: boolean; pausedSec: number; nudge: '' | 'long' | 'voice';
     savedSegments: number; uploadedSegments: number; online: boolean;
   };
   mics: string[]; mic: string;
   autostart: boolean;
   /** 设置里「悬浮录制按钮」开着 */
   fab: boolean;
-  toast: { lessonId: string; title: string; body: string } | null;
+  /** kind = pause：暂停满 10 分钟的提醒，按钮换成「继续录」 */
+  toast: { lessonId: string; title: string; body: string; kind?: 'pause' } | null;
   selectedLessonId: string | null;
   /** App 版本号（设置里显示） */
   version?: string;

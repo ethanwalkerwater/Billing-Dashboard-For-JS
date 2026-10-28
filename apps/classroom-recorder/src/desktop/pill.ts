@@ -1,6 +1,6 @@
 import './styles.css';
 import { call, onLevel, startDragging, subscribe, type AppState } from './bridge';
-import { esc, hms, tick } from './format';
+import { esc, hms, holdToEnd, tick } from './format';
 
 const pill = document.querySelector<HTMLDivElement>('#pill')!;
 // body 的 padding（styles.css .pill-page）给阴影留位置，窗口尺寸 = 胶囊 + 这些边距。
@@ -18,11 +18,20 @@ function render() {
   pill.classList.toggle('hidden', rec.mode === 'idle' || rec.mode === 'gone');
   pill.classList.toggle('warn', rec.mode === 'warn' || rec.mode === 'quiet');
   pill.classList.toggle('form', rec.mode === 'naming');
+  pill.classList.toggle('confirm', rec.mode === 'confirm');
+  pill.classList.toggle('paused', rec.mode === 'paused');
   const adhoc = Boolean(l?.kind);
   let h = '';
   if (rec.mode === 'pre') h = `<span class="col"><span class="t1">${esc(l?.start)} ${title}</span><span class="t2">${esc(rec.autoStartAt)} 自动开始录制 · 麦克风正常</span></span>${WAVE('green')}<button class="btn" data-act="start">现在开始</button>`;
-  else if (rec.mode === 'recording') h = `<span class="dot"></span><span class="timer num" data-sec></span>${WAVE('red')}<span class="more"><span class="t2">${adhoc ? '随时录制' : `${title} · 拖堂会接着录`}</span><button class="btn red" data-act="stop">结束</button></span>`;
-  else if (rec.mode === 'confirm') h = `<span class="t1">${adhoc ? '结束这段录制？' : '结束这节课的录制？'}</span><button class="btn" data-act="resume">继续录</button><button class="btn red" data-act="end">结束</button>`;
+  // 「暂停」是实心按钮，「结束」是不显眼的文字按钮；结束要在确认卡片上按住 1 秒
+  else if (rec.mode === 'recording') h = `<span class="dot"></span><span class="timer num" data-sec></span>${WAVE('red')}<span class="more"><span class="t2">${adhoc ? '随时录制' : `${title} · 拖堂会接着录`}</span><button class="btn pause" data-act="pause">暂停</button><button class="btn soft" data-act="stop">结束</button></span>`;
+  else if (rec.mode === 'paused' && rec.nudge === 'long') h = '<span class="pz"></span><span class="col"><span class="t1">已经暂停 <span class="num" data-pz></span> 了</span><span class="t2">回来上课记得点继续，暂停的这段不会录音</span></span><button class="btn white" data-act="resume">继续录</button>';
+  else if (rec.mode === 'paused' && rec.nudge === 'voice') h = `<span class="pz"></span><span class="col"><span class="t1">好像开始讲课了？还在暂停中</span><span class="t2">只听了音量，没有录音</span></span>${WAVE('amber')}<button class="btn white" data-act="resume">继续录</button><button class="btn soft" data-act="still">还在聊</button>`;
+  else if (rec.mode === 'paused') h = '<span class="pz"></span><span class="col"><span class="t1 num">已暂停 <span data-pz></span></span><span class="t2 num">这段不录音 · 已录 <span data-sec></span></span></span><button class="btn white" data-act="resume">继续录</button><button class="btn soft" data-act="stop">结束</button>';
+  else if (rec.mode === 'confirm') h = `<span class="t1">${adhoc ? '结束这段录制？' : '结束这节课的录制？'}</span>
+    <span class="t2 num">已录 <span data-sec></span> · 结束后录音提交整理，${adhoc ? '这段' : '这节课'}不能再接着录</span>
+    <span class="row2">${rec.paused ? '' : '<button class="link" data-act="pause">只是想停一会儿？改成暂停</button>'}<span class="sp"></span>
+      <button class="btn hold" data-hold><span>按住 1 秒结束</span></button>${rec.paused ? '<button class="btn white" data-act="cancel">保持暂停</button>' : '<button class="btn white" data-act="resume">继续录</button>'}</span>`;
   else if (rec.mode === 'warn') h = `<span>⚠</span><span class="col"><span class="t1">没听到声音</span><span class="t2">录音仍在继续 · 检查一下麦克风</span></span>${WAVE('flat')}<select data-act="mic" aria-label="切换麦克风">${S!.mics
     .map(m => `<option value="${esc(m)}"${m === S!.mic ? ' selected' : ''}>${m === S!.mic ? '' : '切换到 '}${esc(m)}</option>`).join('')}</select>`;
   else if (rec.mode === 'quiet') h = '<span class="dot"></span><span class="col"><span class="t1">好像下课了，要结束录制吗？</span><span class="t2 num" data-end></span></span><button class="btn" data-act="keep">继续录</button><button class="btn red" data-act="end">结束</button>';
@@ -69,9 +78,13 @@ pill.addEventListener('click', e => {
   if (act === 'start') void call('start_recording', { lessonId: S.rec.lessonId });
   else if (act === 'stop') void call('request_stop');
   else if (act === 'resume') void call('resume_recording');
+  else if (act === 'pause') void call('pause_recording');
+  else if (act === 'still') void call('still_chatting');
+  else if (act === 'cancel') void call('cancel_stop');
   else if (act === 'end') void call('end_recording');
   else if (act === 'keep') void call('keep_recording');
 });
+holdToEnd(pill, () => void call('end_recording'));
 // 填主题：回车或「完成」；类型取当前选中的那个
 pill.addEventListener('submit', e => {
   e.preventDefault();

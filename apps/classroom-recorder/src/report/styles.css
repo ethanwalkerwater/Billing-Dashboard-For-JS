@@ -50,3 +50,13 @@ body.editing .md:hover,body.editing .md:focus-visible{background:var(--soft);out
 .mdedit{display:block;width:100%;margin:0;padding:2px 4px;font:inherit;line-height:inherit;letter-spacing:inherit;color:inherit;background:#fff;border:1px solid var(--accent);border-radius:6px;resize:none;overflow:hidden;outline:3px solid var(--soft)}
 body.editing .md{display:inline-block;max-width:100%}
 .toolbar:has(.download[hidden]:only-child){display:none}
+
+/* 课堂时间分布（课堂时间档案）：章节类别配色顺序同 logic.ts CHAPTER_CATS */
+.k0{background:#2f6bff}.k1{background:#06b6d4}.k2{background:#f97316}.k3{background:#16a34a}.k4{background:#ec4899}.k5{background:#8b5cf6}.track i.k5{background:#8b5cf6}
+.facts small em{font-style:normal;color:var(--ok);background:#e6f4ea;border-radius:999px;padding:1px 8px;font-weight:600;margin-left:6px;font-size:12px;white-space:nowrap}
+.flow{display:flex;height:28px;border-radius:8px;overflow:hidden;background:var(--bg)}.flow i{display:block;height:100%;box-shadow:inset -2px 0 0 var(--paper)}.flow i.gap{box-shadow:inset 6px 0 0 var(--paper),inset -2px 0 0 var(--paper)}
+.chs{margin-top:18px;border-top:1px solid var(--line)}.part-h{padding:16px 0 6px;font-size:13px;font-weight:600;color:var(--accent);border-bottom:1px solid var(--line)}.ch{display:grid;grid-template-columns:104px 10px 64px 1fr;align-items:baseline;gap:10px;padding:11px 0;border-bottom:1px solid var(--line);line-height:1.6}
+.ch .when{font-size:15px}.ch i{width:10px;height:10px;border-radius:3px;align-self:center}.ch b{font-weight:600}
+.sub{margin:-6px 0 14px;color:var(--muted);font-size:13px}
+@media(max-width:640px){.ch{grid-template-columns:44px 10px 1fr;gap:4px 8px}.ch .to{display:none}.ch b,.ch>span:last-child{grid-column:3}.facts small em{display:block;width:max-content;margin:2px 0 0}}
+@media print{.flow,.ch{break-inside:avoid}}

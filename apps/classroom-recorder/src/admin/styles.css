@@ -176,3 +176,15 @@ dialog.sheet{margin:0 0 0 auto;height:100%;max-height:none;width:min(380px,100%)
 .viewas button{margin-left:auto}
 /* 总结就是一段可直接改的文字：平时看起来和正文一样，不加框 */
 .sumed{outline:none;cursor:text;min-height:1.8em}
+
+/* 课堂时间档案 */
+.b-plain{color:var(--fg);background:var(--muted);border-color:transparent}
+.arch .note{padding:10px 14px;border-radius:var(--r);margin-bottom:16px}.arch .note.ok{background:var(--ok-bg);color:var(--ok)}.arch .note.warn{background:var(--warn-bg);color:var(--warn)}
+.arch .kv{display:grid;grid-template-columns:repeat(4,1fr);gap:12px 18px;margin-bottom:18px}.arch .kv span{display:block;color:var(--muted-fg);font-size:12px}.arch .kv b{font-weight:600}
+.rtl{position:relative;height:28px;border-radius:6px;background:var(--muted);overflow:hidden}.rtl i{position:absolute;top:0;bottom:0;box-shadow:inset -1px 0 0 #fff}
+.arch .axis{display:flex;justify-content:space-between;color:var(--muted-fg);font-size:12px;margin:6px 0 12px}
+.arch .lg{display:flex;flex-wrap:wrap;gap:6px 16px;list-style:none;padding:0;margin:0 0 16px;font-size:13px}.arch .lg li{display:flex;align-items:center;gap:6px}.arch .lg b{font-weight:600}
+.arch .lg i,.segs td i{display:inline-block;width:10px;height:10px;border-radius:3px}.segs td i{margin-right:6px;vertical-align:-1px}
+.z1{background:#2f6bff}.z2{background:#16a34a}.z3{background:#f59e0b}.z4{background:#ec4899}.z5{background:#8b5cf6}.z6{background:#b8c0cc}.zr{background:repeating-linear-gradient(135deg,#e4e4e7 0 4px,#f4f4f5 4px 8px)}
+table.segs{width:100%;border-collapse:collapse;font-size:13px}table.segs td{padding:7px 8px;border-top:1px solid var(--border);vertical-align:top}table.segs td:first-child{white-space:nowrap;color:var(--muted-fg);padding-left:0}table.segs td:nth-child(2){white-space:nowrap}table.segs tr.off td{color:var(--muted-fg)}
+@media(max-width:720px){.arch .kv{grid-template-columns:1fr 1fr}}
