@@ -110,6 +110,10 @@ function setScene() {
   if (scene === 'long') { startRec('xiaoyu', 49 * 60); pause('long', 10 * 60); }
   if (scene === 'confirm') { startRec('xiaoyu', 49 * 60); s.rec = rec('confirm'); }
   if (scene === 'adhoc') { startAdhoc(22 * 60 + 14); endAdhoc(); }
+  // 云端重试用完的课、不算录制的课；?old 看 0.1.9 的样子（两种都显示成「整理中」）
+  const old = new URLSearchParams(location.search).has('old');
+  if (scene === 'failed') { s.selectedLessonId = 'haoran2'; s.lessons = setLesson('haoran2', { status: old ? 'processing' : 'failed', summary: undefined, reportUrl: undefined }); }
+  if (scene === 'empty') { s.selectedLessonId = 'zihan'; s.lessons = setLesson('zihan', { status: old ? 'processing' : 'empty', summary: undefined, reportUrl: undefined }); }
 }
 setScene();
 

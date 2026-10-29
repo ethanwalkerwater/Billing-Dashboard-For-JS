@@ -112,7 +112,7 @@ pub struct ActiveRef<'a> {
 }
 
 fn eligible(l: &Lesson, ended: &HashSet<String>) -> bool {
-    !matches!(l.status.as_str(), "cancelled" | "done" | "processing") && !ended.contains(&l.id) && !is_adhoc(&l.id)
+    !matches!(l.status.as_str(), "cancelled" | "done" | "processing" | "failed" | "empty") && !ended.contains(&l.id) && !is_adhoc(&l.id)
 }
 
 /// 每秒调用一次：该开录、换课、停录还是什么都不做。
@@ -867,7 +867,7 @@ impl Core {
                 return if a.lesson.id == id { Ok(()) } else { Err("正在录制另一节课，请先结束".into()) };
             }
             let l = g.lessons.iter().find(|l| l.id == id).cloned().ok_or("课表里没有这节课")?;
-            if matches!(l.status.as_str(), "done" | "processing") || self.lesson_dir(id).and_then(|d| recorder::read(&d).ok()).is_some_and(|lf| lf.finished) {
+            if matches!(l.status.as_str(), "done" | "processing" | "failed" | "empty") || self.lesson_dir(id).and_then(|d| recorder::read(&d).ok()).is_some_and(|lf| lf.finished) {
                 return Err("这节课已经录完了".into());
             }
             if now < l.start_at - MANUAL_EARLY {

@@ -19,14 +19,19 @@ export const MISSING_GRACE_MS = 2 * HOUR;
  */
 export const ORPHAN_QUIET_MS = 15 * 60_000;
 export const ADHOC_QUIET_MS = 30 * 60_000;
+/** 不算录制：录音不到 5 分钟，且转写里说的话不到 100 个字（约 25 秒的话；线上 5 分钟内的真课都有几百字） */
+export const EMPTY_MAX_SEC = 5 * 60;
+export const EMPTY_MAX_CHARS = 100;
 export const CHUNK_CHARS = 12_000;
 /** 课堂时间档案一次交给模型的上限；线上最长的课约 6 万字，超过才切开 */
 export const ARCHIVE_CHARS = 120_000;
 
 export const SCHEDULE_FIELDS = ["老师", "学生", "上课时间", "下课时间", "课程时长", "课程类型", "上课地点", "临时取消", "老师课程ID"];
 
-export type Stage = "recording" | "queued" | "transcribing" | "summarizing" | "done" | "failed";
-export type LessonStatus = "upcoming" | "recording" | "processing" | "done" | "cancelled";
+/** empty = 录音太短又没人说话，不算录制：不调模型、不出总结，App 里当作没录 */
+export type Stage = "recording" | "queued" | "transcribing" | "summarizing" | "done" | "failed" | "empty";
+/** failed = 重试用完了还没成；empty 见 Stage。0.1.9 及以前的 App 不认这两个，会显示成空白总结 */
+export type LessonStatus = "upcoming" | "recording" | "processing" | "done" | "cancelled" | "failed" | "empty";
 /** lesson = 课表里的课；adhoc = 随时录制选「课程」；meeting = 随时录制选「会议」；merged = 老师选几节课合并的一份反馈 */
 export type LessonKind = "lesson" | "adhoc" | "meeting" | "merged";
 /** 随时录制的课程编号由 App 生成，不在飞书课表里 */
@@ -266,10 +271,15 @@ export function scheduleFilter(scheduleName: string, from: number, to: number) {
 
 // ---------- 课表 + 数据库 → Lesson ----------
 
-const stageStatus = (stage: Stage): LessonStatus => (stage === "recording" ? "recording" : stage === "done" ? "done" : "processing");
+type StageOf = Pick<LessonDoc, "stage" | "attempts">;
+/** 失败但还会自动重试的仍算「整理中」 */
+const stageStatus = ({ stage, attempts }: StageOf): LessonStatus =>
+  stage === "recording" || stage === "done" || stage === "empty" ? stage
+  : stage === "failed" && (attempts ?? 0) >= MAX_ATTEMPTS ? "failed"
+  : "processing";
 
-export function lessonStatus(schedule: ScheduleLesson, doc?: Pick<LessonDoc, "stage">): LessonStatus {
-  if (doc) return stageStatus(doc.stage);
+export function lessonStatus(schedule: ScheduleLesson, doc?: StageOf): LessonStatus {
+  if (doc) return stageStatus(doc);
   return schedule.cancelled ? "cancelled" : "upcoming";
 }
 
@@ -277,7 +287,7 @@ export function lessonStatus(schedule: ScheduleLesson, doc?: Pick<LessonDoc, "st
 export function adhocLesson(doc: LessonDoc, reportBaseUrl: string): Lesson {
   const lesson: Lesson = {
     id: doc._id, date: shDate(doc.startAt), start: shTime(doc.startAt), end: shTime(doc.endAt), startAt: doc.startAt, endAt: doc.endAt,
-    title: doc.course || "随时录制", topic: "", status: stageStatus(doc.stage), copied: Boolean(doc.copied), kind: doc.kind === "meeting" ? "meeting" : "adhoc",
+    title: doc.course || "随时录制", topic: "", status: stageStatus(doc), copied: Boolean(doc.copied), kind: doc.kind === "meeting" ? "meeting" : "adhoc",
   };
   if (lesson.status === "done") {
     lesson.summary = doc.editedSummary || doc.summary || "";
@@ -290,7 +300,7 @@ export function adhocLesson(doc: LessonDoc, reportBaseUrl: string): Lesson {
 export function mergedLesson(doc: LessonDoc, reportBaseUrl: string): Lesson {
   const lesson: Lesson = {
     id: doc._id, date: shDate(doc.startAt), start: shTime(doc.startAt), end: shTime(doc.endAt), startAt: doc.startAt, endAt: doc.endAt,
-    title: `${doc.student} · 合并反馈`, topic: doc.course, status: stageStatus(doc.stage), copied: Boolean(doc.copied),
+    title: `${doc.student} · 合并反馈`, topic: doc.course, status: stageStatus(doc), copied: Boolean(doc.copied),
     kind: "merged", student: doc.student, sources: doc.sources ?? [],
   };
   if (lesson.status === "done") {
@@ -414,6 +424,10 @@ export type Step =
   | { action: "none" | "wait" | "poll" | "summarize" }
   | { action: "retry"; stage: Stage }
   | { action: "merge"; seqs: number[]; gapMinutes: number };
+
+/** 转写里实际说了多少字（去掉 [说话人 时间] 标签、标点和空白） */
+export const spokenChars = (transcript: string) => transcript.replace(/\[[^\]]*\]/g, "").replace(/[\s\p{P}]/gu, "").length;
+export const isEmptyRecording = (audioSec: number, transcript: string) => audioSec < EMPTY_MAX_SEC && spokenChars(transcript) < EMPTY_MAX_CHARS;
 
 /** 没发 finish 的 recording 行：App 是不是已经不会再传了（见 ORPHAN_QUIET_MS） */
 export function orphanEnded(doc: Pick<LessonDoc, "kind" | "endAt" | "updatedAt">, now: number): boolean {

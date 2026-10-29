@@ -241,13 +241,13 @@ async function listLessons(session: Session) {
     .sort((a, b) => a.startAt - b.startAt);
   const ids = lessons.map((lesson) => lesson.id);
   const docs = ids.length
-    ? await pg<LessonDoc>("GET", LESSONS, `_id=${inList(ids)}&teacherOpenId=${eq(session.openId)}&select=_id,stage,copied,summary,editedSummary,reportToken,report`)
+    ? await pg<LessonDoc>("GET", LESSONS, `_id=${inList(ids)}&teacherOpenId=${eq(session.openId)}&select=_id,stage,attempts,copied,summary,editedSummary,reportToken,report`)
     : [];
   const byId = new Map(docs.map((doc) => [doc._id, doc]));
   const adhoc = await pg<LessonDoc>("GET", LESSONS,
-    `teacherOpenId=${eq(session.openId)}&kind=in.(adhoc,meeting)&startAt=gte.${from}&startAt=lt.${to}&select=_id,course,kind,startAt,endAt,stage,copied,summary,editedSummary,reportToken`);
+    `teacherOpenId=${eq(session.openId)}&kind=in.(adhoc,meeting)&startAt=gte.${from}&startAt=lt.${to}&select=_id,course,kind,startAt,endAt,stage,attempts,copied,summary,editedSummary,reportToken`);
   const merged = await pg<LessonDoc>("GET", LESSONS,
-    `teacherOpenId=${eq(session.openId)}&kind=eq.merged&startAt=gte.${from}&startAt=lt.${to}&select=_id,student,course,kind,startAt,endAt,stage,copied,summary,editedSummary,reportToken,sources`);
+    `teacherOpenId=${eq(session.openId)}&kind=eq.merged&startAt=gte.${from}&startAt=lt.${to}&select=_id,student,course,kind,startAt,endAt,stage,attempts,copied,summary,editedSummary,reportToken,sources`);
   const base = requireEnv("REPORT_BASE_URL");
   return json(200, { lessons: [
     ...lessons.map((lesson) => L.toLesson(lesson, byId.get(lesson.id), base)),
@@ -553,7 +553,7 @@ function withMeeting(row: PromptRow): PromptRow {
 async function runStep(doc: LessonDoc, step: L.Step): Promise<Partial<LessonDoc> | null> {
   if (step.action === "retry") return { stage: step.stage };
   if (step.action === "merge") {
-    if (!step.seqs.length) throw new Error("没有收到任何录音分段");
+    if (!step.seqs.length) return { stage: "empty", audioSec: 0 }; // 一段都没收到：不算录制
     const parts: Buffer[] = [];
     for (let i = 0; i < step.seqs.length; i += 10) {
       parts.push(...(await Promise.all(step.seqs.slice(i, i + 10).map((seq) => download(doc.segments[String(seq)].fileId)))));
@@ -581,6 +581,8 @@ async function runStep(doc: LessonDoc, step: L.Step): Promise<Partial<LessonDoc>
     }
     if (data?.Status !== 2) return null;
     const transcript = L.formatTranscript(data.ResultDetail, data.Result ?? "");
+    // 录音很短又几乎没人说话：不算录制，不调模型、不发通知，App 里当作没录
+    if (L.isEmptyRecording(doc.audioSec ?? 0, transcript)) return { stage: "empty", transcript };
     return { stage: "summarizing", transcript: doc.kind === "meeting" ? transcript : await withRoles(transcript) };
   }
   if (step.action === "summarize" && doc.kind === "meeting") {
@@ -638,9 +640,12 @@ async function processLesson(id: string, deadline: number) {
     const attempts = (doc.attempts ?? 0) + 1;
     await updateLesson(id, { stage: "failed", failedStage: doc.stage as Stage, attempts, error: (error as Error).message?.slice(0, 500) ?? String(error) });
     if (attempts >= L.MAX_ATTEMPTS) {
+      const name = `${[doc.course, doc.student].filter(Boolean).join(" · ")}（${L.shMonthDay(doc.startAt)}）`;
+      // 老师只需要知道结果；技术原因发给管理员，在后台重试
       await notifyTeacher(doc, doc.kind === "merged"
-        ? `${doc.student}的合并反馈生成失败：${(error as Error).message}。可以在菁仕课堂里点「重新选课程」再试。`
-        : `${[doc.course, doc.student].filter(Boolean).join(" · ")}（${L.shMonthDay(doc.startAt)}）的录音处理失败：${(error as Error).message}。请联系教务。`);
+        ? `${doc.student}的合并反馈没能生成，可以在菁仕课堂里点「重新选课程」再试。`
+        : `${name}没能生成总结，录音还在，已经通知管理员处理。`);
+      if (doc.kind !== "merged") await notifyAdmins(`${doc.teacherName} 的 ${name}自动重试 ${attempts} 次仍失败：${(error as Error).message}\n课程编号 ${id}，可在后台重试。`);
     }
   } finally {
     await pg("PATCH", LESSONS, `_id=${eq(id)}`, { lockedUntil: 0 }, "return=minimal");
@@ -755,7 +760,7 @@ async function authenticateAdmin(event: HttpEvent): Promise<AdminSession | undef
   return { ...session, role };
 }
 
-const STAGE_FILTER: Record<string, string> = { done: "eq.done", recording: "eq.recording", failed: "eq.failed", processing: "in.(queued,transcribing,summarizing)" };
+const STAGE_FILTER: Record<string, string> = { done: "eq.done", recording: "eq.recording", failed: "eq.failed", empty: "eq.empty", processing: "in.(queued,transcribing,summarizing)" };
 
 async function adminLessons(query: Record<string, string>, admin: AdminSession) {
   const filters = ["select=_id,student,course,kind,teacherName,startAt,endAt,audioSec,stage,attempts,promptVersion,stats:archive->stats", "order=startAt.desc", "limit=50"];

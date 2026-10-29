@@ -431,3 +431,16 @@ test("合并反馈：几节的档案接成一条时间线（两节之间 5 分�
   assert.deepEqual([row.title, row.kind, row.sources, row.status, row.reportUrl], ["浩然 · 合并反馈", "merged", ["recA", "recB"], "done", "https://x/report.html?t=tok"]);
   assert.ok(L.isMergedId(row.id) && !L.isAdhocId(row.id));
 });
+
+test("不算录制：不到 5 分钟且说话不到 100 字；失败重试用完才显示「没能生成」", () => {
+  const tx = (text: string) => `[说话人1 00:01-00:04] ${text}`;
+  assert.equal(L.spokenChars(tx("呵呵。")), 2);
+  assert.equal(L.isEmptyRecording(272, tx("呵呵")), true);
+  assert.equal(L.isEmptyRecording(299, tx("好".repeat(99))), true);
+  assert.equal(L.isEmptyRecording(299, tx("好".repeat(100))), false); // 短但真在讲
+  assert.equal(L.isEmptyRecording(300, ""), false); // 5 分钟以上照常处理
+  const schedule = { id: "rec1", cancelled: false } as L.ScheduleLesson;
+  assert.equal(L.lessonStatus(schedule, { stage: "empty", attempts: 0 }), "empty");
+  assert.equal(L.lessonStatus(schedule, { stage: "failed", attempts: 2 }), "processing");
+  assert.equal(L.lessonStatus(schedule, { stage: "failed", attempts: L.MAX_ATTEMPTS }), "failed");
+});

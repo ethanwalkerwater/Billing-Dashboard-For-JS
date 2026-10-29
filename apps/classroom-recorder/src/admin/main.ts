@@ -6,7 +6,7 @@
  */
 import './styles.css';
 
-type Stage = 'recording' | 'queued' | 'transcribing' | 'summarizing' | 'done' | 'failed';
+type Stage = 'recording' | 'queued' | 'transcribing' | 'summarizing' | 'done' | 'failed' | 'empty';
 /** 课堂时间档案（logic.ts Archive）；时间是录音里的秒 */
 interface Stats { first: number; last: number; learn: number; brk: number; chat: number; share: number }
 interface Archive {
@@ -170,12 +170,13 @@ function route() {
 const list = { rows: [] as Row[], q: '', stage: '', kind: '', teacher: '', student: '', people: null as { teacherName: string; student: string }[] | null, more: false, seq: 0 };
 type FilterKey = 'stage' | 'kind' | 'teacher' | 'student';
 const FILTER_KEYS: FilterKey[] = ['teacher', 'student', 'kind', 'stage'];
-const STAGES = [['done', '已完成'], ['processing', '转写中'], ['recording', '录制中'], ['failed', '失败']];
+const STAGES = [['done', '已完成'], ['processing', '转写中'], ['recording', '录制中'], ['failed', '失败'], ['empty', '未计入']];
 const KINDS = [['lesson', '课程'], ['meeting', '会议'], ['merged', '合并反馈']];
 
 function status(row: Row): [string, string] {
   if (row.stage === 'done') return ['已完成', 'b-ok'];
   if (row.stage === 'recording') return ['录制中', 'b-warn'];
+  if (row.stage === 'empty') return ['未计入', 'b-plain'];
   if (row.stage === 'failed') return row.attempts >= 3 ? ['失败', 'b-bad'] : ['重试中', 'b-warn'];
   return [row.stage === 'summarizing' ? '生成中' : '转写中', 'b-info'];
 }
@@ -282,6 +283,7 @@ async function showLesson(id: string) {
     d.stage === 'failed' ? `<div class="card panel" style="margin-bottom:16px"><div class="row" style="justify-content:space-between">
         <span class="err">${esc(d.error || '处理失败')}</span><button class="btn sm" id="retry">重新处理</button></div></div>`
     : d.stage === 'recording' ? '<div class="card empty">正在上课录制，下课后自动转写</div>'
+    : d.stage === 'empty' ? '<div class="card empty">录音不到 5 分钟、几乎没人说话，不算录制，没有生成总结</div>'
     : !done && d.kind === 'merged' ? '<div class="card empty">正在生成合并反馈，通常 15 秒左右</div>'
     : !done && !d.transcript ? '<div class="card empty">正在转写，通常下课后几分钟内完成</div>'
     : '';

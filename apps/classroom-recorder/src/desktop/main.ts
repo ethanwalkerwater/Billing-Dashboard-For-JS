@@ -38,9 +38,9 @@ const showErr = (text: string) => {
 const last = { shell: '', list: '', detail: '', sheet: '', ask: '' };
 
 const $ = <T extends HTMLElement>(s: string) => app.querySelector<T>(s);
-/** 课表 + 正在生成的合并反馈 */
+/** 课表 + 正在生成的合并反馈；不算录制的随时录制直接不显示 */
 function lessons(): Lesson[] {
-  const all = S?.lessons ?? [];
+  const all = (S?.lessons ?? []).filter(l => !(l.kind && l.status === 'empty'));
   if (!merging) return all;
   const m = merging;
   const src = m.ids.map(id => all.find(l => l.id === id)).filter((l): l is Lesson => Boolean(l)).sort((a, b) => a.startAt - b.startAt);
@@ -117,7 +117,7 @@ function render() {
 }
 
 /** 下课 10 分钟后还没录的课：Rust 不会再自动 / 手动开录，界面不能再显示「待开始」 */
-const missed = (l: Lesson) => l.status === 'upcoming' && Date.now() > l.endAt + 10 * 60_000;
+const missed = (l: Lesson) => l.status === 'empty' || (l.status === 'upcoming' && Date.now() > l.endAt + 10 * 60_000);
 const EARLY = 30 * 60_000; // 与 engine.rs MANUAL_EARLY 一致
 /** 会议纪要不发家长，不算「总结未发送」 */
 const unsent = (l: Lesson) => l.status === 'done' && !l.copied && !isMeeting(l);
@@ -146,6 +146,7 @@ function renderList(rows: ReturnType<typeof ordered>) {
       : l.status === 'recording' ? `<span class="side rec num"${l.id === s.rec.lessonId ? ' data-sec' : ''}>${l.id === s.rec.lessonId ? '' : '录制中'}</span>`
       : l.needsName ? '<span class="side">待填主题</span>'
       : l.status === 'processing' ? '<span class="side">整理中</span>'
+      : l.status === 'failed' ? '<span class="side bad">没能生成</span>'
       : missed(l) ? '<span class="side">未录制</span>'
       : l.status === 'upcoming' ? '<span class="side">待开始</span>'
       : l.status === 'cancelled' ? '<span class="side">临时取消</span>'
@@ -184,7 +185,7 @@ function renderDetail(l: Lesson | undefined) {
         <button class="primary" type="submit">完成</button></form></div>
       <p class="empty">录音已在后台上传。选「课程」出家长总结和学情报告，选「会议」出会议纪要。</p>`;
   } else if (missed(l)) {
-    body = '<div class="hero"><div class="sub lead">这节课没有录音</div><div class="sub">下课已超过 10 分钟，不会再自动录制</div></div>';
+    body = `<div class="hero"><div class="sub lead">这节课没有录音</div><div class="sub">${l.status === 'empty' ? '只录到几分钟、没有讲课声音，不算录制' : '下课已超过 10 分钟，不会再自动录制'}</div></div>`;
   } else if (l.status === 'upcoming') {
     body = `<div class="hero"><div class="big num">${esc(l.start)}</div><div class="sub">开课前 3 分钟自动开始录制，你什么都不用做</div>
       <div class="acts">${Date.now() < l.startAt - EARLY
@@ -205,7 +206,9 @@ function renderDetail(l: Lesson | undefined) {
       <p class="empty">可以关掉这个窗口，录音会继续；屏幕顶部的胶囊会一直陪着你。</p>`;
   } else if (l.kind === 'merged' && l.status !== 'done') {
     body = `<div class="hero"><div class="sub lead"><span class="spin dark" style="display:inline-block;vertical-align:-2px;margin-right:8px"></span>正在把 ${l.sources?.length ?? 0} 节课合并成一份反馈…</div>
-      <div class="sub">${busy ? '大约 15 秒；不用重新转写，直接用各节已经整理好的课堂记录' : '生成没成功，云端会在 30 分钟内自动重试；也可以点「重新选课程」再试一次'}</div>${busy ? '' : '<div class="acts"><button class="ghost" data-act="merge-again">重新选课程</button></div>'}</div>`;
+      <div class="sub">${busy ? '大约 15 秒；不用重新转写，直接用各节已经整理好的课堂记录' : l.status === 'failed' ? '生成没成功，可以点「重新选课程」再试一次' : '生成没成功，云端会在 30 分钟内自动重试；也可以点「重新选课程」再试一次'}</div>${busy ? '' : '<div class="acts"><button class="ghost" data-act="merge-again">重新选课程</button></div>'}</div>`;
+  } else if (l.status === 'failed' && l.kind !== 'merged') {
+    body = '<div class="hero"><div class="sub lead">没能生成总结</div><div class="sub">已经自动重试 3 次。录音还在，已通知管理员处理，好了会发到你的飞书</div></div>';
   } else if (l.status === 'processing') {
     body = '<div class="hero"><div class="sub lead">正在整理这节课…</div><div class="sub">录音已全部上传，总结一般 10 分钟内好，好了会发到你的飞书；回到这里点右上角刷新也能看到</div></div>';
   } else if (l.status === 'cancelled') {
@@ -279,7 +282,7 @@ function renderAsk() {
 function deleteAsk(l: Lesson) {
   const extra = l.kind === 'merged' ? '只删除这份合并反馈，单节课的总结和报告都保留。'
     : l.status === 'recording' ? '正在录的音会立即停止并丢弃，不会生成总结。'
-    : l.status === 'processing' ? '录音和正在生成的总结都会放弃。' : '';
+    : l.status === 'processing' || l.status === 'failed' ? '录音和正在生成的总结都会放弃。' : '';
   return `<div class="panel ask" role="alertdialog" aria-label="删除确认">
     <h3>删除「${esc(l.title)}」？</h3>
     <p>${l.kind === 'merged' ? '' : '只从菁仕课堂里删除，不会改课表。'}${extra}删除后不能恢复。</p>
