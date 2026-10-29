@@ -3,7 +3,8 @@ import { listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 
 // 与 docs/design.md「Rust ↔ Web 约定」一致。
-export type LessonStatus = 'upcoming' | 'recording' | 'processing' | 'done' | 'cancelled';
+/** failed = 云端重试用完了还没出总结；empty = 录音太短又没人说话，不算录制（当作没录） */
+export type LessonStatus = 'upcoming' | 'recording' | 'processing' | 'done' | 'cancelled' | 'failed' | 'empty';
 export interface Lesson {
   id: string; date: string; start: string; end: string; startAt: number; endAt: number;
   title: string; topic: string; status: LessonStatus; copied: boolean; summary?: string; reportUrl?: string;

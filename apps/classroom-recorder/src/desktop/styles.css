@@ -156,6 +156,9 @@ body.toast-page{padding:12px 20px 48px}
 .st.done{background:var(--ok);position:relative}
 .st.done::after{content:"";position:absolute;left:4px;top:2px;width:4px;height:7px;border:solid #fff;border-width:0 2px 2px 0;transform:rotate(45deg)}
 .st.cancelled{border:2px dashed var(--line)}
+.st.empty{border:2px solid var(--faint)}
+.st.failed{border:2px solid var(--warn)}
+.row .side.bad{color:var(--warn)}
 
 .detail{overflow:auto;padding:26px 32px 40px}
 .detail h2{margin:0;font-size:22px;letter-spacing:-.2px}

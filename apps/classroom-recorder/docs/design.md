@@ -70,7 +70,7 @@ UI / UX 唯一依据：`docs/MVP.html`（老师端，含「随时录制」三步
 录音（分段 + merged.mp3）保留 30 天，转写入库后先删分段；过期后删 merged.mp3、记 `audioDeletedAt`，转写和总结一直保留。
 
 ```ts
-type LessonStatus = "upcoming" | "recording" | "processing" | "done" | "cancelled";
+type LessonStatus = "upcoming" | "recording" | "processing" | "done" | "cancelled" | "failed" | "empty"; // failed、empty 从 0.1.10 起
 interface Lesson {
   id: string;          // 飞书课表 record_id
   date: string;        // "2026-10-15"（上海时区）
@@ -89,7 +89,7 @@ interface Lesson {
 }
 ```
 
-云端处理状态（`classroom_lessons.stage`）：`recording → queued → transcribing → summarizing → done | failed`，对外统一映射为 `processing / done`。
+云端处理状态（`classroom_lessons.stage`）：`recording → queued → transcribing → summarizing → done | failed | empty`，对外映射为 `processing / done`；重试 3 次用完的 failed 对外是 `failed`（App 显示「没能生成」）。录音不到 5 分钟且转写里说的话不到 100 字的记 `empty`（不算录制）：转写后直接停，不调模型、不发通知，App 里课表的课显示「未录制」、随时录制不显示，后台标「未计入」。
 下课 2 小时后仍缺段：用已有分段出报告，并在报告中注明「录音缺失约 X 分钟」。
 
 ## Rust ↔ Web 约定（Tauri）
