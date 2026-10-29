@@ -44,7 +44,7 @@ classroom-api（CloudBase HTTP 云函数，/classroom-api）
 
 Storage 桶 `classroom`（私有）：分段 `{lessonId}/{seq}.mp3`（转写入库后删除）与合并后的 `{lessonId}/merged.mp3`（保留 30 天后删除，转写和总结一直保留），后台测试上传的音频在 `preview/{随机 ID}/audio`（分块拼好即删，拼好的音频不自动清理），腾讯云识别用 6 小时签名链接（`fullSignedURL`）下载。
 
-处理失败会记 `stage = failed`、`failedStage`、`error`，下一分钟从失败的那一步重试，累计 3 次后停止并私信老师。下课 2 小时后仍缺分段，就用已有分段出报告，报告页注明「录音缺失约 X 分钟」。档案上线时重出存量报告用 `scripts/rebuild-archive.ts`（先试跑出对比页，确认后把同一份结果写库；家长总结不动）。某节课要重跑：把 `stage` 改回 `queued`（或 `summarizing`）、`attempts` 改为 0，再 `tcb fn invoke classroom-api --params '{"action":"tick","lessonId":"rec…"}'`。
+处理失败会记 `stage = failed`、`failedStage`、`error`，下一分钟从失败的那一步重试，累计 3 次后停止并私信老师。下课 2 小时后仍缺分段，就用已有分段出报告，报告页注明「录音缺失约 X 分钟」。App 没发 finish 就不传了（合盖睡着、关机、退出）：课表里的课过了下课时间且 15 分钟没收到分段、随时录制 30 分钟没收到分段，云端就按已结束出报告。档案上线时重出存量报告用 `scripts/rebuild-archive.ts`（先试跑出对比页，确认后把同一份结果写库；家长总结不动）。某节课要重跑：把 `stage` 改回 `queued`（或 `summarizing`）、`attempts` 改为 0，再 `tcb fn invoke classroom-api --params '{"action":"tick","lessonId":"rec…"}'`。
 
 ## 需要在后台配置的内容
 

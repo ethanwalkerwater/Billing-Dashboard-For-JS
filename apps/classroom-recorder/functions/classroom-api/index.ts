@@ -698,9 +698,9 @@ async function runPipeline(lessonId?: string) {
   if (lessonId) return processLesson(lessonId, deadline);
   await expireAudio().catch((error) => console.error("清理过期录音失败", error));
   const rows = await pg<{ _id: string }>("GET", LESSONS,
-    // 还在上课 / 补传宽限期内的 recording 行什么都不用做，不查出来，免得同时上课的人多了把要处理的课挤出前 50
+    // 还在录、还在传的 recording 行什么都不用做，不查出来，免得同时上课的人多了把要处理的课挤出前 50（精确条件见 L.orphanEnded）
     `stage=in.(recording,queued,transcribing,summarizing,failed)&attempts=lt.${L.MAX_ATTEMPTS}&lockedUntil=lt.${Date.now()}` +
-      `&or=(stage.neq.recording,endAt.lt.${Date.now() - L.MISSING_GRACE_MS})&select=_id&order=updatedAt.asc&limit=50`);
+      `&or=(stage.neq.recording,updatedAt.lt.${Date.now() - L.ORPHAN_QUIET_MS})&select=_id&order=updatedAt.asc&limit=50`);
   for (const { _id } of rows) {
     if (Date.now() > deadline) break;
     await processLesson(_id, deadline);

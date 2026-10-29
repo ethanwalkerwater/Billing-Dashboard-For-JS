@@ -225,7 +225,7 @@ test("学生提问：只收像问题的（6 字以上、带问号或疑问词）
   assert.deepEqual(L.parseSummary(JSON.stringify(validJson())).report.questions, []);
 });
 
-test("流水线推进：齐了就合并；缺段等到下课 2 小时后带缺失时长继续；失败最多重试 3 次", () => {
+test("流水线推进：齐了就合并；缺段等到下课 2 小时后带缺失时长继续；App 不传了云端收尾；失败最多重试 3 次", () => {
   const seg = (seq: number) => ({ seq, sha256: `h${seq}`, bytes: 100 });
   const stored = { "0": { sha256: "h0", bytes: 100, fileId: "f0" }, "2": { sha256: "h2", bytes: 100, fileId: "f2" } };
   const endedAt = Date.UTC(2026, 9, 15, 7, 0);
@@ -242,14 +242,19 @@ test("流水线推进：齐了就合并；缺段等到下课 2 小时后带缺�
   assert.deepEqual(L.nextStep({ ...queued, stage: "transcribing" }, 0), { action: "poll" });
   assert.deepEqual(L.nextStep({ ...queued, stage: "summarizing" }, 0), { action: "summarize" });
   assert.deepEqual(L.nextStep({ ...queued, stage: "recording" }, 0), { action: "none" });
-  // App 没发 finish：课表下课 2 小时后用已收到的分段出报告
-  const orphan = { ...queued, stage: "recording" as const, finish: undefined };
-  assert.deepEqual(L.nextStep(orphan, endedAt + L.MISSING_GRACE_MS - 1), { action: "none" });
-  assert.deepEqual(L.nextStep(orphan, endedAt + L.MISSING_GRACE_MS), { action: "merge", seqs: [0, 2], gapMinutes: 0 });
-  // 断网很久的 App 正在补传（最近有分段到达）：先不抢着出报告
-  const uploading = { ...orphan, updatedAt: endedAt + L.MISSING_GRACE_MS + 60_000 };
-  assert.deepEqual(L.nextStep(uploading, endedAt + L.MISSING_GRACE_MS + 120_000), { action: "none" });
-  assert.deepEqual(L.nextStep(uploading, uploading.updatedAt + L.ORPHAN_QUIET_MS), { action: "merge", seqs: [0, 2], gapMinutes: 0 });
+  // App 没发 finish（合盖睡着、关机、退出）：课表里的课下课后、分段停传 15 分钟，用已收到的分段出报告
+  const orphan = { ...queued, stage: "recording" as const, kind: "lesson" as const, finish: undefined, updatedAt: endedAt - 60_000 };
+  assert.deepEqual(L.nextStep(orphan, endedAt - 1), { action: "none" }); // 下课前不判断：上课中途断网，App 会补传
+  assert.deepEqual(L.nextStep(orphan, orphan.updatedAt + L.ORPHAN_QUIET_MS - 1), { action: "none" });
+  assert.deepEqual(L.nextStep(orphan, orphan.updatedAt + L.ORPHAN_QUIET_MS), { action: "merge", seqs: [0, 2], gapMinutes: 0 });
+  // 拖堂还在传：最近有分段到达就不抢
+  const dragging = { ...orphan, updatedAt: endedAt + 20 * 60_000 };
+  assert.deepEqual(L.nextStep(dragging, endedAt + 30 * 60_000), { action: "none" });
+  assert.deepEqual(L.nextStep(dragging, dragging.updatedAt + L.ORPHAN_QUIET_MS), { action: "merge", seqs: [0, 2], gapMinutes: 0 });
+  // 随时录制没有计划下课时间：30 分钟没分段就算结束（建档时的占位下课时间不管）
+  const adhoc = { ...orphan, kind: "adhoc" as const, endAt: endedAt + 3 * L.HOUR };
+  assert.deepEqual(L.nextStep(adhoc, adhoc.updatedAt + L.ADHOC_QUIET_MS - 1), { action: "none" });
+  assert.deepEqual(L.nextStep(adhoc, adhoc.updatedAt + L.ADHOC_QUIET_MS), { action: "merge", seqs: [0, 2], gapMinutes: 0 });
   assert.deepEqual(L.nextStep({ ...queued, stage: "done" }, 0), { action: "none" });
   assert.deepEqual(L.nextStep({ ...queued, stage: "failed", failedStage: "summarizing", attempts: 2 }, 0), { action: "retry", stage: "summarizing" });
   assert.deepEqual(L.nextStep({ ...queued, stage: "failed", failedStage: "summarizing", attempts: 3 }, 0), { action: "none" });

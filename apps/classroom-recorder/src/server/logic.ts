@@ -11,8 +11,14 @@ export const AUDIO_BYTES_PER_SEC = 4000;
 export const MAX_ATTEMPTS = 3;
 /** 下课（finish 里的 endedAt）2 小时后仍缺段，就用已有分段出报告 */
 export const MISSING_GRACE_MS = 2 * HOUR;
-/** 没发 finish 的课：分段停止上传这么久才算 App 不会再回来（断网很久的 App 正在补传时不能抢先出报告） */
-export const ORPHAN_QUIET_MS = 30 * 60_000;
+/**
+ * 没发 finish 的课（合盖睡着、关机、退出 App）：云端按分段停传判断已经下课。
+ * 课表里的课：过了下课时间、且 15 分钟没收到分段；上课中途断网时 App 会先存本机再补传，下课前不判断。
+ * 随时录制：没有计划下课时间，30 分钟没收到分段就算结束。
+ * ponytail: 下课后断网超过这个时长的，App 之后补传的那段不会再进报告；真碰上了再按 finish 重出
+ */
+export const ORPHAN_QUIET_MS = 15 * 60_000;
+export const ADHOC_QUIET_MS = 30 * 60_000;
 export const CHUNK_CHARS = 12_000;
 /** 课堂时间档案一次交给模型的上限；线上最长的课约 6 万字，超过才切开 */
 export const ARCHIVE_CHARS = 120_000;
@@ -409,15 +415,22 @@ export type Step =
   | { action: "retry"; stage: Stage }
   | { action: "merge"; seqs: number[]; gapMinutes: number };
 
-export function nextStep(doc: Pick<LessonDoc, "stage" | "failedStage" | "attempts" | "finish" | "segments" | "endAt" | "updatedAt">, now: number): Step {
+/** 没发 finish 的 recording 行：App 是不是已经不会再传了（见 ORPHAN_QUIET_MS） */
+export function orphanEnded(doc: Pick<LessonDoc, "kind" | "endAt" | "updatedAt">, now: number): boolean {
+  // 随时录制建档时 kind = adhoc，finish 才可能改成 meeting
+  if (doc.kind === "adhoc" || doc.kind === "meeting") return now >= doc.updatedAt + ADHOC_QUIET_MS;
+  return now >= doc.endAt && now >= doc.updatedAt + ORPHAN_QUIET_MS;
+}
+
+export function nextStep(doc: Pick<LessonDoc, "stage" | "failedStage" | "attempts" | "finish" | "segments" | "kind" | "endAt" | "updatedAt">, now: number): Step {
   if (doc.stage === "failed") {
     return doc.attempts < MAX_ATTEMPTS && doc.failedStage ? { action: "retry", stage: doc.failedStage } : { action: "none" };
   }
   if (doc.stage === "transcribing") return { action: "poll" };
   if (doc.stage === "summarizing") return { action: "summarize" };
-  // App 再没回来（没发 finish）：课表下课 2 小时后、且分段停传 30 分钟，用已收到的分段先出报告；一段都没有则合并时报错走失败重试
+  // App 没发 finish 就不传了（合盖睡着、关机、退出）：用已收到的分段先出报告；一段都没有则合并时报错走失败重试
   // ponytail: 没有清单就算不出缺失时长，gapMinutes 记 0；App 之后补发 finish 不会重出报告
-  if (doc.stage === "recording" && !doc.finish && now >= doc.endAt + MISSING_GRACE_MS && now >= doc.updatedAt + ORPHAN_QUIET_MS) {
+  if (doc.stage === "recording" && !doc.finish && orphanEnded(doc, now)) {
     return { action: "merge", seqs: Object.keys(doc.segments).map(Number).sort((a, b) => a - b), gapMinutes: 0 };
   }
   if (doc.stage !== "queued" || !doc.finish) return { action: "none" };
