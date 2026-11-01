@@ -356,20 +356,20 @@ async function discardLesson(session: Session, id: string) {
 }
 
 /**
- * 老师选几节课合并一份反馈：同一个学生、最近 7 天、已出报告的课表课。编号由 App 生成；同一个编号再提交 = 「重新选课程」，覆盖重出。
+ * 老师选几节课合并一份反馈：最近 7 天、已出报告的课表课和随时录制（课程）；课表课只能是同一个学生，随时录制不限。编号由 App 生成；同一个编号再提交 = 「重新选课程」，覆盖重出。
  * 生成约 15 秒，在这次请求里直接做完；失败的交给定时器重试。单节课的行一个字都不改。
  */
 async function saveMerge(event: HttpEvent, session: Session, id: string) {
   const raw = jsonBody(event).lessonIds;
   const ids = [...new Set(Array.isArray(raw) ? raw.map(String) : [])];
-  if (ids.length < 2 || ids.length > L.MERGE_MAX || !ids.every((x) => /^rec[A-Za-z0-9]+$/.test(x))) return fail(400, "BAD_BODY", `请选 2–${L.MERGE_MAX} 节课`);
+  if (ids.length < 2 || ids.length > L.MERGE_MAX || !ids.every((x) => /^rec[A-Za-z0-9]+$/.test(x) || L.isAdhocId(x))) return fail(400, "BAD_BODY", `请选 2–${L.MERGE_MAX} 节课`);
   const rows = await pg<LessonDoc>("GET", LESSONS, `_id=${inList(ids)}&teacherOpenId=${eq(session.openId)}&select=_id,student,course,kind,stage,startAt,endAt`);
   const { from } = L.lessonWindow(Date.now());
-  if (rows.length !== ids.length || rows.some((r) => r.stage !== "done" || (r.kind ?? "lesson") !== "lesson" || r.startAt < from)) {
+  if (rows.length !== ids.length || rows.some((r) => r.stage !== "done" || !["lesson", "adhoc"].includes(r.kind ?? "lesson") || r.startAt < from)) {
     return fail(400, "NOT_MERGEABLE", "只能合并最近 7 天已出报告的课，请刷新后重选");
   }
-  const student = rows[0].student;
-  if (!student || rows.some((r) => r.student !== student)) return fail(400, "NOT_MERGEABLE", "只能合并同一个学生的课");
+  const student = L.mergeStudent(rows);
+  if (student === null) return fail(400, "NOT_MERGEABLE", "课表里的课只能合并同一个学生的（随时录制的不限）");
   const existing = await getRow<LessonDoc>(LESSONS, id);
   if (existing && (existing.teacherOpenId !== session.openId || existing.kind !== "merged")) return fail(409, "CONFLICT", "编号冲突，请再试一次");
   if (existing && existing.lockedUntil > Date.now()) return fail(409, "BUSY", "这份合并反馈正在生成，请稍等");
@@ -508,6 +508,7 @@ async function mergedReport(doc: LessonDoc, prompts: L.Prompts) {
   const parts = archive.parts!;
   const meta: L.PromptMeta = {
     ...metaOf(last),
+    student: doc.student, // 最后一节可能是随时录制（没有学生名），用合并时定下的学生
     monthDay: L.shMonthDay(parts.at(-1)!.clock0 + parts.at(-1)!.start * 1000),
     merged: { labels: L.partLabels(parts, true, true), days: [...new Set(parts.map((p) => L.shMonthDay(p.clock0 + p.start * 1000)))] },
   };
