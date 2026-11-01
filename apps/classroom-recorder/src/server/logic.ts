@@ -40,6 +40,11 @@ export const isAdhocId = (id: string) => /^adhoc-[0-9a-f]{16}$/.test(id);
 export const isMergedId = (id: string) => /^merged-[0-9a-f]{16}$/.test(id);
 /** 合并反馈最多选几节 */
 export const MERGE_MAX = 8;
+/** 合并反馈的学生：课表里的课只能是同一个学生；随时录制没有学生名，跟谁都能合。全是随时录制时为空，课表课不止一个学生时为 null */
+export function mergeStudent(rows: Array<{ kind?: LessonKind; student?: string }>): string | null {
+  const names = new Set(rows.filter((r) => (r.kind ?? "lesson") === "lesson").map((r) => r.student ?? ""));
+  return names.size > 1 ? null : ([...names][0] ?? "");
+}
 /** 随时录制最长 3 小时（App 到点自动停）；建档时先按这个占位下课时间，finish 时改成真实时间 */
 export const ADHOC_MAX_MS = 3 * HOUR;
 /** 录音（分段 + merged.mp3）保留 30 天，转写和总结一直保留 */
@@ -300,7 +305,7 @@ export function adhocLesson(doc: LessonDoc, reportBaseUrl: string): Lesson {
 export function mergedLesson(doc: LessonDoc, reportBaseUrl: string): Lesson {
   const lesson: Lesson = {
     id: doc._id, date: shDate(doc.startAt), start: shTime(doc.startAt), end: shTime(doc.endAt), startAt: doc.startAt, endAt: doc.endAt,
-    title: `${doc.student} · 合并反馈`, topic: doc.course, status: stageStatus(doc), copied: Boolean(doc.copied),
+    title: `${doc.student || doc.course || "随时录制"} · 合并反馈`, topic: doc.course, status: stageStatus(doc), copied: Boolean(doc.copied),
     kind: "merged", student: doc.student, sources: doc.sources ?? [],
   };
   if (lesson.status === "done") {

@@ -46,10 +46,11 @@ function lessons(): Lesson[] {
   const src = m.ids.map(id => all.find(l => l.id === id)).filter((l): l is Lesson => Boolean(l)).sort((a, b) => a.startAt - b.startAt);
   const last = src.at(-1);
   if (!last) return all;
+  const student = src.find(l => !l.kind)?.student ?? '';
   const fake: Lesson = {
     ...all.find(l => l.id === m.id),
     id: m.id, date: last.date, start: last.start, end: last.end, startAt: last.startAt, endAt: last.endAt,
-    title: `${last.student} · 合并反馈`, topic: last.title.split(' · ')[0], status: 'processing', copied: false, kind: 'merged', student: last.student, sources: m.ids,
+    title: `${student || last.title.split(' · ')[0]} · 合并反馈`, topic: last.title.split(' · ')[0], status: 'processing', copied: false, kind: 'merged', student, sources: m.ids,
   };
   return [...all.filter(l => l.id !== m.id), fake];
 }
@@ -125,10 +126,11 @@ const tag = (l: Lesson) => (l.kind === 'merged' ? `<span class="badge2">${l.sour
   : l.kind && !l.title.startsWith('随时录制') ? `<span class="tag">${isMeeting(l) ? '会议' : '随时录制'}</span>` : '');
 /** 合并反馈里的几节（列表里还在的），按上课时间 */
 const sourcesOf = (l: Lesson) => (l.sources ?? []).map(id => S!.lessons.find(x => x.id === id)).filter((x): x is Lesson => Boolean(x)).sort((a, b) => a.startAt - b.startAt);
-/** 能合并的课：同一个学生、课表里的、最近 7 天 */
-const sameStudent = (student: string) => {
+/** 能合并的课（最近 7 天）：已出报告的随时录制（课程），加上课表里的课——指定学生时列这个学生的全部，不指定时只列已出报告的 */
+const mergeable = (student: string) => {
   const from = addDays(shanghaiToday(), -7);
-  return S!.lessons.filter(x => !x.kind && x.student === student && x.date >= from && x.status !== 'cancelled');
+  return S!.lessons.filter(x => x.date >= from && (x.kind === 'adhoc' ? x.status === 'done'
+    : !x.kind && x.status !== 'cancelled' && (student ? x.student === student : x.status === 'done')));
 };
 const hhmm = (ms: number) => new Date(ms).toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit', hour12: false });
 
@@ -168,13 +170,14 @@ function renderDetail(l: Lesson | undefined) {
     const parts = sourcesOf(l);
     head = `<div class="dhead"><div><h2>${esc(l.title)}${tag(l)}</h2><div class="meta num">${esc(l.topic)}</div></div>${busy || l.status !== 'done' ? '' : '<button class="ghost sm" data-act="merge-again">重新选课程</button>'}</div>
       <div class="parts"><span class="lab">包含：</span>${parts.map(x => `<button data-goto="${esc(x.id)}">${dateLabel(x.date)} ${esc(x.start)}–${esc(x.end)} ↗</button>`).join('')}</div>`;
-  } else if (!l.kind && l.status === 'done' && l.student) {
-    // 同一个学生最近 7 天还有别的已出报告的课：可以选几节合并一份反馈
-    const others = sameStudent(l.student).filter(x => x.id !== l.id && x.status === 'done');
-    const today = others.filter(x => x.date === l.date).length;
+  } else if (l.status === 'done' && (l.kind === 'adhoc' || (!l.kind && l.student))) {
+    // 最近 7 天还有别的已出报告的课（同一个学生的课表课，或随时录制的课）：可以选几节合并一份反馈
+    const others = mergeable(l.kind ? '' : l.student ?? '').filter(x => x.id !== l.id && x.status === 'done');
+    const same = others.filter(x => !x.kind && !l.kind);
+    const today = same.filter(x => x.date === l.date).length;
     if (others.length) {
       head = `<div class="dhead"><div>${head}</div><button class="ghost sm" data-act="merge">合并反馈</button></div>
-        <p class="hintline">${today ? `${l.date === shanghaiToday() ? '今天' : '这天'}和${esc(l.student)}还上了 ${today} 节课，最近 7 天共 ${others.length + 1} 节` : `最近 7 天和${esc(l.student)}还上了 ${others.length} 节课`}，可以选几节合并一份反馈。</p>`;
+        <p class="hintline">${!same.length ? `最近 7 天还有 ${others.length} 节已出报告的课` : today ? `${l.date === shanghaiToday() ? '今天' : '这天'}和${esc(l.student)}还上了 ${today} 节课，最近 7 天共 ${same.length + 1} 节` : `最近 7 天和${esc(l.student)}还上了 ${same.length} 节课`}，可以选几节合并一份反馈。</p>`;
     }
   }
   let body = '';
@@ -298,15 +301,18 @@ function endPanel() {
     <div class="hint">按住按钮 1 秒才会结束，误点、连点都不会结束；按 Esc 或点外面取消。</div></div>`;
 }
 
-/** 选课：同一个学生最近 7 天的课，已出报告的才能勾；当前这节和同一天的默认勾上 */
+/** 选课：最近 7 天能合并的课，已出报告的才能勾；当前这节和同一天的默认勾上。课表课只能是同一个学生，随时录制不限 */
 function pickPanel(p: NonNullable<typeof pick>) {
   const rank = (x: Lesson) => (x.status !== 'done' ? 2 : x.id === p.current ? 0 : 1);
-  const rows = sameStudent(p.student).sort((a, b) => rank(a) - rank(b) || b.startAt - a.startAt);
+  const rows = mergeable(p.student).sort((a, b) => rank(a) - rank(b) || b.startAt - a.startAt);
+  const who = p.student || rows.find(x => !x.kind && p.picked.has(x.id))?.student;
+  const can = (x: Lesson) => x.status === 'done' && (Boolean(x.kind) || !who || x.student === who);
+  const name = (x: Lesson) => (x.kind ? x.title : p.student ? '' : x.student ?? '');
   const note = (x: Lesson) => (x.id === p.current ? '这节' : x.status === 'done' ? '' : x.status === 'processing' ? '整理中' : x.status === 'recording' ? '录制中' : missed(x) ? '没有录音' : '还没上');
   const n = rows.filter(x => p.picked.has(x.id)).length;
   return `<div class="panel ask pick" role="dialog" aria-label="合并反馈"><h3>合并反馈</h3>
     <div class="keep"><b>每节课自己的反馈都会保留。</b>合并后另外多出一份，不会替换或改动单节的总结和报告。</div>
-    <div class="picks">${rows.map(x => `<label class="${x.status === 'done' ? '' : 'off'}"><input type="checkbox" data-pick="${esc(x.id)}"${p.picked.has(x.id) ? ' checked' : ''}${x.status === 'done' ? '' : ' disabled'}><span class="num">${dateLabel(x.date)} ${esc(x.start)}–${esc(x.end)}</span><span class="pn">${note(x)}</span></label>`).join('')}</div>
+    <div class="picks">${rows.map(x => `<label class="${can(x) ? '' : 'off'}"><input type="checkbox" data-pick="${esc(x.id)}"${p.picked.has(x.id) ? ' checked' : ''}${can(x) ? '' : ' disabled'}><span class="num">${dateLabel(x.date)} ${esc(x.start)}–${esc(x.end)}</span>${name(x) ? `<span class="who">${esc(name(x))}</span>` : ''}<span class="pn">${note(x)}</span></label>`).join('')}</div>
     <div class="foot"><button class="ghost sm" data-act="merge-cancel">取消</button><button class="primary sm" data-act="merge-ok"${n < 2 || n > 8 ? ' disabled' : ''}>合并 ${n} 节</button></div></div>`;
 }
 
@@ -314,8 +320,9 @@ function openPick(l: Lesson) {
   if (l.kind === 'merged') {
     pick = { mergeId: l.id, student: l.student ?? '', current: null, picked: new Set(l.sources) };
   } else {
-    const picked = sameStudent(l.student ?? '').filter(x => x.status === 'done' && (x.id === l.id || x.date === l.date));
-    pick = { mergeId: null, student: l.student ?? '', current: l.id, picked: new Set(picked.map(x => x.id)) };
+    const student = l.kind ? '' : l.student ?? '';
+    const picked = mergeable(student).filter(x => x.id === l.id || (x.status === 'done' && x.date === l.date && Boolean(x.kind) === Boolean(l.kind)));
+    pick = { mergeId: null, student, current: l.id, picked: new Set(picked.map(x => x.id)) };
   }
   render();
 }

@@ -430,6 +430,13 @@ test("合并反馈：几节的档案接成一条时间线（两节之间 5 分�
   const row = L.mergedLesson({ _id: "merged-0123456789abcdef", student: "浩然", course: "IG数学", startAt: START, endAt: START + HOUR_MS, stage: "done", sources: ["recA", "recB"], summary: "总结", reportToken: "tok" } as unknown as LessonDoc, "https://x/report.html");
   assert.deepEqual([row.title, row.kind, row.sources, row.status, row.reportUrl], ["浩然 · 合并反馈", "merged", ["recA", "recB"], "done", "https://x/report.html?t=tok"]);
   assert.ok(L.isMergedId(row.id) && !L.isAdhocId(row.id));
+
+  // 随时录制没有学生名，跟谁都能合；课表课只能是同一个学生
+  assert.equal(L.mergeStudent([{ student: "浩然" }, { kind: "adhoc", student: "" }]), "浩然");
+  assert.equal(L.mergeStudent([{ kind: "adhoc" }, { kind: "adhoc" }]), "");
+  assert.equal(L.mergeStudent([{ student: "浩然" }, { student: "子涵" }, { kind: "adhoc" }]), null);
+  const adhocOnly = L.mergedLesson({ _id: "merged-0123456789abcdef", student: "", course: "雅思口语", startAt: START, endAt: START + HOUR_MS, stage: "done" } as unknown as LessonDoc, "https://x/report.html");
+  assert.equal(adhocOnly.title, "雅思口语 · 合并反馈");
 });
 
 test("不算录制：不到 5 分钟且说话不到 100 字；失败重试用完才显示「没能生成」", () => {

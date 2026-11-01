@@ -286,4 +286,5 @@ a:focus-visible,button:focus-visible{outline:3px solid var(--accent);outline-off
 .pick .picks label.off{opacity:.45;cursor:default}
 .pick .picks input{width:16px;height:16px;accent-color:var(--accent)}
 .pick .keep{margin-top:12px;padding:10px 12px;border-radius:10px;background:var(--accent-soft);color:var(--text);font-size:14px;line-height:1.6}
+.pick .who{font-size:13px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pick .pn{margin-left:auto;font-size:12px;color:var(--faint)}

@@ -50,7 +50,7 @@ function merge(id: string, ids: string[]) {
     const src = ids.map(x => s.lessons.find(l => l.id === x)!).sort((a, b) => a.startAt - b.startAt);
     const last = src.at(-1)!;
     const lesson: Lesson = {
-      ...last, id, title: `${last.student} · 合并反馈`, topic: last.title.split(' · ')[0], kind: 'merged', sources: ids, copied: false,
+      ...last, id, title: `${src.find(l => !l.kind)?.student || last.title.split(' · ')[0]} · 合并反馈`, topic: last.title.split(' · ')[0], kind: 'merged', student: src.find(l => !l.kind)?.student ?? '', sources: ids, copied: false,
       summary: summaryOf('haoran'), reportUrl: 'https://app.jsjy.asia/classroom/report.html?t=demo-merged',
     };
     patch({ lessons: [...s.lessons.filter(l => l.id !== id), lesson] });
@@ -110,6 +110,12 @@ function setScene() {
   if (scene === 'long') { startRec('xiaoyu', 49 * 60); pause('long', 10 * 60); }
   if (scene === 'confirm') { startRec('xiaoyu', 49 * 60); s.rec = rec('confirm'); }
   if (scene === 'adhoc') { startAdhoc(22 * 60 + 14); endAdhoc(); }
+  // 随时录制的课也能合并反馈（不限学生）
+  if (scene === 'mergeadhoc') {
+    const date = shanghaiToday(), id = 'adhoc-00000000000000aa';
+    s.lessons = [...s.lessons, { id, date, start: '09:00', end: '10:20', startAt: epoch(date, '09:00'), endAt: epoch(date, '10:20'), title: '雅思口语加课', topic: '', status: 'done', copied: false, kind: 'adhoc', summary: summaryOf('haoran'), reportUrl: 'https://app.jsjy.asia/classroom/report.html?t=demo' }];
+    s.selectedLessonId = id;
+  }
   // 云端重试用完的课、不算录制的课；?old 看 0.1.9 的样子（两种都显示成「整理中」）
   const old = new URLSearchParams(location.search).has('old');
   if (scene === 'failed') { s.selectedLessonId = 'haoran2'; s.lessons = setLesson('haoran2', { status: old ? 'processing' : 'failed', summary: undefined, reportUrl: undefined }); }
