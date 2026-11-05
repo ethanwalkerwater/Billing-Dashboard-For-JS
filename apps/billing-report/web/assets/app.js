@@ -318,12 +318,16 @@ function statusBadge(item) {
     return `<span class="badge promo">优惠 ${escapeHtml(item.discountStatus)}</span>`;
   }
   if (statusLabel === "正常上课") return '<span class="badge">正常上课</span>';
-  // 色弱：未知比例靠文字区分，组合行里哪一半没配置就写出来
-  const unknown = [
-    isCancelled && parseCancellationRate(item.cancellationStatus) == null ? "取消" : "",
-    item.discountStatus && parseDiscountRate(item.discountStatus) == null ? "优惠" : "",
-  ].filter(Boolean).join("、");
-  if (unknown) return `<span class="badge warn">未知${unknown} ${escapeHtml(statusLabel)}</span>`;
+  // 色弱：未知比例靠文字区分，组合行里哪一半没配置，就在那一半前面写「未知取消 / 未知优惠」
+  const cancelUnknown = isCancelled && parseCancellationRate(item.cancellationStatus) == null;
+  const discountUnknown = item.discountStatus && parseDiscountRate(item.discountStatus) == null;
+  if (cancelUnknown || discountUnknown) {
+    const halves = [
+      isCancelled ? `${cancelUnknown ? "未知取消 " : ""}${item.cancellationStatus}` : "",
+      item.discountStatus ? `${discountUnknown ? "未知优惠 " : ""}${item.discountStatus}` : "",
+    ].filter(Boolean).join(" · ");
+    return `<span class="badge warn">${escapeHtml(halves)}</span>`;
+  }
   if (String(statusLabel).includes("%")) return `<span class="badge warn">${escapeHtml(statusLabel)}</span>`;
   return `<span class="badge danger">${escapeHtml(statusLabel)}</span>`;
 }
