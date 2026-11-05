@@ -1,4 +1,4 @@
-import { buildReportFromCsv } from "./report-core.js";
+import { buildReportFromCsv, parseDiscountRate } from "./report-core.js";
 
 const state = {
   data: null,
@@ -314,6 +314,7 @@ function statusBadge(item) {
   const statusLabel = item.statusLabel || "";
   const isCancelled = item.cancellationStatus !== "正常上课";
   if (!isCancelled && item.discountStatus) {
+    if (parseDiscountRate(item.discountStatus) == null) return `<span class="badge warn">未知优惠 ${escapeHtml(item.discountStatus)}</span>`;
     return `<span class="badge promo">优惠 ${escapeHtml(item.discountStatus)}</span>`;
   }
   if (statusLabel === "正常上课") return '<span class="badge">正常上课</span>';
@@ -352,12 +353,12 @@ function renderGroups(results) {
             <col style="width: 82px" />
             <col style="width: 92px" />
             <col style="width: 72px" />
-            <col style="width: 96px" />
+            <col style="width: 150px" />
             <col style="width: 80px" />
             <col style="width: 86px" />
             <col style="width: 84px" />
             <col style="width: 78px" />
-            <col style="width: 120px" />
+            <col style="width: 90px" />
             <col style="width: 94px" />
             <col style="width: 94px" />
             <col style="width: 96px" />
