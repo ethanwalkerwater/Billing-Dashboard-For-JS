@@ -2,6 +2,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { renderFacultyByRole } from "./render-faculty.mjs";
+import { roundYuan } from "./student-billing-batch-data.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, "../../..");
@@ -16,7 +17,7 @@ const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({
 }[char]));
 
 function formatMoney(value) {
-  const integerValue = Math.floor(Number(value || 0));
+  const integerValue = roundYuan(value);
   return `¥${integerValue.toLocaleString("zh-CN", { maximumFractionDigits: 0 })}`;
 }
 
@@ -74,9 +75,9 @@ function renderTotalRow(report) {
         </div>
       </div>`;
   }
-  // 报告金额统一向下取整显示；剩余用取整后的两数相减，保证三行金额能对上
-  const balance = Math.floor(Number(prepay.balanceBefore));
-  const fee = Math.floor(Number(report.totals.payableAmount || 0));
+  // 报告金额统一四舍五入到元；剩余用取整后的两数相减，保证三行金额能对上
+  const balance = roundYuan(prepay.balanceBefore);
+  const fee = roundYuan(report.totals.payableAmount);
   const remaining = balance - fee;
   const owed = remaining < 0;
   return `

@@ -69,8 +69,13 @@ function roundMoney(value) {
   return Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
 }
 
+// 家长明细金额四舍五入到元；先按分取整去掉浮点误差（279.5 → 280）
+export function roundYuan(value) {
+  return Math.round(roundMoney(value));
+}
+
 function formatIntegerAmount(value) {
-  return Math.floor(Number(value || 0)).toLocaleString("zh-CN", { maximumFractionDigits: 0 });
+  return roundYuan(value).toLocaleString("zh-CN", { maximumFractionDigits: 0 });
 }
 
 function monthLabel(month) {

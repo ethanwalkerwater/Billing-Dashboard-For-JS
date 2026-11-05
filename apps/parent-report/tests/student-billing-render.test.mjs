@@ -108,7 +108,7 @@ test("renderStudentBillingReportHtml renders approved sections", () => {
   assert.match(html, /<h1 class="cover-student-name">Ivy<\/h1>/);
   assert.match(html, /<strong>2026年3月<\/strong>/);
   assert.match(html, /March 2026/);
-  assert.match(html, /¥2,910/);
+  assert.match(html, /¥2,911/);
   assert.doesNotMatch(html, /¥2,910\.80/);
   assert.match(html, /<table>/);
   assert.doesNotMatch(html, /class="quote-summary"/);
