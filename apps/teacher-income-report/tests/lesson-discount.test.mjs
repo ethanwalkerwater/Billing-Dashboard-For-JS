@@ -152,3 +152,35 @@ test("T-C07 逐行路径：未知优惠按原比例重算并标出，没有原�
   const noPrice = exportEntry({ "价格优惠": "老带新-90%", "课程单价（¥）": "800 / 900", "实际金额（¥）": "500" });
   assert.equal(adjustedLessonRowAmount(noPrice, "900"), 500);
 });
+
+test("B01 逐行路径：手填折扣 90% 的行不改单价保持 468，改单价要乘折扣", () => {
+  const entry = exportEntry({ "课程单价（¥）": "520", "总时长（h）": "1", "折扣（%）": "90", "实际金额（¥）": "468" });
+  assert.equal(adjustedLessonRowAmount(entry, defaultLessonRowUnitPrice(entry)), 468);
+  assert.equal(adjustedLessonRowAmount(entry, "600"), 540);
+
+  const trial = exportEntry({ "价格优惠": "试听-80%", "课程单价（¥）": "520", "总时长（h）": "1", "折扣（%）": "90", "实际金额（¥）": "374.4" });
+  assert.equal(adjustedLessonRowAmount(trial, defaultLessonRowUnitPrice(trial)), 374.4);
+  assert.equal(adjustedLessonRowAmount(trial, "600"), 432);
+});
+
+test("B01 逐行路径：窗口期赠课行飞书总价 1600，不改单价保持 1600", () => {
+  const gift = exportEntry({ "价格优惠": "赠课-免费", "总时长（h）": "4", "折扣（%）": "100", "实际金额（¥）": "1600" });
+  assert.equal(adjustedLessonRowAmount(gift, defaultLessonRowUnitPrice(gift)), 1600);
+  assert.equal(adjustedLessonRowAmount(gift, "900"), 0);
+});
+
+test("B01 分组路径：单价「800元」与 520 并组的试听组，不改单价保持报表金额 1160", () => {
+  const [{ group, records }] = teacherGroups([
+    `英语试听,${TEACHER},演示甲-901,1v1,,试听-80%,2026/11/25 10:00,2026/11/25 11:00,800元,1,640`,
+    `英语试听,${TEACHER},演示甲-901,1v1,,试听-80%,2026/11/28 10:00,2026/11/28 11:00,520,1,520`,
+  ]);
+  assert.equal(group.amount, 1160);
+  assert.equal(adjustedGroupAmount(group, records, defaultGroupUnitPrice(group, records)), 1160);
+});
+
+test("B01 分组路径：窗口期赠课组飞书总价 1600，不改单价保持 1600", () => {
+  const [{ group, records }] = teacherGroups([
+    `雅思,${TEACHER},演示庚-907,一对一,,赠课-免费,2026/11/03 10:00,2026/11/03 12:00,800,2,1600`,
+  ]);
+  assert.equal(adjustedGroupAmount(group, records, defaultGroupUnitPrice(group, records)), group.amount);
+});

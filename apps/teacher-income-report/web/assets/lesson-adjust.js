@@ -30,22 +30,25 @@ export function defaultGroupUnitPrice(group, records) {
   return weightedDuration ? String(round((group.amount || 0) / weightedDuration)) : "";
 }
 
+// 单价没改（等于默认单价）→ 保留原金额，不重算：原金额以飞书为准，可能和规则算出来的不一样
 export function adjustedGroupAmount(group, records, unitPrice) {
   const numericUnitPrice = parseNumber(unitPrice);
-  if (numericUnitPrice == null) return round(group.amount || 0);
+  if (numericUnitPrice == null || numericUnitPrice === parseNumber(defaultGroupUnitPrice(group, records))) return round(group.amount || 0);
   if (!records.length) return round(numericUnitPrice * (group.duration || 0));
   return round(records.reduce((total, record) => (
     total + amountAtUnitPrice(numericUnitPrice, record.duration, record.chargeRate, record.unitPrice, record.amount)
   ), 0));
 }
 
-// 上传「课时收费报表」导出 CSV 的逐行路径：比例 = 「取消/上课状态」× 「价格优惠」（旧 CSV 没有这一列按 1）
+// 上传「课时收费报表」导出 CSV 的逐行路径：比例 = 「取消/上课状态」× 「价格优惠」× 手填「折扣（%）」（旧 CSV 没有的列按 1）
 export function lessonRowChargeRate(entry) {
   const cancellation = cleanText(entry.source?.["取消/上课状态"]);
   const discount = cleanText(entry.source?.["价格优惠"]);
+  const manual = cleanText(entry.source?.["折扣（%）"]);
   const cancelRate = !cancellation || cancellation === NORMAL_STATUS ? 1 : parseCancellationRate(cancellation);
   const discountRate = discount ? parseDiscountRate(discount) : 1;
-  return cancelRate == null || discountRate == null ? null : cancelRate * discountRate;
+  const manualPercent = manual ? parseNumber(manual) : 100;
+  return cancelRate == null || discountRate == null || manualPercent == null ? null : cancelRate * discountRate * manualPercent / 100;
 }
 
 export function lessonRowHasUnknownRate(entry) {
@@ -67,6 +70,6 @@ export function defaultLessonRowUnitPrice(entry) {
 
 export function adjustedLessonRowAmount(entry, unitPrice) {
   const numericUnitPrice = parseNumber(unitPrice);
-  if (numericUnitPrice == null) return round(entry.amount || 0);
+  if (numericUnitPrice == null || numericUnitPrice === parseNumber(defaultLessonRowUnitPrice(entry))) return round(entry.amount || 0);
   return amountAtUnitPrice(numericUnitPrice, entry.duration, lessonRowChargeRate(entry), sourceUnitPrice(entry), entry.amount);
 }
