@@ -467,7 +467,7 @@ G1,雅思,甲老师（演示）,演示甲-9001,2026/${month}/02 10:00,2026/${mon
   assert.deepEqual(messagesOf(webReport(csv(1600, "10"), schedule(0, "10"))), []);
 });
 
-test("B08 多单价合并行只改课程类型、老师、授课类型、原因，应付和原价不动；改时长才重算", () => {
+test("B08 多单价合并行只改课程类型、老师、授课类型、原因，应付和原价不动", () => {
   const schedule = `${R_SCHEDULE_HEAD}
 T1,雅思,甲老师（演示）,演示甲-9001,2026/11/02 10:00,2026/11/02 12:00,600,2,960,,1v1,,试听-80%
 T2,雅思,甲老师（演示）,演示甲-9001,2026/11/03 10:00,2026/11/03 12:00,800,2,1280,,1v1,,试听-80%`;
@@ -485,7 +485,29 @@ T2,雅思,甲老师（演示）,演示甲-9001,2026/11/03 10:00,2026/11/03 12:00
     assert.deepEqual([line.payableAmount, line.grossAmount, line.discountAmount], [before.payableAmount, before.grossAmount, before.discountAmount], field);
     assert.equal(edited.totals.payableAmount, 2240, field);
   }
-  assert.equal(updateCourseLine(web, 0, "duration", "4.5").courseLines[0].payableAmount, 0);
+  assert.deepEqual(updateCourseLine(web, 0, "duration", "4.5").courseLines[0].payableAmount, 2240);
+});
+
+test("B10 单价读不出来的行（「600 / 800」「800元」、空）改课时、取消比例，应付和原价都不动，PDF 照原金额出", () => {
+  const schedule = `${R_SCHEDULE_HEAD}
+T1,雅思,甲老师（演示）,演示甲-9001,2026/11/02 10:00,2026/11/02 12:00,600,2,960,,1v1,,试听-80%
+T2,雅思,甲老师（演示）,演示甲-9001,2026/11/03 10:00,2026/11/03 12:00,800,2,1280,,1v1,,试听-80%`;
+  for (const price of ["600 / 800", "800元", ""]) {
+    const csv = `${HEAD}
+演示甲-9001,2026-11,甲老师（演示）,雅思,1v1,正常上课,试听-80%,4,0,${price},100,,2240,2240,"2 3"`;
+    const web = webReport(csv, schedule);
+    assert.equal(web.courseLines[0].unitPrice, null, price);
+    for (const [field, value] of [["duration", "3"], ["cancellationPercent", "50"]]) {
+      const edited = updateCourseLine(web, 0, field, value);
+      const line = edited.courseLines[0];
+      assert.deepEqual([line.payableAmount, line.grossAmount, edited.totals.payableAmount], [2240, 2240, 2240], `${price} ${field}`);
+      assert.match(render(buildConfirmedReport(edited)), /2,240/, `${price} ${field}`);
+    }
+  }
+  // 单价读得出来的行，改课时照旧重算
+  const priced = webReport(`${HEAD}
+演示甲-901,2026-11,林老师（演示）,演示数学,1v1,正常上课,,4,0,800,100,,3200,3200,"2 3"`);
+  assert.equal(updateCourseLine(priced, 0, "duration", "2").courseLines[0].payableAmount, 1600);
 });
 
 test("B09 同名无编号：课表两个「演示同名」（甲老师雅思、乙老师数学），收费只有 2h：单个、批量、渲染都拦", () => {
