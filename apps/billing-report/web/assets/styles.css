@@ -665,6 +665,12 @@ tr:hover td {
   color: hsl(0 72% 38%);
 }
 
+.badge.promo {
+  border-color: hsl(217 91% 60% / .32);
+  background: hsl(217 91% 60% / .12);
+  color: hsl(217 91% 30%);
+}
+
 .link-button {
   border: 0;
   background: transparent;
