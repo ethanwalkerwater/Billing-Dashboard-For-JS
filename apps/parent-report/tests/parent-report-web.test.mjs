@@ -78,7 +78,7 @@ test("cancellation percentage follows billing-core cancellation semantics", () =
   assert.equal(report.courseLines[0].cancellationPercent, 70);
   report = updateCourseLine(report, 0, "cancellationPercent", "50");
   assert.equal(report.courseLines[0].payableAmount, 1000);
-  assert.equal(report.courseLines[0].billingNote, "请假 50%");
+  assert.equal(report.courseLines[0].billingNote, "请假 收 50%");
 });
 
 test("student-month schedule lookup excludes non-reportable blank placeholders", () => {

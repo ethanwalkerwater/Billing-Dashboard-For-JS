@@ -135,27 +135,34 @@ export function buildRawScheduleLookup(scheduleCsvText) {
   return lookup;
 }
 
-// 优惠部分：单独时「试听 · 收 80%」，跟在请假后面时「试听 收 80%」
-function promoNote(label, rate, joined) {
-  if (!label) return "";
-  if (rate == null) return `${label}（未识别，按原价）`;
-  const name = label.split("-")[0];
-  const charge = rate === 0 ? "免费" : `收 ${Math.round(rate * 1000) / 10}%`;
-  return `${name}${joined ? " " : " · "}${charge}`;
+// 折扣列统一「类型 + 收多少」，组合用「 · 」连接，如「请假 收 70% · 试听 收 80%」
+function chargeText(percent) {
+  const value = Math.round(Number(percent) * 10) / 10;
+  return value === 0 ? "免费" : `收 ${value}%`;
 }
 
-export function composeBillingNote(leaveNote, promoLabel, promoRate) {
-  const promo = promoNote(promoLabel, promoRate, Boolean(leaveNote));
-  return [leaveNote, promo].filter(Boolean).join(" · ") || "—";
+export function leaveNote(status, percent) {
+  return `${String(status || "").includes("病假") ? "病假" : "请假"} ${chargeText(percent)}`;
+}
+
+// 未知优惠不会进家长 PDF（validateReport 报错、渲染时拦截），这里只留原文兜底
+function promoNote(label, rate) {
+  if (!label) return "";
+  if (rate == null) return label;
+  return `${label.split("-")[0]} ${chargeText(rate * 100)}`;
+}
+
+export function composeBillingNote(leave, promoLabel, promoRate) {
+  return [leave, promoNote(promoLabel, promoRate)].filter(Boolean).join(" · ") || "—";
 }
 
 function billingNote(row) {
-  let leaveNote = "";
+  let leave = "";
   if (row.status !== "正常上课") {
     const match = row.status.match(/(\d+)%/);
-    leaveNote = match ? `请假 ${match[1]}%` : row.status;
+    leave = match ? leaveNote(row.status, match[1]) : row.status;
   }
-  return composeBillingNote(leaveNote, row.promoLabel, row.promoRate);
+  return composeBillingNote(leave, row.promoLabel, row.promoRate);
 }
 
 function buildCourseLine(row) {

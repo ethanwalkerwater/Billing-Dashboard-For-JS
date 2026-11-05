@@ -63,9 +63,9 @@ test("T-B01 优惠课按原价、应付、减免正确", () => {
 test("T-B02 优惠课计费说明写优惠名，不写请假、正常计费", () => {
   for (const report of [batchReport()[0], webReport()]) {
     const [, gift, trial, mock] = report.courseLines;
-    assert.equal(gift.billingNote, "赠课 · 免费");
-    assert.equal(trial.billingNote, "试听 · 收 80%");
-    assert.equal(mock.billingNote, "模拟考试 · 免费");
+    assert.equal(gift.billingNote, "赠课 免费");
+    assert.equal(trial.billingNote, "试听 收 80%");
+    assert.equal(mock.billingNote, "模拟考试 免费");
     for (const line of [gift, trial, mock]) {
       assert.equal(line.isLeave, false);
       assert.doesNotMatch(line.billingNote, /请假|正常计费/);
@@ -73,7 +73,7 @@ test("T-B02 优惠课计费说明写优惠名，不写请假、正常计费", ()
   }
   const html = render(buildConfirmedReport(webReport()));
   assert.match(html, /<tr class="is-promo">/);
-  assert.match(html, /赠课 · 免费/);
+  assert.match(html, /赠课 免费/);
   assert.doesNotMatch(html, /请假扣费|正常计费/);
 });
 
@@ -105,7 +105,7 @@ test("T-B07 单价 0 的赠课不出 NaN / Infinity", () => {
 演示甲-901,2026-11,林老师（演示）,演示数学,1v1,正常上课,赠课-免费,2,0,0,100,,0,0,"4"`);
   const [line] = report.courseLines;
   assert.deepEqual([line.grossAmount, line.payableAmount, line.discountAmount], [0, 0, 0]);
-  assert.equal(line.billingNote, "赠课 · 免费");
+  assert.equal(line.billingNote, "赠课 免费");
   const edited = updateCourseLine(report, 0, "duration", "3");
   assert.equal(edited.courseLines[0].payableAmount, 0);
   const html = render(buildConfirmedReport(edited));
@@ -130,7 +130,7 @@ test("T-B09 小班一行两个学生各自标赠课、0 元", () => {
   assert.equal(reports.length, 2);
   for (const report of reports) {
     assert.equal(report.courseLines[0].payableAmount, 0);
-    assert.equal(report.courseLines[0].billingNote, "赠课 · 免费");
+    assert.equal(report.courseLines[0].billingNote, "赠课 免费");
     assert.equal(report.lessons.length, 1);
     assert.equal(report.lessons[0].promoLabel, "赠课-免费");
   }
@@ -143,34 +143,46 @@ test("T-A09 旧 CSV 没有价格优惠列，结果和原来一样", () => {
   const [normal, leave] = report.courseLines;
   assert.equal(normal.promoLabel, "");
   assert.equal(normal.billingNote, "—");
-  assert.equal(leave.billingNote, "请假 70%");
+  assert.equal(leave.billingNote, "请假 收 70%");
   assert.equal(leave.isLeave, true);
   const web = prepareReportForEditing(report);
-  assert.equal(web.courseLines[1].billingNote, "请假 70%");
+  assert.equal(web.courseLines[1].billingNote, "请假 收 70%");
   assert.equal(updateCourseLine(web, 1, "unitPrice", "900").courseLines[1].payableAmount, 1260);
   assert.deepEqual(validateReport(web).filter((issue) => /价格优惠/.test(issue.message)), []);
 });
 
-test("必改2 未知优惠「老带新-90%」改单价后不归零，按原比例并提示", () => {
+test("必改2 / 对接人定1 未知优惠「老带新-90%」改单价不归零；报错拦住生成，家长看不到「未识别」", () => {
   let report = webReport(`${HEAD}
 演示甲-901,2026-11,林老师（演示）,演示数学,1v1,正常上课,老带新-90%,2,0,800,100,,1600,1600,"2"`);
   assert.equal(report.courseLines[0].promoUnknown, true);
-  assert.equal(report.courseLines[0].billingNote, "老带新-90%（未识别，按原价）");
+  assert.doesNotMatch(report.courseLines[0].billingNote, /未识别/);
   report = updateCourseLine(report, 0, "unitPrice", "900");
   assert.equal(report.courseLines[0].payableAmount, 1800);
-  const hints = validateReport(report).filter((issue) => issue.level === "warning" && issue.message.includes("老带新-90%"));
-  assert.equal(hints.length, 1);
-  assert.equal(hints[0].row, 1);
+  const errors = validateReport(report).filter((issue) => issue.level === "error" && issue.message.includes("老带新-90%"));
+  assert.equal(errors.length, 1);
+  assert.equal(errors[0].row, 1);
+  assert.equal(errors[0].message, "价格优惠「老带新-90%」还没配置收费比例，请先联系开发");
+  assert.throws(() => render(buildConfirmedReport(report)), (error) => error.statusCode === 422 && /还没配置收费比例/.test(error.message));
 });
 
-test("请假 + 试听：比例相乘，说明写「请假 70% · 试听 收 80%」", () => {
+test("对接人定2 病假写「病假 免费」，其他 0% 取消写「请假 免费」", () => {
+  const report = batchReport(`${HEAD}
+演示乙-902,2026-11,周老师（演示）,演示数学,1v1,学生病假-0%,,2,2,800,0,,0,0,"2"
+演示乙-902,2026-11,周老师（演示）,演示数学,1v1,提前取消-0%,,2,2,800,0,,0,0,"3"
+演示乙-902,2026-11,周老师（演示）,演示数学,1v1,2h-50%,,2,2,800,50,,800,800,"4"`)[0];
+  assert.deepEqual(report.courseLines.map((line) => line.billingNote), ["病假 免费", "请假 免费", "请假 收 50%"]);
+  const web = prepareReportForEditing(report);
+  assert.deepEqual(web.courseLines.map((line) => line.billingNote), ["病假 免费", "请假 免费", "请假 收 50%"]);
+});
+
+test("请假 + 试听：比例相乘，说明写「请假 收 70% · 试听 收 80%」", () => {
   let report = webReport(`${HEAD}
 演示甲-901,2026-11,林老师（演示）,演示数学,1v1,0h-70%,试听-80%,1.5,1.5,300,100,,252,252,"2"`);
-  assert.equal(report.courseLines[0].billingNote, "请假 70% · 试听 收 80%");
+  assert.equal(report.courseLines[0].billingNote, "请假 收 70% · 试听 收 80%");
   report = updateCourseLine(report, 0, "unitPrice", "333");
   assert.equal(report.courseLines[0].payableAmount, 279.72);
-  assert.equal(report.courseLines[0].billingNote, "请假 70% · 试听 收 80%");
+  assert.equal(report.courseLines[0].billingNote, "请假 收 70% · 试听 收 80%");
   const html = render(buildConfirmedReport(report));
   assert.match(html, /<tr class="is-leave is-promo">/);
-  assert.match(html, /请假 70% · 试听 收 80%/);
+  assert.match(html, /请假 收 70% · 试听 收 80%/);
 });

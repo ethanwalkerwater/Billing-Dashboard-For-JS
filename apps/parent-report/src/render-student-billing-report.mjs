@@ -142,6 +142,13 @@ function embeddedCjkFontCss(source, format = "truetype") {
 }
 
 export function renderStudentBillingReportHtml(report, teachers, options = {}) {
+  // 家长永远看不到未识别的优惠：网页上已报错拦住，这里再兜一次 API / 命令行入口
+  const unknownPromos = [...new Set((report.courseLines || []).filter((line) => line.promoUnknown).map((line) => line.promoLabel))];
+  if (unknownPromos.length) {
+    const error = new Error(`${report.studentName}：价格优惠「${unknownPromos.join("、")}」还没配置收费比例，请先联系开发`);
+    error.statusCode = 422;
+    throw error;
+  }
   const facultySections = renderFacultyByRole(
     teachers,
     report.activeTeacherNames,
