@@ -819,7 +819,7 @@ function courseRows(report) {
           <div class="field-control">
             <input aria-label="第 ${index + 1} 行取消比例" type="number" min="0" max="100" step="1" value="${esc(fieldValue(index, "cancellationPercent", line.cancellationPercent))}" data-row="${index}" data-field="cancellationPercent" />
           </div>
-          <span class="original-value">${esc(line.status === "正常上课" ? "正常课程" : line.status)}</span>
+          <span class="original-value">${esc(line.promoLabel ? line.billingNote : line.status === "正常上课" ? "正常课程" : line.status)}</span>
         </div>
         <div class="course-cell payable-cell">
           <input aria-label="第 ${index + 1} 行应付金额" type="number" min="0" step="1" value="${esc(fieldValue(index, "payableAmount", line.payableAmount))}" data-row="${index}" data-field="payableAmount" />

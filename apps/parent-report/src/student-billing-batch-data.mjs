@@ -1,4 +1,4 @@
-import { cleanText, normalizeRow, parseCsv, parseNumber } from "@jingshi/billing-core";
+import { cleanText, normalizeRow, parseCsv, parseDiscountRate, parseNumber } from "@jingshi/billing-core";
 
 const WEEKDAYS = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
 
@@ -35,6 +35,9 @@ export function parseCompleteBillingCsv(csvText, sourceName = "") {
     const unitPrice = parseNumber(row["课程单价（¥）"]);
     const grossAmount = parseNumber(row["总金额（¥）"]);
     const payableAmount = parseNumber(row["实际金额（¥）"]);
+    // 导出 CSV 的「价格优惠」只在生效（11-01 起）时有值；旧 CSV 没有这一列
+    const promoLabel = cleanText(row["价格优惠"]);
+    const promoRate = promoLabel ? parseDiscountRate(promoLabel) : 1;
 
     return {
       sourceName,
@@ -47,6 +50,9 @@ export function parseCompleteBillingCsv(csvText, sourceName = "") {
       // 课时账单导出用「未填写授课类型」占位，家长报告里按空值显示
       teachingType: cleanText(row["授课类型"]).replace(/^未填写授课类型$/u, ""),
       status: cleanText(row["取消/上课状态"]) || "正常上课",
+      promoLabel,
+      promoRate,
+      promoUnknown: promoRate == null,
       duration: parseNumber(row["总时长（h）"]) ?? 0,
       cancelledDuration: parseNumber(row["取消时长（h）"]) ?? 0,
       unitPrice,
@@ -129,13 +135,34 @@ export function buildRawScheduleLookup(scheduleCsvText) {
   return lookup;
 }
 
+// 优惠部分：单独时「试听 · 收 80%」，跟在请假后面时「试听 收 80%」
+function promoNote(label, rate, joined) {
+  if (!label) return "";
+  if (rate == null) return `${label}（未识别，按原价）`;
+  const name = label.split("-")[0];
+  const charge = rate === 0 ? "免费" : `收 ${Math.round(rate * 1000) / 10}%`;
+  return `${name}${joined ? " " : " · "}${charge}`;
+}
+
+export function composeBillingNote(leaveNote, promoLabel, promoRate) {
+  const promo = promoNote(promoLabel, promoRate, Boolean(leaveNote));
+  return [leaveNote, promo].filter(Boolean).join(" · ") || "—";
+}
+
 function billingNote(row) {
-  if (row.status === "正常上课") return "—";
-  const match = row.status.match(/(\d+)%/);
-  return match ? `请假 ${match[1]}%` : row.status;
+  let leaveNote = "";
+  if (row.status !== "正常上课") {
+    const match = row.status.match(/(\d+)%/);
+    leaveNote = match ? `请假 ${match[1]}%` : row.status;
+  }
+  return composeBillingNote(leaveNote, row.promoLabel, row.promoRate);
 }
 
 function buildCourseLine(row) {
+  // 优惠课导出的总金额已是优惠后金额，原价按单价 × 时长算，和网页编辑后一致
+  const grossAmount = row.promoLabel && row.unitPrice != null
+    ? row.unitPrice * row.duration
+    : row.grossAmount;
   return {
     month: row.month,
     teacher: row.teacher,
@@ -143,6 +170,9 @@ function buildCourseLine(row) {
     teachingType: row.teachingType,
     status: row.status,
     isLeave: row.status !== "正常上课",
+    promoLabel: row.promoLabel,
+    promoRate: row.promoRate,
+    promoUnknown: row.promoUnknown,
     duration: row.duration,
     cancelledDuration: row.cancelledDuration,
     unitPrice: row.unitPrice,
@@ -151,9 +181,9 @@ function buildCourseLine(row) {
       : formatIntegerAmount(row.unitPrice),
     discountRate: row.discountRate,
     discountReason: row.discountReason,
-    grossAmount: roundMoney(row.grossAmount),
+    grossAmount: roundMoney(grossAmount),
     payableAmount: roundMoney(row.payableAmount),
-    discountAmount: roundMoney(row.grossAmount - row.payableAmount),
+    discountAmount: roundMoney(grossAmount - row.payableAmount),
     billingNote: billingNote(row),
     rawRows: row.rawRows,
   };
@@ -174,6 +204,8 @@ function lessonFromRecord(record) {
     duration: record.duration,
     isLeave: record.isCancelled,
     leaveLabel: record.isCancelled ? "请假 · 临时取消" : "",
+    isPromo: Boolean(record.isDiscounted),
+    promoLabel: record.discountStatus || "",
     grossAmount: roundMoney(grossAmount),
     payableAmount: roundMoney(payableAmount),
     location: record.location,
