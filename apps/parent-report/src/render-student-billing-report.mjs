@@ -2,7 +2,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { renderFacultyByRole } from "./render-faculty.mjs";
-import { roundYuan } from "./student-billing-batch-data.mjs";
+import { reportBlockers, roundYuan } from "./student-billing-batch-data.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, "../../..");
@@ -109,7 +109,7 @@ function renderCalendar(calendar) {
                   <b>${esc(lesson.courseType)}</b>
                   <em>${esc(lesson.teacher)} · ${formatNumber(lesson.duration)}h</em>
                   ${lesson.isLeave ? `<mark>${esc(lesson.leaveLabel)}</mark>` : ""}
-                  ${lesson.isPromo ? `<mark class="promo">${esc(lesson.promoLabel)}</mark>` : ""}
+                  ${lesson.isPromo ? `<mark class="promo">${esc(lesson.promoText || lesson.promoLabel)}</mark>` : ""}
                 </div>
               `).join("")}
             </div>
@@ -143,10 +143,10 @@ function embeddedCjkFontCss(source, format = "truetype") {
 }
 
 export function renderStudentBillingReportHtml(report, teachers, options = {}) {
-  // 家长永远看不到未识别的优惠：网页上已报错拦住，这里再兜一次 API / 命令行入口
-  const unknownPromos = [...new Set((report.courseLines || []).filter((line) => line.promoUnknown).map((line) => line.promoLabel))];
-  if (unknownPromos.length) {
-    const error = new Error(`${report.studentName}：价格优惠「${unknownPromos.join("、")}」还没配置收费比例，请先联系开发`);
+  // 家长永远看不到未配置的取消 / 优惠、说明和金额对不上的行：网页上已报错拦住，这里再兜一次 API / 命令行入口
+  const blockers = reportBlockers(report);
+  if (blockers.length) {
+    const error = new Error(`${report.studentName}：${blockers.map((item) => `${item.row ? `第 ${item.row} 行：` : ""}${item.message}`).join("；")}`);
     error.statusCode = 422;
     throw error;
   }
