@@ -193,6 +193,12 @@ function amountIssueOf(record) {
   if (codes.includes("amount_mismatch")) {
     return { code: "amount_mismatch", ruleAmount: record.expectedAmount, sourceAmount: record.sourceAmount };
   }
+  // 免费课（比例 0）不需要单价、时长：应付是 0 就放行，不是 0 按「应收 ¥0」拦（容差 1 分，同 billing-core）
+  if (record.chargeRate === 0) {
+    const sourceAmount = Number(record.sourceAmount || 0);
+    return Math.abs(Math.round(sourceAmount * 100)) > 1 ? { code: "amount_mismatch", ruleAmount: 0, sourceAmount } : null;
+  }
+  // 收部分费用（试听 80%、请假 70% 等）缺单价或时长：没法核对
   const missing = ["missing_unit_price", "missing_duration"].find((code) => codes.includes(code));
   if (missing && record.chargeRate != null && record.chargeRate !== 1) return { code: missing };
   return null;
