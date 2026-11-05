@@ -229,11 +229,11 @@ test("B03 优惠行金额和规则对不上（改公式前导出的赠课 1600�
   const batch = batchReport(csv, "")[0];
   const web = prepareReportForEditing(batch);
   assert.deepEqual(errorsOf(web).map((issue) => [issue.row, issue.message]), [
-    [2, "「赠课-免费」应收 ¥0，课时收费表是 ¥1,600，请先核对课程表"],
-    [3, "「0h-70% · 试听-80%」应收 ¥279.72，课时收费表是 ¥349.65，请先核对课程表"],
+    [2, "「赠课-免费」这节按规则应收 ¥0，课程表里填的是 ¥1,600，请先核对课程表"],
+    [3, "「0h-70% · 试听-80%」这节按规则应收 ¥279.72，课程表里填的是 ¥349.65，请先核对课程表"],
   ]);
-  assert.throws(() => render(batch), blocked422(/第 2 行：「赠课-免费」应收 ¥0/));
-  assert.throws(() => render(buildConfirmedReport(web)), blocked422(/课时收费表是 ¥1,600/));
+  assert.throws(() => render(batch), blocked422(/第 2 行：「赠课-免费」这节按规则应收 ¥0/));
+  assert.throws(() => render(buildConfirmedReport(web)), blocked422(/课程表里填的是 ¥1,600/));
   let fixed = updateCourseLine(web, 1, "unitPrice", "800");
   fixed = updateCourseLine(fixed, 2, "duration", "1.5");
   assert.equal(fixed.courseLines[1].payableAmount, 0);
