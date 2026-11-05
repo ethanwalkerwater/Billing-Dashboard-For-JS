@@ -22,13 +22,15 @@ import {
 import { buildIncomeWorkbook } from "./income-workbook.js";
 import {
   UNKNOWN_RATE_NOTE,
+  AMOUNT_MISMATCH_NOTE,
+  groupHasAmountMismatch,
   adjustedGroupAmount,
   adjustedLessonRowAmount,
   defaultGroupUnitPrice,
   defaultLessonRowUnitPrice,
   groupHasUnknownRate,
+  lessonRowRateNote,
   lessonAdjustmentKey,
-  lessonRowHasUnknownRate,
 } from "./lesson-adjust.js";
 
 const MASTER_STORAGE_KEY = "jingshi.teacher-income.master.v1";
@@ -1229,7 +1231,7 @@ function renderLessonDetails(row) {
                     <td><strong>${escapeHtml(group.counterparty)}</strong></td>
                     <td>${escapeHtml(group.courseType)}</td>
                     <td>${escapeHtml(group.teachingType)}</td>
-                    <td><span class="badge">${escapeHtml(group.statusLabel ?? group.cancellationStatus)}</span>${groupHasUnknownRate(groupRecords(group)) ? ` <span class="badge warn">${UNKNOWN_RATE_NOTE}</span>` : ""}</td>
+                    <td><span class="badge">${escapeHtml(group.statusLabel ?? group.cancellationStatus)}</span>${groupHasUnknownRate(groupRecords(group)) ? ` <span class="badge warn">${UNKNOWN_RATE_NOTE}</span>` : ""}${groupHasAmountMismatch(groupRecords(group)) ? ` <span class="badge warn">${AMOUNT_MISMATCH_NOTE}</span>` : ""}</td>
                     <td class="numeric">${number(group.duration)}</td>
                     <td class="numeric">${number(group.cancelledDuration)}</td>
                     <td class="numeric"><input class="table-input number-input" type="number" min="0" step="0.01" value="${escapeHtml(adjustment.unitPrice)}" placeholder="${escapeHtml(group.unitPriceLabel)}" data-lesson-unit-price="${index}" /></td>
@@ -1290,7 +1292,7 @@ function renderLessonDetails(row) {
                   <td><input class="table-input reason-input" type="text" value="${escapeHtml(multiplier.reason)}" ${multiplier.automatic ? "readonly" : ""} data-row-multiplier-reason="${index}" /></td>
                   <td class="numeric"><strong>${number(adjustedAmount)}</strong></td>
                   <td class="numeric"><strong>${number(actual)}</strong></td>
-                  <td>${escapeHtml(cleanText(entry.source?.课程类型 || entry.source?.授课类型 || "汇总行"))}${lessonRowHasUnknownRate(entry) ? ` <span class="badge warn">${UNKNOWN_RATE_NOTE}</span>` : ""}</td>
+                  <td>${escapeHtml(cleanText(entry.source?.课程类型 || entry.source?.授课类型 || "汇总行"))}${lessonRowRateNote(entry) ? ` <span class="badge warn">${lessonRowRateNote(entry)}</span>` : ""}</td>
                 </tr>
               `;
             }).join("")}
