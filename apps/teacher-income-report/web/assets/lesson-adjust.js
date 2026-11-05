@@ -5,6 +5,7 @@ import { lessonAmountFromUnitPrice } from "./income-calculations.js";
 const round = (value) => lessonAmountFromUnitPrice(value, 1);
 
 export const UNKNOWN_RATE_NOTE = "含未知优惠/取消标记，按原比例重算";
+export const BAD_MANUAL_DISCOUNT_NOTE = "折扣填写有误，按原比例重算";
 
 // 收费比例已知 → 新单价 × 时长 × 比例；未知（null）→ 不能当 0：按原金额占「原单价 × 时长」的比例重算，算不出就保留原金额
 function amountAtUnitPrice(unitPrice, duration, chargeRate, originalUnitPrice, originalAmount) {
@@ -16,6 +17,13 @@ function amountAtUnitPrice(unitPrice, duration, chargeRate, originalUnitPrice, o
 export function lessonAdjustmentKey(month, teacher, group) {
   // 没有优惠时 statusLabel === cancellationStatus，旧 key 不变
   return JSON.stringify([month, teacher, group.counterparty, group.courseType, group.teachingType, group.statusLabel ?? group.cancellationStatus]);
+}
+
+export const AMOUNT_MISMATCH_NOTE = "金额与规则不一致";
+
+// billing-core 逐节判出的 amount_mismatch；只提示，不拦、不改金额
+export function groupHasAmountMismatch(records) {
+  return records.some((record) => record.issues?.some((issue) => issue.code === "amount_mismatch"));
 }
 
 export function groupHasUnknownRate(records) {
@@ -53,6 +61,13 @@ export function lessonRowChargeRate(entry) {
 
 export function lessonRowHasUnknownRate(entry) {
   return lessonRowChargeRate(entry) == null;
+}
+
+// 比例算不出时给哪句提示：手填折扣不是数字就直说折扣填错
+export function lessonRowRateNote(entry) {
+  if (!lessonRowHasUnknownRate(entry)) return "";
+  const manual = cleanText(entry.source?.["折扣（%）"]);
+  return manual && parseNumber(manual) == null ? BAD_MANUAL_DISCOUNT_NOTE : UNKNOWN_RATE_NOTE;
 }
 
 function sourceUnitPrice(entry) {

@@ -7,9 +7,11 @@ import {
   adjustedLessonRowAmount,
   defaultGroupUnitPrice,
   defaultLessonRowUnitPrice,
+  groupHasAmountMismatch,
   groupHasUnknownRate,
   lessonAdjustmentKey,
   lessonRowHasUnknownRate,
+  lessonRowRateNote,
 } from "../web/assets/lesson-adjust.js";
 
 const MONTH = "2026-11";
@@ -183,4 +185,22 @@ test("B01 分组路径：窗口期赠课组飞书总价 1600，不改单价保�
     `雅思,${TEACHER},演示庚-907,一对一,,赠课-免费,2026/11/03 10:00,2026/11/03 12:00,800,2,1600`,
   ]);
   assert.equal(adjustedGroupAmount(group, records, defaultGroupUnitPrice(group, records)), group.amount);
+});
+
+test("Q2 billing-core 判出金额与规则不一致的组被标出，金额不改", () => {
+  const g = teacherGroups([
+    `雅思,${TEACHER},演示庚-907,一对一,,,2026/11/03 10:00,2026/11/03 12:00,800,2,1000`,
+    `雅思,${TEACHER},演示辛-908,一对一,,,2026/11/03 10:00,2026/11/03 12:00,800,2,1600`,
+  ]);
+  const bad = find(g, "演示庚-907", "正常上课");
+  const ok = find(g, "演示辛-908", "正常上课");
+  assert.equal(groupHasAmountMismatch(bad.records), true);
+  assert.equal(groupHasAmountMismatch(ok.records), false);
+  assert.equal(adjustedGroupAmount(bad.group, bad.records, defaultGroupUnitPrice(bad.group, bad.records)), 1000);
+});
+
+test("可考虑 6 逐行路径：手填折扣不是数字时提示「折扣填写有误」，未知标记仍用原提示", () => {
+  assert.equal(lessonRowRateNote(exportEntry({ "折扣（%）": "九折" })), "折扣填写有误，按原比例重算");
+  assert.equal(lessonRowRateNote(exportEntry({ "价格优惠": "老带新-90%" })), "含未知优惠/取消标记，按原比例重算");
+  assert.equal(lessonRowRateNote(exportEntry({})), "");
 });
