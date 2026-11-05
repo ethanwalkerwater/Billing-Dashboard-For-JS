@@ -12,6 +12,7 @@ for (const file of [
   "web/assets/app.js",
   "web/assets/styles.css",
   "web/assets/income-calculations.js",
+  "web/assets/lesson-adjust.js",
   "web/assets/income-workbook.js",
   "web/assets/report-core.js",
   "web/assets/payroll-core.js",
