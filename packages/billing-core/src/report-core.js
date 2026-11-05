@@ -97,6 +97,10 @@ function roundNumber(value) {
   return Math.round((value + Number.EPSILON) * 1_000_000) / 1_000_000;
 }
 
+function toCents(value) {
+  return Math.round(roundNumber(value * 100));
+}
+
 function sum(values) {
   return roundNumber(values.reduce((total, value) => total + Number(value || 0), 0)) || 0;
 }
@@ -186,7 +190,8 @@ export function normalizeRow(row, rawRowNumber) {
   if (sourceAmount == null) addIssue(issues, "missing_amount", rawRowNumber, "课程总价格为空或无法解析。");
   if (isCancelled && cancellationRate == null) addIssue(issues, "unknown_cancellation", rawRowNumber, `临时取消标记未配置收费比例：${cancellation}`);
   if (isDiscounted && discountRate == null) addIssue(issues, "unknown_discount", rawRowNumber, `价格优惠标记未配置收费比例：${discountRaw}`);
-  if (amountDiff != null && Math.abs(amountDiff) > 0.01) {
+  // 逐节按整数分比，容差 1 分；直接比浮点差会让「正好差 1 分」拦不拦随机（80.01 拦、8.01 不拦）
+  if (amountDiff != null && Math.abs(toCents(sourceAmount) - toCents(expectedAmount)) > 1) {
     addIssue(issues, "amount_mismatch", rawRowNumber, `原表金额 ${sourceAmount} 与规则计算 ${roundNumber(expectedAmount)} 相差 ${roundNumber(amountDiff)}。`);
   }
 

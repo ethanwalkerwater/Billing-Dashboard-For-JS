@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   buildRawScheduleLookup,
   buildStudentReports,
+  reportFileName,
   parseCompleteBillingCsv,
 } from "../src/student-billing-batch-data.mjs";
 import {
@@ -87,7 +88,7 @@ test("T-B04 日历上赠课那天标优惠名，不标请假", () => {
   const html = render(buildConfirmedReport(report));
   assert.match(html, /<mark class="promo">赠课 免费<\/mark>/); // C2：和折扣列同一套说法
   assert.doesNotMatch(html, /请假 · 临时取消/);
-  assert.match(html, /优惠课程<\/span>/);
+  assert.match(html, /试听、赠课、模拟考试<\/span>/);
 });
 
 test("T-B05 有优惠课时页脚说明优惠规则，没有时不写", () => {
@@ -161,8 +162,8 @@ test("必改2 / 对接人定1 未知优惠「老带新-90%」改单价不归零�
   assert.equal(report.courseLines[0].payableAmount, 1800);
   const errors = validateReport(report).filter((issue) => issue.level === "error" && issue.message.includes("老带新-90%"));
   assert.equal(errors.length, 1);
-  assert.equal(errors[0].row, 1);
-  assert.equal(errors[0].message, "价格优惠「老带新-90%」还没配置收费比例，请先联系开发");
+  // 第 2 轮：提示写上课日期和时间（这一行「原始行」对应的课），不写校对表行号
+  assert.equal(errors[0].message, "11月3日 10:00：价格优惠「老带新-90%」还没配置收费比例，请先联系开发");
   assert.throws(() => render(buildConfirmedReport(report)), (error) => error.statusCode === 422 && /还没配置收费比例/.test(error.message));
 });
 
@@ -214,31 +215,37 @@ test("B02 课表里的未知优惠（收费 CSV 没有优惠列）单个、批�
   const batch = batchReport(csv, schedule)[0];
   const web = prepareReportForEditing(batch);
   const errors = errorsOf(web);
-  assert.deepEqual(errors.map((issue) => [issue.row, issue.message]), [[1, "价格优惠「老带新-90%」还没配置收费比例，请先联系开发"]]);
+  assert.deepEqual(errors.map((issue) => issue.message), ["11月2日 10:00：价格优惠「老带新-90%」还没配置收费比例，请先联系开发"]);
   assert.equal(splitBatchReports([web]).ready.length, 0);
   // API / 命令行入口：不经过网页校验也不能渲染
-  assert.throws(() => render(batch), blocked422(/第 1 行：价格优惠「老带新-90%」还没配置收费比例/));
+  assert.throws(() => render(batch), blocked422(/11月2日 10:00：价格优惠「老带新-90%」还没配置收费比例/));
   assert.throws(() => render(buildConfirmedReport(web)), blocked422(/老带新-90%/));
 });
 
-test("B03 优惠行金额和规则对不上（改公式前导出的赠课 1600）拦下；改单价按规则重算后放行", () => {
+test("B03 金额和规则对不上（改公式前导出的赠课 1600）拦下；校对页改单价、时长解除不了，改课程表重新导出后放行", () => {
   const csv = `${HEAD}
 演示庚-907,2026-11,郑老师（演示）,雅思,1v1,正常上课,,2,0,800,100,,1600,1600,"4"
 演示庚-907,2026-11,郑老师（演示）,雅思,1v1,正常上课,赠课-免费,2,0,800,100,,1600,1600,"2"
 演示庚-907,2026-11,郑老师（演示）,雅思,1v1,0h-70%,试听-80%,1.5,1.5,333,100,,349.65,349.65,"3"`;
-  const batch = batchReport(csv, "")[0];
+  const schedule = (giftAmount, comboAmount) => `${SCHEDULE_HEAD}
+演示庚-907,郑老师（演示）,雅思,1v1,2026/11/02 10:00,2026/11/02 12:00,800,2,${giftAmount},,赠课-免费,校区
+演示庚-907,郑老师（演示）,雅思,1v1,2026/11/03 10:00,2026/11/03 11:30,333,1.5,${comboAmount},0h-70%,试听-80%,校区
+演示庚-907,郑老师（演示）,雅思,1v1,2026/11/04 10:00,2026/11/04 12:00,800,2,1600,,,校区`;
+  const batch = batchReport(csv, schedule(1600, 349.65))[0];
   const web = prepareReportForEditing(batch);
-  assert.deepEqual(errorsOf(web).map((issue) => [issue.row, issue.message]), [
-    [2, "「赠课-免费」这节按规则应收 ¥0，课程表里填的是 ¥1,600，请先核对课程表"],
-    [3, "「0h-70% · 试听-80%」这节按规则应收 ¥279.72，课程表里填的是 ¥349.65，请先核对课程表"],
+  assert.deepEqual(messagesOf(web), [
+    "11月2日 10:00：「赠课 免费」这节按规则应收 ¥0.00，课程表里填的是 ¥1,600.00，请先核对课程表",
+    "11月3日 10:00：「请假 收 70% · 试听 收 80%」这节按规则应收 ¥279.72，课程表里填的是 ¥349.65，请先核对课程表",
   ]);
-  assert.throws(() => render(batch), blocked422(/第 2 行：「赠课-免费」这节按规则应收 ¥0/));
-  assert.throws(() => render(buildConfirmedReport(web)), blocked422(/课程表里填的是 ¥1,600/));
-  let fixed = updateCourseLine(web, 1, "unitPrice", "800");
-  fixed = updateCourseLine(fixed, 2, "duration", "1.5");
-  assert.equal(fixed.courseLines[1].payableAmount, 0);
-  assert.deepEqual(errorsOf(fixed), []);
-  assert.doesNotThrow(() => render(buildConfirmedReport(fixed)));
+  assert.throws(() => render(batch), blocked422(/11月2日 10:00：「赠课 免费」这节按规则应收 ¥0\.00/));
+  assert.throws(() => render(buildConfirmedReport(web)), blocked422(/课程表里填的是 ¥1,600\.00/));
+  let edited = updateCourseLine(web, 1, "unitPrice", "800");
+  edited = updateCourseLine(edited, 2, "duration", "1.5");
+  edited = updateCourseLine(edited, 1, "duration", "3");
+  assert.equal(messagesOf(edited).length, 2);
+  // 改课程表后重新导出：放行
+  const fixedCsv = csv.replace("赠课-免费,2,0,800,100,,1600,1600", "赠课-免费,2,0,800,100,,0,0").replace(/349\.65/g, "279.72");
+  assert.deepEqual(messagesOf(webReport(fixedCsv, schedule(0, 279.72))), []);
   // 金额和规则一致的优惠行不受影响
   assert.deepEqual(errorsOf(webReport()), []);
 });
@@ -268,14 +275,14 @@ test("C3 未知取消标记「1h-60%」和未知优惠一样拦下（收费 CSV 
 演示庚-907,2026-11,郑老师（演示）,雅思,1v1,正常上课,,2,0,800,100,,1600,1600,"4"
 演示庚-907,2026-11,郑老师（演示）,雅思,1v1,1h-60%,,2,2,800,100,,960,960,"3"`;
   const web = webReport(csv, "");
-  assert.deepEqual(errorsOf(web).map((issue) => [issue.row, issue.message]), [[2, "取消标记「1h-60%」还没配置收费比例，请先联系开发"]]);
-  assert.throws(() => render(batchReport(csv, "")[0]), blocked422(/第 2 行：取消标记「1h-60%」还没配置收费比例/));
+  assert.deepEqual(errorsOf(web).map((issue) => issue.message), ["取消标记「1h-60%」还没配置收费比例，请先联系开发"]);
+  assert.throws(() => render(batchReport(csv, "")[0]), blocked422(/取消标记「1h-60%」还没配置收费比例/));
 
   const schedule = `${SCHEDULE_HEAD}
 演示庚-907,郑老师（演示）,雅思,1v1,2026/11/04 10:00,2026/11/04 12:00,800,2,960,1h-60%,,校区`;
   const fromSchedule = webReport(`${HEAD}
 演示庚-907,2026-11,郑老师（演示）,雅思,1v1,正常上课,,2,0,800,100,,1600,1600,"4"`, schedule);
-  assert.deepEqual(errorsOf(fromSchedule).map((issue) => issue.message), ["取消标记「1h-60%」还没配置收费比例，请先联系开发"]);
+  assert.deepEqual(errorsOf(fromSchedule).map((issue) => issue.message), ["11月4日 10:00：取消标记「1h-60%」还没配置收费比例，请先联系开发"]);
   assert.throws(() => render(buildConfirmedReport(fromSchedule)), blocked422(/1h-60%/));
 });
 
@@ -301,4 +308,133 @@ test("C5 家长能看到的单价四舍五入到元：命令行、网页单个�
     assert.match(html, /<td>¥651<\/td>/);
     assert.doesNotMatch(html, /650\.8/);
   }
+});
+
+// ---- 第 2 轮：金额核对改用 billing-core 逐节判出的「金额与规则不一致」 ----
+const R_SCHEDULE_HEAD = "学员课程ID,课程类型,老师,学生,上课时间,下课时间,课程单价,课程时长,课程总价格,临时取消,授课类型,当地上课时间,价格优惠";
+const messagesOf = (report) => errorsOf(report).map((issue) => issue.message);
+
+test("B04 优惠行单价读不出（组内 600 / 800、「800元」、空）也拦：免费按应收 ¥0 判，其余写没法核对", () => {
+  const schedule = `${R_SCHEDULE_HEAD}
+D01,雅思,丁老师（演示）,演示R-954,2026/11/02 10:00,2026/11/02 12:00,600,2,1200,,1v1,,赠课-免费
+D02,雅思,丁老师（演示）,演示R-954,2026/11/03 10:00,2026/11/03 12:00,800,2,1600,,1v1,,赠课-免费
+E01,雅思,戊老师（演示）,演示R-955,2026/11/02 10:00,2026/11/02 12:00,800元,2,1600,,1v1,,赠课-免费
+E02,数学,戊老师（演示）,演示R-955,2026/11/03 10:00,2026/11/03 12:00,,2,1600,,1v1,,试听-80%`;
+  const csv = `${HEAD}
+演示R-954,2026-11,丁老师（演示）,雅思,1v1,正常上课,赠课-免费,4,0,600 / 800,100,,2800,2800,"2 3"
+演示R-955,2026-11,戊老师（演示）,雅思,1v1,正常上课,赠课-免费,2,0,缺失,100,,1600,1600,"4"
+演示R-955,2026-11,戊老师（演示）,数学,1v1,正常上课,试听-80%,2,0,缺失,100,,1600,1600,"5"`;
+  const [r954, r955] = batchReport(csv, schedule).map(prepareReportForEditing);
+  assert.deepEqual(messagesOf(r954), ["11月2日 10:00、11月3日 10:00：「赠课 免费」这几节按规则应收 ¥0.00，课程表里填的是 ¥2,800.00，请先核对课程表"]);
+  assert.deepEqual(messagesOf(r955), [
+    "11月2日 10:00：「赠课 免费」这节缺少课程单价，没法核对金额，请先核对课程表",
+    "11月3日 10:00：「试听 收 80%」这节缺少课程单价，没法核对金额，请先核对课程表",
+  ]);
+  assert.throws(() => render(buildConfirmedReport(r954)), blocked422(/这几节按规则应收 ¥0\.00/));
+  assert.throws(() => render(buildConfirmedReport(r955)), blocked422(/没法核对金额/));
+});
+
+test("B04 复现 2：单价留空的赠课 1600 拦下", () => {
+  const schedule = `${R_SCHEDULE_HEAD}
+G9,雅思,郑老师（演示）,演示庚-907,2026/11/04 10:00,2026/11/04 12:00,,2,1600,,1v1,,赠课-免费`;
+  const csv = `${HEAD}
+演示庚-907,2026-11,郑老师（演示）,雅思,1v1,正常上课,赠课-免费,2,0,,100,,1600,1600,"2"`;
+  assert.deepEqual(messagesOf(webReport(csv, schedule)), ["11月4日 10:00：「赠课 免费」这节缺少课程单价，没法核对金额，请先核对课程表"]);
+});
+
+test("B06 和课时收费同口径逐节比：6 节 50 分钟试听每节 533.33（合计 3199.98）不拦", () => {
+  const rows = [2, 3, 4, 5, 6, 7].map((day) => `B0${day},雅思,乙老师（演示）,演示R-952,2026/11/0${day} 10:00,2026/11/0${day} 10:50,800,0.8333333333333334,533.33,,1v1,,试听-80%`);
+  const schedule = `${R_SCHEDULE_HEAD}\n${rows.join("\n")}`;
+  const csv = `${HEAD}
+演示R-952,2026-11,乙老师（演示）,雅思,1v1,正常上课,试听-80%,4.999998,0,800,100,,3199.98,3199.98,"2 3 4 5 6 7"`;
+  assert.deepEqual(messagesOf(webReport(csv, schedule)), []);
+});
+
+test("B06 按整数分比，容差 1 分：80.01、8.01 都不拦，80.02 拦", () => {
+  const run = (price, amount) => {
+    const schedule = `${R_SCHEDULE_HEAD}
+T1,雅思,乙老师（演示）,演示乙-902,2026/11/02 10:00,2026/11/02 11:00,${price},1,${amount},,1v1,,试听-80%`;
+    const csv = `${HEAD}
+演示乙-902,2026-11,乙老师（演示）,雅思,1v1,正常上课,试听-80%,1,0,${price},100,,${amount},${amount},"2"`;
+    return messagesOf(webReport(csv, schedule));
+  };
+  assert.deepEqual(run(100, 80.01), []);
+  assert.deepEqual(run(10, 8.01), []);
+  assert.deepEqual(run(100, 80.02), ["11月2日 10:00：「试听 收 80%」这节按规则应收 ¥80.00，课程表里填的是 ¥80.02，请先核对课程表"]);
+});
+
+test("Q1 取消行金额不符也拦（病假 免费 ¥1,600、请假 收 70% ¥1,600）；11 月以前的课不拦", () => {
+  const schedule = `${R_SCHEDULE_HEAD}
+G01,雅思,庚老师（演示）,演示R-957,2026/11/02 10:00,2026/11/02 12:00,800,2,1600,0h-70%,1v1,,
+G02,雅思,庚老师（演示）,演示R-957,2026/11/03 10:00,2026/11/03 12:00,800,2,1600,学生病假-0%,1v1,,
+G00,雅思,庚老师（演示）,演示R-957,2026/10/27 10:00,2026/10/27 12:00,800,2,1600,0h-70%,1v1,,`;
+  const csv = `${HEAD}
+演示R-957,2026-10,庚老师（演示）,雅思,1v1,0h-70%,,2,2,800,100,,1600,1600,"4"
+演示R-957,2026-11,庚老师（演示）,雅思,1v1,0h-70%,,2,2,800,100,,1600,1600,"2"
+演示R-957,2026-11,庚老师（演示）,雅思,1v1,学生病假-0%,,2,2,800,100,,1600,1600,"3"`;
+  const reports = batchReport(csv, schedule).map(prepareReportForEditing);
+  assert.equal(reports.length, 1);
+  assert.deepEqual(messagesOf(reports[0]), [
+    "11月2日 10:00：「请假 收 70%」这节按规则应收 ¥1,120.00，课程表里填的是 ¥1,600.00，请先核对课程表",
+    "11月3日 10:00：「病假 免费」这节按规则应收 ¥0.00，课程表里填的是 ¥1,600.00，请先核对课程表",
+  ]);
+  const october = prepareReportForEditing(batchReport(`${HEAD}
+演示R-957,2026-10,庚老师（演示）,雅思,1v1,0h-70%,,2,2,800,100,,1600,1600,"4"`, schedule)[0]);
+  assert.deepEqual(messagesOf(october), []);
+});
+
+test("可考虑3 被拦的课在校对页改时长、清单价、改回原值都不解除拦截；改回原值不重算应付", () => {
+  const schedule = `${R_SCHEDULE_HEAD}
+G9,雅思,郑老师（演示）,演示庚-907,2026/11/04 10:00,2026/11/04 12:00,800,2,1600,,1v1,,赠课-免费`;
+  const csv = `${HEAD}
+演示庚-907,2026-11,郑老师（演示）,雅思,1v1,正常上课,赠课-免费,2,0,800,100,,1600,1600,"2"`;
+  const web = webReport(csv, schedule);
+  assert.equal(messagesOf(web).length, 1);
+  const same = updateCourseLine(web, 0, "duration", "2");
+  assert.equal(same.courseLines[0].payableAmount, 1600);
+  for (const edited of [same, updateCourseLine(web, 0, "unitPrice", ""), updateCourseLine(web, 0, "unitPrice", "900")]) {
+    assert.equal(messagesOf(edited).length, 1);
+    assert.throws(() => render(buildConfirmedReport(edited)), blocked422(/请先核对课程表/));
+  }
+});
+
+test("可考虑1 试听带手动折扣 90% 写「试听 收 80% · 9 折」", () => {
+  const schedule = `${R_SCHEDULE_HEAD}
+T1,雅思,乙老师（演示）,演示乙-902,2026/11/02 10:00,2026/11/02 14:00,800,4,2560,,1v1,,试听-80%`;
+  const csv = `${HEAD}
+演示乙-902,2026-11,乙老师（演示）,雅思,1v1,正常上课,试听-80%,4,0,800,90,,2560,2304,"2"`;
+  const batch = batchReport(csv, schedule)[0];
+  const web = prepareReportForEditing(batch);
+  assert.equal(batch.courseLines[0].billingNote, "试听 收 80% · 9 折");
+  assert.equal(web.courseLines[0].billingNote, "试听 收 80% · 9 折");
+  assert.equal(updateCourseLine(web, 0, "unitPrice", "900").courseLines[0].billingNote, "试听 收 80% · 9 折");
+  assert.match(render(buildConfirmedReport(web)), /试听 收 80% · 9 折/);
+});
+
+test("可考虑4 日历图例和折扣列同一套说法", () => {
+  const html = render(buildConfirmedReport(webReport()));
+  assert.doesNotMatch(html, /临时取消课程/);
+  assert.match(html, /<span class="leave"><i><\/i>请假、病假<\/span>/);
+  assert.match(html, /<span class="promo"><i><\/i>试听、赠课、模拟考试<\/span>/);
+});
+
+test("B05 同名学生按带编号的完整标识匹配：只被自己的课拦，日历不混课，文件名带编号", () => {
+  const schedule = `${R_SCHEDULE_HEAD}
+H01,雅思,辛老师（演示）,演示同-9901,2026/11/02 10:00,2026/11/02 12:00,800,2,1600,,1v1,,
+H02,雅思,辛老师（演示）,演示同-9902,2026/11/03 10:00,2026/11/03 12:00,800,2,1440,,1v1,,老带新-90%
+H03,雅思,辛老师（演示）,演示同-9902,2026/11/04 10:00,2026/11/04 12:00,800,2,1600,,1v1,,`;
+  const csv = `${HEAD}
+演示同-9901,2026-11,辛老师（演示）,雅思,1v1,正常上课,,2,0,800,100,,1600,1600,"2"
+演示同-9902,2026-11,辛老师（演示）,雅思,1v1,正常上课,,2,0,800,100,,1600,1600,"4"
+演示同-9902,2026-11,辛老师（演示）,雅思,1v1,正常上课,老带新-90%,2,0,800,100,,1440,1440,"3"`;
+  const [a, b] = batchReport(csv, schedule).map(prepareReportForEditing);
+  assert.deepEqual([a.studentId, b.studentId], ["演示同-9901", "演示同-9902"]);
+  assert.deepEqual(a.lessons.map((lesson) => lesson.date), ["2026-11-02"]);
+  assert.deepEqual(b.lessons.map((lesson) => lesson.date), ["2026-11-03", "2026-11-04"]);
+  assert.deepEqual(messagesOf(a), []);
+  assert.deepEqual(messagesOf(b), ["11月3日 10:00：价格优惠「老带新-90%」还没配置收费比例，请先联系开发"]);
+  assert.doesNotThrow(() => render(buildConfirmedReport(a)));
+  // 文件名和批量面板带编号，不互相覆盖
+  assert.deepEqual([reportFileName(a), reportFileName(b)], ["演示同-9901-2026-11.pdf", "演示同-9902-2026-11.pdf"]);
+  assert.deepEqual(splitBatchReports([a, b]).blocked.map((item) => item.studentId), ["演示同-9902"]);
 });

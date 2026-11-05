@@ -2,7 +2,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { renderFacultyByRole } from "./render-faculty.mjs";
-import { reportBlockers, roundYuan } from "./student-billing-batch-data.mjs";
+import { discountText, reportBlockers, roundYuan } from "./student-billing-batch-data.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, "../../..");
@@ -28,7 +28,7 @@ function formatNumber(value) {
 function discountLabel(line) {
   if ((line.isLeave || line.promoLabel) && line.billingNote && line.billingNote !== "—") return line.billingNote;
   if (line.discountReason) return line.discountReason;
-  if (line.discountRate && line.discountRate !== 100) return `${line.discountRate / 10} 折`;
+  if (line.discountRate && line.discountRate !== 100) return discountText(line.discountRate);
   return "—";
 }
 
@@ -432,8 +432,8 @@ export function renderStudentBillingReportHtml(report, teachers, options = {}) {
       ${renderCalendar(calendar)}
       <div class="legend">
         <span><i></i>正常课程</span>
-        <span class="leave"><i></i>请假 / 临时取消课程</span>
-        <span class="promo"><i></i>优惠课程</span>
+        <span class="leave"><i></i>请假、病假</span>
+        <span class="promo"><i></i>试听、赠课、模拟考试</span>
       </div>
     </section>
     `).join("")}

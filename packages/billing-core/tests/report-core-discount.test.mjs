@@ -325,3 +325,10 @@ test("只有价格优惠原文的行也算有内容，进入计费汇总", () =>
   assert.equal(record.reportable, true);
   assert.ok(!codes(record).includes("not_reportable"));
 });
+
+test("B06 金额与规则不一致按整数分比、容差 1 分：80.01 和 8.01 都不报，80.02 报", () => {
+  const mismatch = (price, amount) => codes(normalizeRow(lesson("试听", { 价格优惠: "试听-80%", 课程单价: String(price), 课程时长: "1", 课程总价格: String(amount) }), 2)).includes("amount_mismatch");
+  assert.equal(mismatch(100, 80.01), false);
+  assert.equal(mismatch(10, 8.01), false);
+  assert.equal(mismatch(100, 80.02), true);
+});
