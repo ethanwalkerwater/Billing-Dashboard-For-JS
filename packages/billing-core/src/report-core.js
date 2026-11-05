@@ -4,7 +4,17 @@ export const CANCELLATION_RATES = {
   "6h-30%": 0.3,
   // 学生提前 6 小时以上自助取消：保留课表记录但不收费，也不进入问题检查
   "提前取消-0%": 0,
+  "学生病假-0%": 0,
 };
+
+// 「价格优惠」选项原文 → 收费比例；只对上课时间（北京时间文本）>= 生效日的课计入。须与飞书「课程总价格」公式一致。
+export const DISCOUNT_RATES = {
+  "赠课-免费": 0,
+  "试听-80%": 0.8,
+  "模拟考试-0%": 0,
+};
+
+export const DISCOUNT_EFFECTIVE_DATE = "2026-11-01";
 
 export const NORMAL_STATUS = "正常上课";
 
@@ -24,6 +34,7 @@ export const ISSUE_LABELS = {
   missing_duration: "缺少课程时长",
   missing_amount: "缺少课程总价格",
   unknown_cancellation: "未知取消标记",
+  unknown_discount: "未知优惠标记",
   amount_mismatch: "金额与规则不一致",
   not_reportable: "未进入计费汇总",
 };
@@ -37,6 +48,11 @@ export function parseCancellationRate(label) {
   return CANCELLATION_RATES[cleanText(label)] ?? null;
 }
 
+export function parseDiscountRate(label) {
+  const key = cleanText(label);
+  return Object.hasOwn(DISCOUNT_RATES, key) ? DISCOUNT_RATES[key] : null;
+}
+
 export function parseNumber(value) {
   const text = cleanText(value).replace(/,/g, "");
   if (!text) return null;
@@ -44,10 +60,18 @@ export function parseNumber(value) {
   return Number.isFinite(number) ? number : null;
 }
 
+function matchDateTime(value) {
+  return cleanText(value).match(/^(\d{4})[/-](\d{1,2})[/-](\d{1,2})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
+}
+
+// 只用 CSV 原文的年月日拼 YYYY-MM-DD，不经过 Date，结果与本机时区无关
+function dayKey(value) {
+  const match = matchDateTime(value);
+  return match ? `${match[1]}-${pad2(match[2])}-${pad2(match[3])}` : "";
+}
+
 export function parseDateTime(value) {
-  const text = cleanText(value);
-  if (!text) return null;
-  const match = text.match(/^(\d{4})[/-](\d{1,2})[/-](\d{1,2})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
+  const match = matchDateTime(value);
   if (!match) return null;
   const [, year, month, day, hour = "0", minute = "0", second = "0"] = match;
   const date = new Date(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute), Number(second));
@@ -128,11 +152,21 @@ export function normalizeRow(row, rawRowNumber) {
   const sourceAmount = parseNumber(row["课程总价格"]);
   const cancellationRate = parseCancellationRate(cancellation);
   const isCancelled = Boolean(cancellation);
+  const discountRaw = cleanText(row["价格优惠"]);
+  const discountApplies = Boolean(discountRaw) && Boolean(startDate) && dayKey(row["上课时间"]) >= DISCOUNT_EFFECTIVE_DATE;
+  const discountStatus = discountApplies ? discountRaw : "";
+  const discountRate = discountApplies ? parseDiscountRate(discountRaw) : null;
+  const isDiscounted = Boolean(discountStatus);
+  const cancelFactor = isCancelled ? cancellationRate : 1;
+  const discountFactor = isDiscounted ? discountRate : 1;
+  // 任一比例未知时整体为 null，不能让 null 参与乘法（JS 里 x * null = 0）
+  const chargeRate = cancelFactor == null || discountFactor == null ? null : cancelFactor * discountFactor;
+  const statusLabel = [isCancelled ? cancellation : "", discountStatus].filter(Boolean).join(" · ") || NORMAL_STATUS;
   const issues = [];
 
   let expectedAmount = null;
-  if (unitPrice != null && duration != null && (!isCancelled || cancellationRate != null)) {
-    expectedAmount = unitPrice * duration * (isCancelled ? cancellationRate : 1);
+  if (unitPrice != null && duration != null && chargeRate != null) {
+    expectedAmount = unitPrice * duration * chargeRate;
   }
 
   const amount = sourceAmount ?? expectedAmount ?? 0;
@@ -151,11 +185,12 @@ export function normalizeRow(row, rawRowNumber) {
   if (duration == null) addIssue(issues, "missing_duration", rawRowNumber, "课程时长为空或无法解析。");
   if (sourceAmount == null) addIssue(issues, "missing_amount", rawRowNumber, "课程总价格为空或无法解析。");
   if (isCancelled && cancellationRate == null) addIssue(issues, "unknown_cancellation", rawRowNumber, `临时取消标记未配置收费比例：${cancellation}`);
+  if (isDiscounted && discountRate == null) addIssue(issues, "unknown_discount", rawRowNumber, `价格优惠标记未配置收费比例：${discountRaw}`);
   if (amountDiff != null && Math.abs(amountDiff) > 0.01) {
     addIssue(issues, "amount_mismatch", rawRowNumber, `原表金额 ${sourceAmount} 与规则计算 ${roundNumber(expectedAmount)} 相差 ${roundNumber(amountDiff)}。`);
   }
 
-  const reportable = Boolean(startDate) && (Boolean(teacher) || unitPrice != null || Math.abs(sourceAmount || 0) > 0.000001 || Boolean(cancellation));
+  const reportable = Boolean(startDate) && (Boolean(teacher) || unitPrice != null || Math.abs(sourceAmount || 0) > 0.000001 || Boolean(cancellation) || Boolean(discountStatus));
   if (!reportable) addIssue(issues, "not_reportable", rawRowNumber, "没有老师、单价、收费金额或取消标记，已排除在计费汇总之外。");
 
   return {
@@ -184,6 +219,13 @@ export function normalizeRow(row, rawRowNumber) {
     cancellationStatus: isCancelled ? cancellation : NORMAL_STATUS,
     cancellationRate,
     isCancelled,
+    discountRaw,
+    discountApplies,
+    discountStatus,
+    discountRate,
+    isDiscounted,
+    chargeRate: roundNumber(chargeRate),
+    statusLabel,
     reportable,
     issues,
   };
@@ -201,20 +243,22 @@ export function aggregateRecords(records, view, month, entity) {
     const counterparty = isStudentView ? record.teacher || MISSING_TEACHER : record.student || MISSING_STUDENT;
     const courseType = record.courseType || MISSING_COURSE;
     const teachingType = record.teachingType || MISSING_TEACHING_TYPE;
-    const key = JSON.stringify([counterparty, courseType, teachingType, record.cancellationStatus]);
+    const key = JSON.stringify([counterparty, courseType, teachingType, record.statusLabel]);
     if (!grouped.has(key)) grouped.set(key, []);
     grouped.get(key).push(record);
   }
 
   const groups = [...grouped.entries()].map(([key, rows]) => {
-    const [counterparty, courseType, teachingType, cancellationStatus] = JSON.parse(key);
+    const [counterparty, courseType, teachingType, statusLabel] = JSON.parse(key);
     const cancelledRows = rows.filter((row) => row.isCancelled);
     const unitPrices = [...new Set(rows.map((row) => row.unitPrice).filter((price) => price != null))].sort((a, b) => a - b);
     return {
       counterparty,
       courseType,
       teachingType,
-      cancellationStatus,
+      statusLabel,
+      cancellationStatus: rows[0].cancellationStatus,
+      discountStatus: rows[0].discountStatus,
       lessons: rows.length,
       duration: sum(rows.map((row) => row.duration)),
       cancelledDuration: sum(cancelledRows.map((row) => row.duration)),
@@ -228,11 +272,11 @@ export function aggregateRecords(records, view, month, entity) {
   });
 
   groups.sort((a, b) => (
-    cancellationOrder(a.cancellationStatus) - cancellationOrder(b.cancellationStatus) ||
+    cancellationOrder(a.statusLabel) - cancellationOrder(b.statusLabel) ||
     a.counterparty.localeCompare(b.counterparty, "zh-CN") ||
     a.courseType.localeCompare(b.courseType, "zh-CN") ||
     a.teachingType.localeCompare(b.teachingType, "zh-CN") ||
-    a.cancellationStatus.localeCompare(b.cancellationStatus, "zh-CN")
+    a.statusLabel.localeCompare(b.statusLabel, "zh-CN")
   ));
 
   const qualityIssues = matched.flatMap((record) => record.issues);
@@ -309,6 +353,8 @@ export function buildReportData(records, sourceName = "") {
       reportableRows: records.filter((record) => record.reportable).length,
       excludedRows: records.filter((record) => !record.reportable).length,
       knownCancellationRates: CANCELLATION_RATES,
+      knownDiscountRates: DISCOUNT_RATES,
+      discountEffectiveDate: DISCOUNT_EFFECTIVE_DATE,
       defaultMonth,
     },
     months,
