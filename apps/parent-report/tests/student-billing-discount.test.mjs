@@ -476,6 +476,8 @@ T2,雅思,甲老师（演示）,演示甲-9001,2026/11/03 10:00,2026/11/03 12:00
   const web = webReport(csv, schedule);
   assert.equal(web.totals.payableAmount, 2240);
   const before = web.courseLines[0];
+  // 校对页不再把合并行的原价算成 ¥0（家长 PDF「原价」列）
+  assert.deepEqual([before.grossAmount, before.discountAmount], [2240, 0]);
   for (const [field, value] of [["courseType", "雅思口语"], ["teacher", "乙老师（演示）"], ["teachingType", "小班"], ["adjustmentReason", "备注"]]) {
     const edited = updateCourseLine(web, 0, field, value);
     const line = edited.courseLines[0];

@@ -65,8 +65,10 @@ function changedFields(line) {
   ].filter((field) => String(line[field] ?? "") !== String(baseline[field] ?? ""));
 }
 
-function recalculateLine(line, { keepPayable = false } = {}) {
-  const grossAmount = round(Number(line.unitPrice || 0) * Number(line.duration || 0));
+function recalculateLine(line, { keepPayable = false, keepGross = false } = {}) {
+  const grossAmount = keepGross
+    ? round(line.grossAmount)
+    : round(Number(line.unitPrice || 0) * Number(line.duration || 0));
   const isLeave = line.isLeave || line.status !== "正常上课";
   // 优惠课的 discountRate 重算后含优惠比例，手填折扣率用编辑前存下的那份，避免重复乘
   const manualRate = line.manualDiscountRate ?? line.discountRate;
@@ -196,7 +198,8 @@ export function prepareReportForEditing(report) {
       _baseline: baselineLine(line),
       _changedFields: [],
     };
-    return recalculateLine(prepared, { keepPayable: true });
+    // 多单价合并行读不出单价，原价沿用导出值，别算成 0（家长 PDF「原价」列会显示 ¥0）
+    return recalculateLine(prepared, { keepPayable: true, keepGross: prepared.unitPrice == null });
   });
   return recomputeReportTotals(next);
 }
