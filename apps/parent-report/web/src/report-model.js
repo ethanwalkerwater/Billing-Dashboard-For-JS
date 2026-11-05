@@ -213,16 +213,17 @@ export function updateCourseLine(report, index, field, value) {
   if (String(parsed ?? "") === String(line[field] ?? "")) return report;
   line[field] = parsed;
 
-  // 金额和规则对不上的拦截挂在课表那几节上，校对页改时长、单价都解除不了，只能改课程表重新导出
-  if (field === "payableAmount") {
-    line.manualPayable = true;
-  } else if (["duration", "unitPrice", "cancellationPercent"].includes(field)) {
-    line.manualPayable = false;
+  // 只有时长、单价、取消比例、手填应付会动金额；改老师、课程、授课类型、原因等文字不重算
+  // （多单价合并行的单价读成 null，重算会把应付静默算成 0）
+  if (!numericFields.has(field)) {
+    line._changedFields = changedFields(line);
+    next.courseLines[index] = line;
+    return recomputeReportTotals(next);
   }
 
-  next.courseLines[index] = recalculateLine(line, {
-    keepPayable: line.manualPayable || field === "adjustmentReason",
-  });
+  // 金额和规则对不上的拦截挂在课表那几节上，校对页改时长、单价都解除不了，只能改课程表重新导出
+  line.manualPayable = field === "payableAmount";
+  next.courseLines[index] = recalculateLine(line, { keepPayable: line.manualPayable });
   return recomputeReportTotals(next);
 }
 

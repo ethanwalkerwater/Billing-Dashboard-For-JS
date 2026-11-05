@@ -232,6 +232,9 @@ function buildCourseLine(row) {
     discountAmount: roundMoney(grossAmount - row.payableAmount),
     billingNote: billingNote(row),
     rawRows: row.rawRows,
+    // 收费 CSV 导出时的原值，校对页改不动：reportBlockers 拿它和课表核对
+    exportedAmount: roundMoney(row.grossAmount),
+    exportedDuration: row.duration,
   };
 }
 
@@ -313,9 +316,32 @@ export function reportBlockers(report) {
     }
   }
   // 收费 CSV 里的标签也查一遍（课表里没有这几节时也拦）；日期取这一行「原始行」对应的课
+  const effectiveMonth = DISCOUNT_EFFECTIVE_DATE.slice(0, 7);
   for (const line of report.courseLines || []) {
     const rawRows = new Set(line.rawRows || []);
-    checkLabels(line.status, line.promoLabel, lessons.filter((lesson) => rawRows.has(lesson.rawRow)).map(lessonWhen));
+    const matched = lessons.filter((lesson) => rawRows.has(lesson.rawRow));
+    const whens = matched.map(lessonWhen);
+    checkLabels(line.status, line.promoLabel, whens);
+    // 11-01 起收费 CSV 每行的金额要和它原始行那几节课表金额合计对上（按分比，容差 1 分）：
+    // 课表改了、收费 CSV 没重新导出时，应付还是旧金额。课表里一节都找不到的行照旧不核对（只有课时不一致警告）
+    if (!matched.length || line.exportedAmount == null || !(line.month >= effectiveMonth)) continue;
+    const label = [line.courseType, line.billingNote !== "—" && line.billingNote].filter(Boolean).join(" · ");
+    const scheduleAmount = matched.reduce((sum, lesson) => sum + Number(lesson.payableAmount || 0), 0);
+    if (Math.abs(Math.round(line.exportedAmount * 100) - Math.round(scheduleAmount * 100)) > 1) {
+      const message = `「${label}」收费明细里是 ${formatMoneyText(line.exportedAmount)}，课程表里是 ${formatMoneyText(scheduleAmount)}，两份文件对不上，请先用这份课程表重新导出课时收费`;
+      add(message, whens, () => message);
+    }
+  }
+  // 学生没编号（名字不以「-数字」结尾）、课表里同名的对应多个老师或课程、课表时长多于收费汇总：多半混进了另一个同名学生的课
+  const studentId = cleanText(report.studentId || report.studentName);
+  if (studentId && !/-\d+$/u.test(studentId)) {
+    const distinct = (key) => new Set(lessons.map((lesson) => lesson[key])).size;
+    const scheduleDuration = lessons.reduce((sum, lesson) => sum + Number(lesson.duration || 0), 0);
+    const exportedDuration = (report.courseLines || []).reduce((sum, line) => sum + Number(line.exportedDuration || 0), 0);
+    if ((distinct("teacher") > 1 || distinct("courseType") > 1) && roundMoney(scheduleDuration) > roundMoney(exportedDuration)) {
+      const message = `课程表里有多个同名学生「${studentId}」，请在课程表的学生名后加编号再导出`;
+      add(message, [], () => message);
+    }
   }
   return [...groups.values()].map((group) => {
     const message = group.build(group);
