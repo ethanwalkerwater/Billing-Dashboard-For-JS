@@ -1,3 +1,5 @@
+import { composeBillingNote } from "../../src/student-billing-batch-data.mjs";
+
 const MONEY_PRECISION = 100;
 
 function round(value) {
@@ -66,12 +68,16 @@ function changedFields(line) {
 function recalculateLine(line, { keepPayable = false } = {}) {
   const grossAmount = round(Number(line.unitPrice || 0) * Number(line.duration || 0));
   const isLeave = line.isLeave || line.status !== "正常上课";
-  const normalRate = Number.isFinite(Number(line.discountRate))
-    ? Number(line.discountRate) / 100
+  // 优惠课的 discountRate 重算后含优惠比例，手填折扣率用编辑前存下的那份，避免重复乘
+  const manualRate = line.manualDiscountRate ?? line.discountRate;
+  const normalRate = Number.isFinite(Number(manualRate))
+    ? Number(manualRate) / 100
     : 1;
-  const automaticRate = isLeave
+  // 未知优惠（promoRate 为 null）不参与乘法：JS 里 x * null = 0，会把应付静默算成 0
+  const promoRate = line.promoUnknown || line.promoRate == null ? 1 : Number(line.promoRate);
+  const automaticRate = (isLeave
     ? Number(line.cancellationPercent || 0) / 100
-    : normalRate;
+    : normalRate) * promoRate;
   const payableAmount = keepPayable
     ? round(line.payableAmount)
     : round(grossAmount * automaticRate);
@@ -84,7 +90,11 @@ function recalculateLine(line, { keepPayable = false } = {}) {
     payableAmount,
     discountAmount,
     discountRate: grossAmount > 0 ? round((payableAmount / grossAmount) * 100) : 100,
-    billingNote: isLeave ? `请假 ${Number(line.cancellationPercent || 0)}%` : "—",
+    billingNote: composeBillingNote(
+      isLeave ? `请假 ${Number(line.cancellationPercent || 0)}%` : "",
+      line.promoLabel,
+      line.promoUnknown ? null : line.promoRate ?? 1,
+    ),
     unitPriceLabel: line.unitPrice == null
       ? "—"
       : Number(line.unitPrice).toLocaleString("zh-CN", { maximumFractionDigits: 2 }),
@@ -181,6 +191,7 @@ export function prepareReportForEditing(report) {
     const prepared = {
       ...line,
       cancellationPercent: inferCancellationPercent(line),
+      ...(line.promoLabel ? { manualDiscountRate: line.discountRate } : {}),
       manualPayable: false,
       adjustmentReason: "",
       _baseline: baselineLine(line),
@@ -250,6 +261,7 @@ export function buildConfirmedReport(report) {
     delete clean._changedFields;
     delete clean.manualPayable;
     delete clean.cancellationPercent;
+    delete clean.manualDiscountRate;
     clean.discountReason = clean.adjustmentReason || clean.discountReason;
     delete clean.adjustmentReason;
     delete clean._added;
@@ -275,6 +287,9 @@ export function validateReport(report) {
     }
     if (!Number.isFinite(line.payableAmount) || line.payableAmount < 0) {
       issues.push({ level: "error", row, message: "应付金额必须是非负数字" });
+    }
+    if (line.promoUnknown) {
+      issues.push({ level: "warning", row, message: `第 ${row} 行价格优惠「${line.promoLabel}」未识别，应付按原比例计算，请核对` });
     }
     if (line.manualPayable && !line._added && !String(line.adjustmentReason || "").trim()) {
       issues.push({ level: "error", row, message: "手动覆盖应付金额时必须填写修改原因" });
