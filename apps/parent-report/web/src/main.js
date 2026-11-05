@@ -6,6 +6,7 @@ import {
   buildConfirmedReport,
   buildRequiredSelectChoices,
   collectInvalidReports,
+  splitBatchReports,
   formatMoney,
   hasChanges,
   removeCourseLine,
@@ -948,7 +949,7 @@ function previewPages(report) {
               ${report.months?.length > 1 && line.month ? `<small>${esc(line.month)}</small>` : ""}
             </div>
             <span>${line.duration == null ? "—" : `${esc(line.duration)}h`}</span>
-            <span>${line.unitPrice == null ? "—" : esc(formatMoney(line.unitPrice))}</span>
+            <span>${line.unitPrice == null ? "—" : esc(previewMoney(line.unitPrice))}</span>
             <span>${esc(previewMoney(line.payableAmount))}</span>
           </div>
         `).join("")}
@@ -1063,7 +1064,7 @@ function batchValidationPanel(invalidReports) {
       <div class="batch-validation-head">
         <span class="batch-validation-icon"><i class="ph ph-warning-circle" aria-hidden="true"></i></span>
         <div>
-          <strong>${invalidReports.length} 份报告需要处理</strong>
+          <strong>${invalidReports.length} 份报告需要处理，没有放进 ZIP</strong>
           <span>点击报告可直接切换到对应学员，并查看具体错误行。</span>
         </div>
         <button id="closeBatchValidation" class="batch-validation-close" type="button" aria-label="关闭错误清单">
@@ -1512,17 +1513,22 @@ function updateBatchProgress(index, total, label) {
   if (text) text.textContent = label;
 }
 
-async function downloadBatch() {
-  const invalid = collectInvalidReports(state.reports);
-  if (invalid.length) {
-    state.batchValidationVisible = true;
-    render();
-    requestAnimationFrame(() => {
-      document.querySelector("#batchValidationPanel")?.scrollIntoView({
-        behavior: "smooth",
-        block: "center",
-      });
+function showBatchValidation() {
+  state.batchValidationVisible = true;
+  render();
+  requestAnimationFrame(() => {
+    document.querySelector("#batchValidationPanel")?.scrollIntoView({
+      behavior: "smooth",
+      block: "center",
     });
+  });
+}
+
+async function downloadBatch() {
+  // 被拦下的学生不进 ZIP，列在校验面板里；其余照常生成
+  const { ready, blocked } = splitBatchReports(state.reports);
+  if (!ready.length) {
+    showBatchValidation();
     return;
   }
 
@@ -1532,9 +1538,9 @@ async function downloadBatch() {
   const zip = new JSZip();
   const failures = [];
 
-  for (let index = 0; index < state.reports.length; index += 1) {
-    const report = state.reports[index];
-    updateBatchProgress(index, state.reports.length, `正在生成 ${report.studentName}（${index + 1}/${state.reports.length}）`);
+  for (let index = 0; index < ready.length; index += 1) {
+    const report = ready[index];
+    updateBatchProgress(index, ready.length, `正在生成 ${report.studentName}（${index + 1}/${ready.length}）`);
     try {
       zip.file(reportFilename(report), await requestPdf(report));
     } catch (error) {
@@ -1542,13 +1548,15 @@ async function downloadBatch() {
     }
   }
 
-  updateBatchProgress(state.reports.length, state.reports.length, "正在压缩 ZIP");
+  updateBatchProgress(ready.length, ready.length, "正在压缩 ZIP");
   const blob = await zip.generateAsync({ type: "blob", compression: "DEFLATE" });
-  const months = [...new Set(state.reports.map((report) => report.month))].join("+");
+  const months = [...new Set(ready.map((report) => report.month))].join("+");
   saveBlob(blob, `菁仕课时费明细-${months || "批量"}.zip`);
   state.batch = null;
-  render();
-  showToast(failures.length ? `ZIP 已生成，${failures.length} 份报告失败` : "批量报告 ZIP 已生成", failures.length > 0);
+  if (blocked.length) showBatchValidation();
+  else render();
+  const skipped = failures.length + blocked.length;
+  showToast(skipped ? `ZIP 已生成，${skipped} 份报告未生成` : "批量报告 ZIP 已生成", skipped > 0);
 }
 
 function showToast(message, error = false) {

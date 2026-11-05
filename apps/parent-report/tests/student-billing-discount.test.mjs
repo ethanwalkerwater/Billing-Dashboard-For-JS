@@ -9,6 +9,7 @@ import {
 import {
   buildConfirmedReport,
   prepareReportForEditing,
+  splitBatchReports,
   updateCourseLine,
   validateReport,
 } from "../web/src/report-model.js";
@@ -84,7 +85,7 @@ test("T-B04 日历上赠课那天标优惠名，不标请假", () => {
   assert.equal(gift.isPromo, true);
   assert.equal(gift.promoLabel, "赠课-免费");
   const html = render(buildConfirmedReport(report));
-  assert.match(html, /<mark class="promo">赠课-免费<\/mark>/);
+  assert.match(html, /<mark class="promo">赠课 免费<\/mark>/); // C2：和折扣列同一套说法
   assert.doesNotMatch(html, /请假 · 临时取消/);
   assert.match(html, /优惠课程<\/span>/);
 });
@@ -199,4 +200,105 @@ test("用户补充 金额四舍五入到元：三行各 279.5 各显示 ¥280，
   assert.match(html, /Total Payable<\/span>\s*<strong>¥839<\/strong>/);
   assert.match(html, /¥839/);
   assert.doesNotMatch(html, /¥840/);
+});
+
+const errorsOf = (report) => validateReport(report).filter((issue) => issue.level === "error");
+const blocked422 = (pattern) => (error) => error.statusCode === 422 && pattern.test(error.message);
+
+test("B02 课表里的未知优惠（收费 CSV 没有优惠列）单个、批量、渲染都拦下", () => {
+  const csv = `${OLD_HEAD}
+演示甲-901,2026-11,林老师（演示）,演示数学,1v1,正常上课,4,0,800,100,,3200,3200,"2 3"`;
+  const schedule = `${SCHEDULE_HEAD}
+演示甲-901,林老师（演示）,演示数学,1v1,2026/11/02 10:00,2026/11/02 12:00,800,2,1600,,老带新-90%,校区
+演示甲-901,林老师（演示）,演示数学,1v1,2026/11/05 10:00,2026/11/05 12:00,800,2,1600,,,校区`;
+  const batch = batchReport(csv, schedule)[0];
+  const web = prepareReportForEditing(batch);
+  const errors = errorsOf(web);
+  assert.deepEqual(errors.map((issue) => [issue.row, issue.message]), [[1, "价格优惠「老带新-90%」还没配置收费比例，请先联系开发"]]);
+  assert.equal(splitBatchReports([web]).ready.length, 0);
+  // API / 命令行入口：不经过网页校验也不能渲染
+  assert.throws(() => render(batch), blocked422(/第 1 行：价格优惠「老带新-90%」还没配置收费比例/));
+  assert.throws(() => render(buildConfirmedReport(web)), blocked422(/老带新-90%/));
+});
+
+test("B03 优惠行金额和规则对不上（改公式前导出的赠课 1600）拦下；改单价按规则重算后放行", () => {
+  const csv = `${HEAD}
+演示庚-907,2026-11,郑老师（演示）,雅思,1v1,正常上课,,2,0,800,100,,1600,1600,"4"
+演示庚-907,2026-11,郑老师（演示）,雅思,1v1,正常上课,赠课-免费,2,0,800,100,,1600,1600,"2"
+演示庚-907,2026-11,郑老师（演示）,雅思,1v1,0h-70%,试听-80%,1.5,1.5,333,100,,349.65,349.65,"3"`;
+  const batch = batchReport(csv, "")[0];
+  const web = prepareReportForEditing(batch);
+  assert.deepEqual(errorsOf(web).map((issue) => [issue.row, issue.message]), [
+    [2, "「赠课-免费」应收 ¥0，课时收费表是 ¥1,600，请先核对课程表"],
+    [3, "「0h-70% · 试听-80%」应收 ¥279.72，课时收费表是 ¥349.65，请先核对课程表"],
+  ]);
+  assert.throws(() => render(batch), blocked422(/第 2 行：「赠课-免费」应收 ¥0/));
+  assert.throws(() => render(buildConfirmedReport(web)), blocked422(/课时收费表是 ¥1,600/));
+  let fixed = updateCourseLine(web, 1, "unitPrice", "800");
+  fixed = updateCourseLine(fixed, 2, "duration", "1.5");
+  assert.equal(fixed.courseLines[1].payableAmount, 0);
+  assert.deepEqual(errorsOf(fixed), []);
+  assert.doesNotThrow(() => render(buildConfirmedReport(fixed)));
+  // 金额和规则一致的优惠行不受影响
+  assert.deepEqual(errorsOf(webReport()), []);
+});
+
+test("C2 日历标签和折扣列同一套说法：病假 免费、请假 收 70%、试听 收 80%、赠课 免费", () => {
+  const csv = `${HEAD}
+演示乙-902,2026-11,周老师（演示）,演示数学,1v1,学生病假-0%,,2,2,800,100,,0,0,"2"
+演示乙-902,2026-11,周老师（演示）,演示数学,1v1,0h-70%,试听-80%,1.5,1.5,333,100,,279.72,279.72,"3"
+演示乙-902,2026-11,周老师（演示）,演示数学,1v1,正常上课,赠课-免费,2,0,800,100,,0,0,"4"`;
+  const schedule = `${SCHEDULE_HEAD}
+演示乙-902,周老师（演示）,演示数学,1v1,2026/11/12 18:00,2026/11/12 20:00,800,2,0,学生病假-0%,,校区
+演示乙-902,周老师（演示）,演示数学,1v1,2026/11/13 18:00,2026/11/13 19:30,333,1.5,279.72,0h-70%,试听-80%,校区
+演示乙-902,周老师（演示）,演示数学,1v1,2026/11/14 18:00,2026/11/14 20:00,800,2,0,,赠课-免费,校区`;
+  const web = webReport(csv, schedule);
+  const [sick, combo, gift] = web.lessons;
+  assert.deepEqual([sick.leaveLabel, combo.leaveLabel, combo.promoText, gift.promoText], ["病假 免费", "请假 收 70%", "试听 收 80%", "赠课 免费"]);
+  assert.equal(web.courseLines[1].billingNote, `${combo.leaveLabel} · ${combo.promoText}`);
+  const html = render(buildConfirmedReport(web));
+  assert.match(html, /<mark>病假 免费<\/mark>/);
+  assert.match(html, /<mark>请假 收 70%<\/mark>\s*<mark class="promo">试听 收 80%<\/mark>/);
+  assert.match(html, /<mark class="promo">赠课 免费<\/mark>/);
+  assert.doesNotMatch(html, /请假 · 临时取消|试听-80%|赠课-免费/);
+});
+
+test("C3 未知取消标记「1h-60%」和未知优惠一样拦下（收费 CSV 和课表两条输入）", () => {
+  const csv = `${HEAD}
+演示庚-907,2026-11,郑老师（演示）,雅思,1v1,正常上课,,2,0,800,100,,1600,1600,"4"
+演示庚-907,2026-11,郑老师（演示）,雅思,1v1,1h-60%,,2,2,800,100,,960,960,"3"`;
+  const web = webReport(csv, "");
+  assert.deepEqual(errorsOf(web).map((issue) => [issue.row, issue.message]), [[2, "取消标记「1h-60%」还没配置收费比例，请先联系开发"]]);
+  assert.throws(() => render(batchReport(csv, "")[0]), blocked422(/第 2 行：取消标记「1h-60%」还没配置收费比例/));
+
+  const schedule = `${SCHEDULE_HEAD}
+演示庚-907,郑老师（演示）,雅思,1v1,2026/11/04 10:00,2026/11/04 12:00,800,2,960,1h-60%,,校区`;
+  const fromSchedule = webReport(`${HEAD}
+演示庚-907,2026-11,郑老师（演示）,雅思,1v1,正常上课,,2,0,800,100,,1600,1600,"4"`, schedule);
+  assert.deepEqual(errorsOf(fromSchedule).map((issue) => issue.message), ["取消标记「1h-60%」还没配置收费比例，请先联系开发"]);
+  assert.throws(() => render(buildConfirmedReport(fromSchedule)), blocked422(/1h-60%/));
+});
+
+test("C4 批量 ZIP 先出能出的学生，被拦下的列出原因", () => {
+  const csv = `${HEAD}
+演示甲-901,2026-11,林老师（演示）,演示数学,1v1,正常上课,,2,0,800,100,,1600,1600,"2"
+演示庚-907,2026-11,郑老师（演示）,雅思,1v1,1h-60%,,2,2,800,100,,960,960,"3"`;
+  const reports = batchReport(csv, "").map(prepareReportForEditing);
+  const { ready, blocked } = splitBatchReports(reports);
+  assert.deepEqual(ready.map((report) => report.studentName), ["演示甲-901"]);
+  assert.deepEqual(blocked.map((item) => [item.studentName, item.errors[0].message]), [["演示庚-907", "取消标记「1h-60%」还没配置收费比例，请先联系开发"]]);
+});
+
+test("C5 家长能看到的单价四舍五入到元：命令行、网页单个、ZIP 都是 ¥651", () => {
+  const csv = `${HEAD}
+演示戊-905,2026-11,林老师（演示）,演示数学,1v1,正常上课,,2,0,650.8,100,,1301.6,1301.6,"2"`;
+  const batch = batchReport(csv, "")[0];
+  const web = webReport(csv, "");
+  assert.equal(batch.courseLines[0].unitPriceLabel, "651");
+  assert.equal(web.courseLines[0].unitPriceLabel, "651");
+  assert.equal(updateCourseLine(web, 0, "unitPrice", "650.8").courseLines[0].unitPriceLabel, "651");
+  for (const html of [render(batch), render(buildConfirmedReport(web))]) {
+    assert.match(html, /<td>¥651<\/td>/);
+    assert.doesNotMatch(html, /650\.8/);
+  }
 });

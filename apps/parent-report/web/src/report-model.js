@@ -1,4 +1,4 @@
-import { composeBillingNote, leaveNote } from "../../src/student-billing-batch-data.mjs";
+import { composeBillingNote, formatIntegerAmount, leaveNote, reportBlockers } from "../../src/student-billing-batch-data.mjs";
 
 const MONEY_PRECISION = 100;
 
@@ -95,9 +95,7 @@ function recalculateLine(line, { keepPayable = false } = {}) {
       line.promoLabel,
       line.promoUnknown ? null : line.promoRate ?? 1,
     ),
-    unitPriceLabel: line.unitPrice == null
-      ? "—"
-      : Number(line.unitPrice).toLocaleString("zh-CN", { maximumFractionDigits: 2 }),
+    unitPriceLabel: line.unitPrice == null ? "—" : formatIntegerAmount(line.unitPrice),
   };
   next._changedFields = changedFields(next);
   return next;
@@ -215,6 +213,8 @@ export function updateCourseLine(report, index, field, value) {
     line.manualPayable = true;
   } else if (["duration", "unitPrice", "cancellationPercent"].includes(field)) {
     line.manualPayable = false;
+    // 应付按规则重算后和说明一致，不再是「金额与规则对不上」
+    line.amountMismatch = null;
   }
 
   next.courseLines[index] = recalculateLine(line, {
@@ -288,13 +288,12 @@ export function validateReport(report) {
     if (!Number.isFinite(line.payableAmount) || line.payableAmount < 0) {
       issues.push({ level: "error", row, message: "应付金额必须是非负数字" });
     }
-    if (line.promoUnknown) {
-      issues.push({ level: "error", row, message: `价格优惠「${line.promoLabel}」还没配置收费比例，请先联系开发` });
-    }
     if (line.manualPayable && !line._added && !String(line.adjustmentReason || "").trim()) {
       issues.push({ level: "error", row, message: "手动覆盖应付金额时必须填写修改原因" });
     }
   });
+
+  for (const blocker of reportBlockers(report)) issues.push({ level: "error", ...blocker });
 
   if (report.prepay?.enabled && !isOptionalNonNegative(report.prepay.balanceBefore ?? -1)) {
     issues.push({ level: "error", row: null, message: "已开启预付，请填写扣费前预付余额" });
@@ -323,6 +322,13 @@ export function collectInvalidReports(reports) {
       errors,
     }];
   });
+}
+
+// 批量 ZIP 先出能出的学生，被拦下的单独列出
+export function splitBatchReports(reports) {
+  const blocked = collectInvalidReports(reports);
+  const indexes = new Set(blocked.map((item) => item.index));
+  return { ready: reports.filter((_, index) => !indexes.has(index)), blocked };
 }
 
 export function formatMoney(value) {

@@ -1,4 +1,4 @@
-import { cleanText, normalizeRow, parseCsv, parseDiscountRate, parseNumber } from "@jingshi/billing-core";
+import { NORMAL_STATUS, cleanText, normalizeRow, parseCancellationRate, parseCsv, parseDiscountRate, parseNumber } from "@jingshi/billing-core";
 
 const WEEKDAYS = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
 
@@ -74,7 +74,8 @@ export function roundYuan(value) {
   return Math.round(roundMoney(value));
 }
 
-function formatIntegerAmount(value) {
+// 家长能看到的单价、金额标签都走这里：四舍五入到元
+export function formatIntegerAmount(value) {
   return roundYuan(value).toLocaleString("zh-CN", { maximumFractionDigits: 0 });
 }
 
@@ -170,6 +171,22 @@ function billingNote(row) {
   return composeBillingNote(leave, row.promoLabel, row.promoRate);
 }
 
+function formatMoneyText(value) {
+  return `¥${Number(value || 0).toLocaleString("zh-CN", { maximumFractionDigits: 2 })}`;
+}
+
+// 优惠行的总金额要和「单价 × 时长 × 取消比例 × 优惠比例」对得上；飞书公式没改时导出的是全价，说明和金额会矛盾
+function promoAmountMismatch(row) {
+  if (!row.promoLabel || row.promoRate == null || row.unitPrice == null) return null;
+  const isLeave = row.status !== NORMAL_STATUS;
+  const cancelRate = isLeave ? parseCancellationRate(row.status) : 1;
+  if (cancelRate == null) return null;
+  const ruleAmount = roundMoney(row.unitPrice * row.duration * cancelRate * row.promoRate);
+  const sourceAmount = roundMoney(row.grossAmount);
+  if (Math.abs(ruleAmount - sourceAmount) <= 0.01) return null;
+  return { label: [isLeave ? row.status : "", row.promoLabel].filter(Boolean).join(" · "), ruleAmount, sourceAmount };
+}
+
 function buildCourseLine(row) {
   // 优惠课导出的总金额已是优惠后金额，原价按单价 × 时长算，和网页编辑后一致
   const grossAmount = row.promoLabel && row.unitPrice != null
@@ -185,6 +202,7 @@ function buildCourseLine(row) {
     promoLabel: row.promoLabel,
     promoRate: row.promoRate,
     promoUnknown: row.promoUnknown,
+    amountMismatch: promoAmountMismatch(row),
     duration: row.duration,
     cancelledDuration: row.cancelledDuration,
     unitPrice: row.unitPrice,
@@ -202,6 +220,7 @@ function buildCourseLine(row) {
 }
 
 function lessonFromRecord(record) {
+  const cancelLabel = record.isCancelled ? record.cancellationRaw : "";
   const grossAmount = Number(record.unitPrice || 0) * Number(record.duration || 0);
   const payableAmount = Number(record.amount || 0);
   return {
@@ -215,13 +234,50 @@ function lessonFromRecord(record) {
     teachingType: record.teachingType,
     duration: record.duration,
     isLeave: record.isCancelled,
-    leaveLabel: record.isCancelled ? "请假 · 临时取消" : "",
+    // 日历标签和折扣列同一套说法；原文留在 cancelLabel / promoLabel 给 reportBlockers 校验
+    cancelLabel,
+    leaveLabel: cancelLabel && (record.cancellationRate == null ? cancelLabel : leaveNote(cancelLabel, record.cancellationRate * 100)),
     isPromo: Boolean(record.isDiscounted),
     promoLabel: record.discountStatus || "",
+    promoText: promoNote(record.discountStatus, record.discountRate),
     grossAmount: roundMoney(grossAmount),
     payableAmount: roundMoney(payableAmount),
     location: record.location,
   };
+}
+
+const unconfigured = (kind, label) => `${kind}「${label}」还没配置收费比例，请先联系开发`;
+
+// 家长 PDF 的唯一闸门：网页校验（单个、预览、批量）和渲染函数（API、命令行）都调这里。
+// 比例从原文重新查，不信任传进来的标记字段；row 是校对表的行号，课表里的课对到同老师同课程的那一行
+export function reportBlockers(report) {
+  const lines = report.courseLines || [];
+  const blockers = [];
+  const add = (row, message) => {
+    if (!blockers.some((item) => item.row === row && item.message === message)) blockers.push({ row, message });
+  };
+  lines.forEach((line, index) => {
+    const row = index + 1;
+    if (line.status && line.status !== NORMAL_STATUS && parseCancellationRate(line.status) == null) add(row, unconfigured("取消标记", line.status));
+    if (line.promoLabel && parseDiscountRate(line.promoLabel) == null) add(row, unconfigured("价格优惠", line.promoLabel));
+    const mismatch = line.amountMismatch;
+    if (mismatch) add(row, `「${mismatch.label}」应收 ${formatMoneyText(mismatch.ruleAmount)}，课时收费表是 ${formatMoneyText(mismatch.sourceAmount)}，请先核对课程表`);
+  });
+  for (const lesson of report.lessons || []) {
+    const sameCourse = lines.filter((line) => {
+      const source = line._baseline || line;
+      return source.teacher === lesson.teacher
+        && source.courseType === lesson.courseType
+        && source.teachingType === lesson.teachingType
+        && (!source.month || String(lesson.date || "").startsWith(`${source.month}-`));
+    });
+    const sameStatus = sameCourse.filter((line) => line.status === (lesson.cancelLabel || NORMAL_STATUS));
+    const line = sameStatus.find((item) => (item.promoLabel || "") === (lesson.promoLabel || "")) || sameStatus[0] || sameCourse[0];
+    const row = line ? lines.indexOf(line) + 1 : null;
+    if (lesson.isLeave && lesson.cancelLabel && parseCancellationRate(lesson.cancelLabel) == null) add(row, unconfigured("取消标记", lesson.cancelLabel));
+    if (lesson.isPromo && parseDiscountRate(lesson.promoLabel) == null) add(row, unconfigured("价格优惠", lesson.promoLabel));
+  }
+  return blockers;
 }
 
 function buildCalendar(month, lessons) {
