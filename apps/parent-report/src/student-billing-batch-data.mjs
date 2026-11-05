@@ -261,7 +261,7 @@ export function reportBlockers(report) {
     if (line.status && line.status !== NORMAL_STATUS && parseCancellationRate(line.status) == null) add(row, unconfigured("取消标记", line.status));
     if (line.promoLabel && parseDiscountRate(line.promoLabel) == null) add(row, unconfigured("价格优惠", line.promoLabel));
     const mismatch = line.amountMismatch;
-    if (mismatch) add(row, `「${mismatch.label}」应收 ${formatMoneyText(mismatch.ruleAmount)}，课时收费表是 ${formatMoneyText(mismatch.sourceAmount)}，请先核对课程表`);
+    if (mismatch) add(row, `「${mismatch.label}」这节按规则应收 ${formatMoneyText(mismatch.ruleAmount)}，课程表里填的是 ${formatMoneyText(mismatch.sourceAmount)}，请先核对课程表`);
   });
   for (const lesson of report.lessons || []) {
     const sameCourse = lines.filter((line) => {
