@@ -110,5 +110,6 @@ assert.equal(discountReport.qualityIssues.length, 0, "T-A02/T-A05: 赠课与试�
 assert.match(app, /"取消\/上课状态", "价格优惠"/, "T-A02: 导出 CSV 表头必须有相邻的取消/上课状态与价格优惠列");
 assert.match(app, /badge promo/, "T-A02: 状态徽标必须支持 badge promo 优惠样式");
 assert.match(css, /\.badge\.promo/, "T-A02: 优惠徽标必须使用 .badge.promo 蓝色样式");
+assert.match(app, /未知\$\{unknown\}/, "第 1 轮可考虑 1: 组合行里有未知取消或未知优惠时徽标要写「未知」");
 
 console.log("static app verification ok");
