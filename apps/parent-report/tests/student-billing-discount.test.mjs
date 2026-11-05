@@ -179,7 +179,8 @@ test("对接人定2 病假写「病假 免费」，其他 0% 取消写「请假 
 
 test("请假 + 试听：比例相乘，说明写「请假 收 70% · 试听 收 80%」", () => {
   let report = webReport(`${HEAD}
-演示甲-901,2026-11,林老师（演示）,演示数学,1v1,0h-70%,试听-80%,1.5,1.5,300,100,,252,252,"2"`);
+演示甲-901,2026-11,林老师（演示）,演示数学,1v1,0h-70%,试听-80%,1.5,1.5,300,100,,252,252,"2"`, `${SCHEDULE_HEAD}
+演示甲-901,林老师（演示）,演示数学,1v1,2026/11/03 10:00,2026/11/03 11:30,300,1.5,252,0h-70%,试听-80%,校区`);
   assert.equal(report.courseLines[0].billingNote, "请假 收 70% · 试听 收 80%");
   report = updateCourseLine(report, 0, "unitPrice", "333");
   assert.equal(report.courseLines[0].payableAmount, 279.72);
@@ -444,4 +445,71 @@ H03,雅思,辛老师（演示）,演示同-9902,2026/11/04 10:00,2026/11/04 12:0
   // 文件名和批量面板带编号，不互相覆盖
   assert.deepEqual([reportFileName(a), reportFileName(b)], ["演示同-9901-2026-11.pdf", "演示同-9902-2026-11.pdf"]);
   assert.deepEqual(splitBatchReports([a, b]).blocked.map((item) => item.studentId), ["演示同-9902"]);
+});
+
+test("B07 课表已改对（赠课 0）、收费 CSV 还是旧的 ¥1,600：两份文件对不上，单个、渲染都拦；校对页改单价时长解除不了；11 月以前不拦", () => {
+  const schedule = (giftAmount, month = "11") => `${R_SCHEDULE_HEAD}
+G1,雅思,甲老师（演示）,演示甲-9001,2026/${month}/02 10:00,2026/${month}/02 12:00,800,2,${giftAmount},,1v1,,赠课-免费`;
+  const csv = (amount, month = "11") => `${HEAD}
+演示甲-9001,2026-${month},甲老师（演示）,雅思,1v1,正常上课,赠课-免费,2,0,800,100,,${amount},${amount},"2"`;
+  const batch = batchReport(csv(1600), schedule(0))[0];
+  const web = prepareReportForEditing(batch);
+  assert.deepEqual(messagesOf(web), [
+    "11月2日 10:00：「雅思 · 赠课 免费」收费明细里是 ¥1,600.00，课程表里是 ¥0.00，两份文件对不上，请先用这份课程表重新导出课时收费",
+  ]);
+  assert.throws(() => render(batch), blocked422(/两份文件对不上/));
+  for (const edited of [updateCourseLine(web, 0, "unitPrice", "0"), updateCourseLine(web, 0, "duration", "0"), updateCourseLine(web, 0, "payableAmount", "0")]) {
+    assert.equal(messagesOf(edited).filter((message) => message.includes("两份文件对不上")).length, 1);
+  }
+  // 重新导出后两边一致：放行；差 1 分以内不拦；10 月旧账不拦
+  assert.deepEqual(messagesOf(webReport(csv(0), schedule(0))), []);
+  assert.deepEqual(messagesOf(webReport(csv(0.01), schedule(0))), []);
+  assert.deepEqual(messagesOf(webReport(csv(1600, "10"), schedule(0, "10"))), []);
+});
+
+test("B08 多单价合并行只改课程类型、老师、授课类型、原因，应付和原价不动；改时长才重算", () => {
+  const schedule = `${R_SCHEDULE_HEAD}
+T1,雅思,甲老师（演示）,演示甲-9001,2026/11/02 10:00,2026/11/02 12:00,600,2,960,,1v1,,试听-80%
+T2,雅思,甲老师（演示）,演示甲-9001,2026/11/03 10:00,2026/11/03 12:00,800,2,1280,,1v1,,试听-80%`;
+  const csv = `${HEAD}
+演示甲-9001,2026-11,甲老师（演示）,雅思,1v1,正常上课,试听-80%,4,0,600 / 800,100,,2240,2240,"2 3"`;
+  const web = webReport(csv, schedule);
+  assert.equal(web.totals.payableAmount, 2240);
+  const before = web.courseLines[0];
+  for (const [field, value] of [["courseType", "雅思口语"], ["teacher", "乙老师（演示）"], ["teachingType", "小班"], ["adjustmentReason", "备注"]]) {
+    const edited = updateCourseLine(web, 0, field, value);
+    const line = edited.courseLines[0];
+    assert.equal(line[field], value);
+    assert.deepEqual([line.payableAmount, line.grossAmount, line.discountAmount], [before.payableAmount, before.grossAmount, before.discountAmount], field);
+    assert.equal(edited.totals.payableAmount, 2240, field);
+  }
+  assert.equal(updateCourseLine(web, 0, "duration", "4.5").courseLines[0].payableAmount, 0);
+});
+
+test("B09 同名无编号：课表两个「演示同名」（甲老师雅思、乙老师数学），收费只有 2h：单个、批量、渲染都拦", () => {
+  const schedule = `${R_SCHEDULE_HEAD}
+N1,雅思,甲老师（演示）,演示同名,2026/11/02 10:00,2026/11/02 12:00,800,2,1600,,1v1,,
+N2,数学,乙老师（演示）,演示同名,2026/11/03 10:00,2026/11/03 12:00,800,2,1600,,1v1,,`;
+  const csv = `${HEAD}
+演示同名,2026-11,甲老师（演示）,雅思,1v1,正常上课,,2,0,800,100,,1600,1600,"2"`;
+  const batch = batchReport(csv, schedule)[0];
+  const web = prepareReportForEditing(batch);
+  const message = "课程表里有多个同名学生「演示同名」，请在课程表的学生名后加编号再导出";
+  assert.ok(messagesOf(web).includes(message));
+  assert.throws(() => render(batch), blocked422(/多个同名学生「演示同名」/));
+  assert.deepEqual(splitBatchReports([web]).blocked.map((item) => item.studentId), ["演示同名"]);
+  // 校对页把时长改大也解除不了
+  assert.ok(messagesOf(updateCourseLine(web, 0, "duration", "4")).includes(message));
+});
+
+test("B09 同名无编号不该拦：只有一个无编号学生、两位老师，课表时长等于汇总时长照常放行", () => {
+  const schedule = `${R_SCHEDULE_HEAD}
+N1,雅思,甲老师（演示）,演示单名,2026/11/02 10:00,2026/11/02 12:00,800,2,1600,,1v1,,
+N2,数学,乙老师（演示）,演示单名,2026/11/03 10:00,2026/11/03 12:00,800,2,1600,,1v1,,`;
+  const csv = `${HEAD}
+演示单名,2026-11,甲老师（演示）,雅思,1v1,正常上课,,2,0,800,100,,1600,1600,"2"
+演示单名,2026-11,乙老师（演示）,数学,1v1,正常上课,,2,0,800,100,,1600,1600,"3"`;
+  const web = webReport(csv, schedule);
+  assert.deepEqual(messagesOf(web), []);
+  assert.doesNotThrow(() => render(buildConfirmedReport(web)));
 });
