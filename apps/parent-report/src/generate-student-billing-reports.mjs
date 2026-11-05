@@ -6,7 +6,7 @@ import {
   buildRawScheduleLookup,
   buildStudentReports,
   parseCompleteBillingCsv,
-  safeFileName,
+  reportFileName,
 } from "./student-billing-batch-data.mjs";
 import { renderStudentBillingReportHtml } from "./render-student-billing-report.mjs";
 
@@ -47,7 +47,7 @@ export function generateStudentBillingReports({
 
   fs.mkdirSync(outputDir, { recursive: true });
   const written = reports.map((report) => {
-    const fileName = `${safeFileName(report.studentName)}-${report.month}.html`;
+    const fileName = reportFileName(report, "html");
     const outputPath = path.join(outputDir, fileName);
     const html = renderStudentBillingReportHtml(report, teachers, { embedTeacherPhotos });
     fs.writeFileSync(outputPath, html, "utf8");

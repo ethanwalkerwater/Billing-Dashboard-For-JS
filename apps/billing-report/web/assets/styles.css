@@ -653,6 +653,12 @@ tr:hover td {
   white-space: nowrap;
 }
 
+/* 表格里的组合状态（如「未知优惠 0h-70% · 老带新-90%」）可能很长：换行，不压到右边的列 */
+td > .badge {
+  word-break: keep-all;
+  white-space: normal;
+}
+
 .badge.warn {
   border-color: hsl(var(--warn) / .36);
   background: hsl(var(--warn) / .12);
@@ -663,6 +669,12 @@ tr:hover td {
   border-color: hsl(var(--destructive) / .28);
   background: hsl(var(--destructive) / .10);
   color: hsl(0 72% 38%);
+}
+
+.badge.promo {
+  border-color: hsl(217 91% 60% / .32);
+  background: hsl(217 91% 60% / .12);
+  color: hsl(217 91% 30%);
 }
 
 .link-button {

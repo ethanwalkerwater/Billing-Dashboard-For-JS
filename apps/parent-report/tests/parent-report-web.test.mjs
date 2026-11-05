@@ -78,7 +78,7 @@ test("cancellation percentage follows billing-core cancellation semantics", () =
   assert.equal(report.courseLines[0].cancellationPercent, 70);
   report = updateCourseLine(report, 0, "cancellationPercent", "50");
   assert.equal(report.courseLines[0].payableAmount, 1000);
-  assert.equal(report.courseLines[0].billingNote, "请假 50%");
+  assert.equal(report.courseLines[0].billingNote, "请假 收 50%");
 });
 
 test("student-month schedule lookup excludes non-reportable blank placeholders", () => {
@@ -294,12 +294,12 @@ test("prepay mode shows the billing period's fee and the remaining prepaid balan
   html = renderStudentBillingReportHtml(buildConfirmedReport(report), [], { embedTeacherPhotos: false });
   assert.match(html, /需补缴<\/dt>\s*<dd>¥2,000/);
 
-  // 金额向下取整显示时，剩余 = 取整后的余额 − 取整后的本期费用，三行能对上
+  // 金额四舍五入到元显示时，剩余 = 取整后的余额 − 取整后的本期费用，三行能对上（3000.75 → 3001）
   report = updatePrepay(report, { balanceBefore: "100000" });
   report = updateCourseLine(report, 0, "unitPrice", "1000.25");
   html = renderStudentBillingReportHtml(buildConfirmedReport(report), [], { embedTeacherPhotos: false });
-  assert.match(html, /− ¥3,000/);
-  assert.match(html, /预付剩余<\/dt>\s*<dd>¥97,000/);
+  assert.match(html, /− ¥3,001/);
+  assert.match(html, /预付剩余<\/dt>\s*<dd>¥96,999/);
 
   report = updatePrepay(report, { enabled: false });
   html = renderStudentBillingReportHtml(buildConfirmedReport(report), [], { embedTeacherPhotos: false });

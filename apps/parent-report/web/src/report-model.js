@@ -1,3 +1,5 @@
+import { composeBillingNote, formatIntegerAmount, leaveNote, reportBlockers } from "../../src/student-billing-batch-data.mjs";
+
 const MONEY_PRECISION = 100;
 
 function round(value) {
@@ -64,15 +66,24 @@ function changedFields(line) {
 }
 
 function recalculateLine(line, { keepPayable = false } = {}) {
-  const grossAmount = round(Number(line.unitPrice || 0) * Number(line.duration || 0));
+  // 单价读不出来（合并行「600 / 800」、写成「800元」、缺列）就算不出金额：原价沿用导出值，应付不动，
+  // 不然改一下课时或取消比例就把应付静默算成 0，还能出 PDF
+  const canCompute = line.unitPrice != null && Number.isFinite(Number(line.unitPrice));
+  const grossAmount = canCompute
+    ? round(Number(line.unitPrice) * Number(line.duration || 0))
+    : round(line.grossAmount);
   const isLeave = line.isLeave || line.status !== "正常上课";
-  const normalRate = Number.isFinite(Number(line.discountRate))
-    ? Number(line.discountRate) / 100
+  // 优惠课的 discountRate 重算后含优惠比例，手填折扣率用编辑前存下的那份，避免重复乘
+  const manualRate = line.manualDiscountRate ?? line.discountRate;
+  const normalRate = Number.isFinite(Number(manualRate))
+    ? Number(manualRate) / 100
     : 1;
-  const automaticRate = isLeave
+  // 未知优惠（promoRate 为 null）不参与乘法：JS 里 x * null = 0，会把应付静默算成 0
+  const promoRate = line.promoUnknown || line.promoRate == null ? 1 : Number(line.promoRate);
+  const automaticRate = (isLeave
     ? Number(line.cancellationPercent || 0) / 100
-    : normalRate;
-  const payableAmount = keepPayable
+    : normalRate) * promoRate;
+  const payableAmount = keepPayable || !canCompute
     ? round(line.payableAmount)
     : round(grossAmount * automaticRate);
   const discountAmount = round(grossAmount - payableAmount);
@@ -84,10 +95,13 @@ function recalculateLine(line, { keepPayable = false } = {}) {
     payableAmount,
     discountAmount,
     discountRate: grossAmount > 0 ? round((payableAmount / grossAmount) * 100) : 100,
-    billingNote: isLeave ? `请假 ${Number(line.cancellationPercent || 0)}%` : "—",
-    unitPriceLabel: line.unitPrice == null
-      ? "—"
-      : Number(line.unitPrice).toLocaleString("zh-CN", { maximumFractionDigits: 2 }),
+    billingNote: composeBillingNote(
+      isLeave ? leaveNote(line.status, line.cancellationPercent || 0) : "",
+      line.promoLabel,
+      line.promoUnknown ? null : line.promoRate ?? 1,
+      line.promoLabel ? manualRate : null,
+    ),
+    unitPriceLabel: line.unitPrice == null ? "—" : formatIntegerAmount(line.unitPrice),
   };
   next._changedFields = changedFields(next);
   return next;
@@ -181,6 +195,7 @@ export function prepareReportForEditing(report) {
     const prepared = {
       ...line,
       cancellationPercent: inferCancellationPercent(line),
+      ...(line.promoLabel ? { manualDiscountRate: line.discountRate } : {}),
       manualPayable: false,
       adjustmentReason: "",
       _baseline: baselineLine(line),
@@ -196,19 +211,24 @@ export function updateCourseLine(report, index, field, value) {
   const line = { ...next.courseLines[index] };
   const numericFields = new Set(["duration", "unitPrice", "cancellationPercent", "payableAmount"]);
   const nullableFields = new Set(["duration", "unitPrice"]);
-  line[field] = nullableFields.has(field)
+  const parsed = nullableFields.has(field)
     ? numericInput(value)
     : numericFields.has(field) ? Number(value) : value;
+  // 输入和原来一样（如时长改回原值）不算修改，不重算应付
+  if (String(parsed ?? "") === String(line[field] ?? "")) return report;
+  line[field] = parsed;
 
-  if (field === "payableAmount") {
-    line.manualPayable = true;
-  } else if (["duration", "unitPrice", "cancellationPercent"].includes(field)) {
-    line.manualPayable = false;
+  // 只有时长、单价、取消比例、手填应付会动金额；改老师、课程、授课类型、原因等文字不重算
+  // （多单价合并行的单价读成 null，重算会把应付静默算成 0）
+  if (!numericFields.has(field)) {
+    line._changedFields = changedFields(line);
+    next.courseLines[index] = line;
+    return recomputeReportTotals(next);
   }
 
-  next.courseLines[index] = recalculateLine(line, {
-    keepPayable: line.manualPayable || field === "adjustmentReason",
-  });
+  // 金额和规则对不上的拦截挂在课表那几节上，校对页改时长、单价都解除不了，只能改课程表重新导出
+  line.manualPayable = field === "payableAmount";
+  next.courseLines[index] = recalculateLine(line, { keepPayable: line.manualPayable });
   return recomputeReportTotals(next);
 }
 
@@ -250,6 +270,7 @@ export function buildConfirmedReport(report) {
     delete clean._changedFields;
     delete clean.manualPayable;
     delete clean.cancellationPercent;
+    delete clean.manualDiscountRate;
     clean.discountReason = clean.adjustmentReason || clean.discountReason;
     delete clean.adjustmentReason;
     delete clean._added;
@@ -281,6 +302,8 @@ export function validateReport(report) {
     }
   });
 
+  for (const blocker of reportBlockers(report)) issues.push({ level: "error", ...blocker });
+
   if (report.prepay?.enabled && !isOptionalNonNegative(report.prepay.balanceBefore ?? -1)) {
     issues.push({ level: "error", row: null, message: "已开启预付，请填写扣费前预付余额" });
   }
@@ -304,10 +327,19 @@ export function collectInvalidReports(reports) {
     return [{
       index,
       studentName: String(report.studentName || "未命名学生"),
+      // 批量面板显示带编号的完整标识，同名学生分得清
+      studentId: String(report.studentId || report.studentName || "未命名学生"),
       monthLabel: String(report.monthLabel || report.month || "账单期间未填写"),
       errors,
     }];
   });
+}
+
+// 批量 ZIP 先出能出的学生，被拦下的单独列出
+export function splitBatchReports(reports) {
+  const blocked = collectInvalidReports(reports);
+  const indexes = new Set(blocked.map((item) => item.index));
+  return { ready: reports.filter((_, index) => !indexes.has(index)), blocked };
 }
 
 export function formatMoney(value) {
