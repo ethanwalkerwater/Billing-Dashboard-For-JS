@@ -39,7 +39,7 @@ Ivy-2488,李品轩,Alevel物理,1v1,2026/04/07 15:15,2026/04/07 17:15,1000,2,200
   });
 
   assert.equal(result.written.length, 1);
-  assert.equal(path.basename(result.written[0]), "Ivy-2026-03_2026-04.html");
+  assert.equal(path.basename(result.written[0]), "Ivy-2488-2026-03_2026-04.html");
   const html = fs.readFileSync(result.written[0], "utf8");
   assert.match(html, /Ivy/);
   assert.match(html, /¥4,000/);

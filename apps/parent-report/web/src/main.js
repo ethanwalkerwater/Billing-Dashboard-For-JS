@@ -21,7 +21,7 @@ import {
   normalizeTeacherKey,
   saveTeacherStore,
 } from "./teacher-store.js";
-import { roundYuan } from "../../src/student-billing-batch-data.mjs";
+import { reportFileName, roundYuan } from "../../src/student-billing-batch-data.mjs";
 import "./styles.css";
 
 const state = {
@@ -78,8 +78,9 @@ function compressionLabel(file) {
   return `${bytes(file.originalSize)} → ${bytes(file.compressedSize)} · 压缩 ${Math.round(saved * 100)}%`;
 }
 
+// 下拉和批量面板给教务看，用带编号的完整标识，同名学生分得清
 function reportLabel(report) {
-  return `${report.studentName} · ${report.monthLabel}`;
+  return `${report.studentId || report.studentName} · ${report.monthLabel}`;
 }
 
 function canProcess() {
@@ -1082,7 +1083,7 @@ function batchValidationPanel(invalidReports) {
               type="button" data-invalid-report-index="${item.index}">
               <span class="batch-validation-count">${item.errors.length}</span>
               <span class="batch-validation-copy">
-                <strong>${esc(item.studentName)} · ${esc(item.monthLabel)}</strong>
+                <strong>${esc(item.studentId)} · ${esc(item.monthLabel)}</strong>
                 <span>${esc(details.join("；"))}</span>
               </span>
               <span class="batch-validation-action">前往处理 <i class="ph ph-arrow-right" aria-hidden="true"></i></span>
@@ -1429,10 +1430,7 @@ async function processFiles() {
   }
 }
 
-function reportFilename(report, extension = "pdf") {
-  const safeName = String(report.studentName || "未命名学生").replace(/[\\/:*?"<>|]/g, "");
-  return `${safeName}-${report.month}.${extension}`;
-}
+const reportFilename = reportFileName;
 
 async function requestPdf(report) {
   const issues = validateReport(report).filter((issue) => issue.level === "error");

@@ -94,6 +94,7 @@ function recalculateLine(line, { keepPayable = false } = {}) {
       isLeave ? leaveNote(line.status, line.cancellationPercent || 0) : "",
       line.promoLabel,
       line.promoUnknown ? null : line.promoRate ?? 1,
+      line.promoLabel ? manualRate : null,
     ),
     unitPriceLabel: line.unitPrice == null ? "—" : formatIntegerAmount(line.unitPrice),
   };
@@ -205,16 +206,18 @@ export function updateCourseLine(report, index, field, value) {
   const line = { ...next.courseLines[index] };
   const numericFields = new Set(["duration", "unitPrice", "cancellationPercent", "payableAmount"]);
   const nullableFields = new Set(["duration", "unitPrice"]);
-  line[field] = nullableFields.has(field)
+  const parsed = nullableFields.has(field)
     ? numericInput(value)
     : numericFields.has(field) ? Number(value) : value;
+  // 输入和原来一样（如时长改回原值）不算修改，不重算应付
+  if (String(parsed ?? "") === String(line[field] ?? "")) return report;
+  line[field] = parsed;
 
+  // 金额和规则对不上的拦截挂在课表那几节上，校对页改时长、单价都解除不了，只能改课程表重新导出
   if (field === "payableAmount") {
     line.manualPayable = true;
   } else if (["duration", "unitPrice", "cancellationPercent"].includes(field)) {
     line.manualPayable = false;
-    // 应付按规则重算后和说明一致，不再是「金额与规则对不上」
-    line.amountMismatch = null;
   }
 
   next.courseLines[index] = recalculateLine(line, {
@@ -318,6 +321,8 @@ export function collectInvalidReports(reports) {
     return [{
       index,
       studentName: String(report.studentName || "未命名学生"),
+      // 批量面板显示带编号的完整标识，同名学生分得清
+      studentId: String(report.studentId || report.studentName || "未命名学生"),
       monthLabel: String(report.monthLabel || report.month || "账单期间未填写"),
       errors,
     }];
