@@ -65,10 +65,13 @@ function changedFields(line) {
   ].filter((field) => String(line[field] ?? "") !== String(baseline[field] ?? ""));
 }
 
-function recalculateLine(line, { keepPayable = false, keepGross = false } = {}) {
-  const grossAmount = keepGross
-    ? round(line.grossAmount)
-    : round(Number(line.unitPrice || 0) * Number(line.duration || 0));
+function recalculateLine(line, { keepPayable = false } = {}) {
+  // 单价读不出来（合并行「600 / 800」、写成「800元」、缺列）就算不出金额：原价沿用导出值，应付不动，
+  // 不然改一下课时或取消比例就把应付静默算成 0，还能出 PDF
+  const canCompute = line.unitPrice != null && Number.isFinite(Number(line.unitPrice));
+  const grossAmount = canCompute
+    ? round(Number(line.unitPrice) * Number(line.duration || 0))
+    : round(line.grossAmount);
   const isLeave = line.isLeave || line.status !== "正常上课";
   // 优惠课的 discountRate 重算后含优惠比例，手填折扣率用编辑前存下的那份，避免重复乘
   const manualRate = line.manualDiscountRate ?? line.discountRate;
@@ -80,7 +83,7 @@ function recalculateLine(line, { keepPayable = false, keepGross = false } = {}) 
   const automaticRate = (isLeave
     ? Number(line.cancellationPercent || 0) / 100
     : normalRate) * promoRate;
-  const payableAmount = keepPayable
+  const payableAmount = keepPayable || !canCompute
     ? round(line.payableAmount)
     : round(grossAmount * automaticRate);
   const discountAmount = round(grossAmount - payableAmount);
@@ -198,8 +201,7 @@ export function prepareReportForEditing(report) {
       _baseline: baselineLine(line),
       _changedFields: [],
     };
-    // 多单价合并行读不出单价，原价沿用导出值，别算成 0（家长 PDF「原价」列会显示 ¥0）
-    return recalculateLine(prepared, { keepPayable: true, keepGross: prepared.unitPrice == null });
+    return recalculateLine(prepared, { keepPayable: true });
   });
   return recomputeReportTotals(next);
 }
