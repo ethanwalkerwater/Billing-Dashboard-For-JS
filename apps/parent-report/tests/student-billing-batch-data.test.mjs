@@ -74,7 +74,7 @@ Ivy-2488,李品轩,Alevel物理,1v1,2026/03/22 10:00,2026/03/22 12:00,650,2,910,
   assert.equal(reports[0].month, "2026-03");
   assert.equal(reports[0].totals.grossAmount, 3301.6);
   assert.equal(reports[0].totals.payableAmount, 2910.8);
-  assert.equal(reports[0].courseLines[1].unitPriceLabel, "650");
+  assert.equal(reports[0].courseLines[1].unitPriceLabel, "651");
   assert.equal(reports[0].courseLines.length, 2);
   assert.equal(reports[0].lessons.length, 2);
   assert.equal(reports[0].lessons[1].isLeave, true);

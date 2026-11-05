@@ -20,6 +20,7 @@ import {
   normalizeTeacherKey,
   saveTeacherStore,
 } from "./teacher-store.js";
+import { roundYuan } from "../../src/student-billing-batch-data.mjs";
 import "./styles.css";
 
 const state = {
@@ -916,7 +917,7 @@ function issueStrip(report) {
 }
 
 function previewMoney(value) {
-  return formatMoney(Math.floor(Number(value || 0)));
+  return formatMoney(roundYuan(value));
 }
 
 function previewPages(report) {
@@ -969,7 +970,7 @@ function previewPages(report) {
 function prepayRemainingLabel(report) {
   const prepay = report.prepay;
   if (prepay.balanceBefore == null) return "预付剩余 —";
-  const remaining = Math.floor(prepay.balanceBefore) - Math.floor(report.totals.payableAmount);
+  const remaining = roundYuan(prepay.balanceBefore) - roundYuan(report.totals.payableAmount);
   return remaining < 0
     ? `需补缴 ${previewMoney(-remaining)}`
     : `预付剩余 ${previewMoney(remaining)}`;

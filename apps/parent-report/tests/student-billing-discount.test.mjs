@@ -186,3 +186,17 @@ test("请假 + 试听：比例相乘，说明写「请假 收 70% · 试听 收 
   assert.match(html, /<tr class="is-leave is-promo">/);
   assert.match(html, /请假 收 70% · 试听 收 80%/);
 });
+
+test("用户补充 金额四舍五入到元：三行各 279.5 各显示 ¥280，合计按精确 838.5 显示 ¥839", () => {
+  const report = webReport(`${HEAD}
+演示乙-902,2026-11,周老师（演示）,演示数学,1v1,正常上课,,1,0,279.5,100,,279.5,279.5,"2"
+演示乙-902,2026-11,周老师（演示）,演示物理,1v1,正常上课,,1,0,279.5,100,,279.5,279.5,"3"
+演示乙-902,2026-11,周老师（演示）,演示化学,1v1,正常上课,,1,0,279.5,100,,279.5,279.5,"4"`);
+  assert.equal(report.totals.payableAmount, 838.5);
+  const html = render(buildConfirmedReport(report));
+  assert.equal((html.match(/<td>¥280<\/td>/g) || []).length >= 3, true);
+  assert.doesNotMatch(html, /<td>¥279<\/td>/);
+  assert.match(html, /Total Payable<\/span>\s*<strong>¥839<\/strong>/);
+  assert.match(html, /¥839/);
+  assert.doesNotMatch(html, /¥840/);
+});
