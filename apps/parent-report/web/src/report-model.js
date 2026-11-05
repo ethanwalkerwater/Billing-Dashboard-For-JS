@@ -1,4 +1,4 @@
-import { composeBillingNote } from "../../src/student-billing-batch-data.mjs";
+import { composeBillingNote, leaveNote } from "../../src/student-billing-batch-data.mjs";
 
 const MONEY_PRECISION = 100;
 
@@ -91,7 +91,7 @@ function recalculateLine(line, { keepPayable = false } = {}) {
     discountAmount,
     discountRate: grossAmount > 0 ? round((payableAmount / grossAmount) * 100) : 100,
     billingNote: composeBillingNote(
-      isLeave ? `请假 ${Number(line.cancellationPercent || 0)}%` : "",
+      isLeave ? leaveNote(line.status, line.cancellationPercent || 0) : "",
       line.promoLabel,
       line.promoUnknown ? null : line.promoRate ?? 1,
     ),
@@ -289,7 +289,7 @@ export function validateReport(report) {
       issues.push({ level: "error", row, message: "应付金额必须是非负数字" });
     }
     if (line.promoUnknown) {
-      issues.push({ level: "warning", row, message: `第 ${row} 行价格优惠「${line.promoLabel}」未识别，应付按原比例计算，请核对` });
+      issues.push({ level: "error", row, message: `价格优惠「${line.promoLabel}」还没配置收费比例，请先联系开发` });
     }
     if (line.manualPayable && !line._added && !String(line.adjustmentReason || "").trim()) {
       issues.push({ level: "error", row, message: "手动覆盖应付金额时必须填写修改原因" });
