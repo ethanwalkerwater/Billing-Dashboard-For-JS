@@ -21,7 +21,7 @@ import { reconcileResponses } from "../../src/server/sync/reconcile-responses";
 import { RdbFeedbackTaskRepository } from "../../src/shared/rdb";
 import type { PostgrestLike } from "../../src/shared/rdb";
 import { verifyFeishuEvent } from "./feishu-event";
-import { createServiceDb } from "./service-db";
+import { callServiceRpc, createServiceDb } from "./service-db";
 import type { FeishuEventEnvelope } from "./feishu-event";
 
 const app = cloudbase.init({ env: cloudbase.SYMBOL_CURRENT_ENV });
@@ -73,7 +73,7 @@ function jsonResponse(statusCode: number, body: unknown) {
   };
 }
 
-/** 只放行已登录且在 feedback_admins 白名单里的教务。 */
+/** 只放行已登录、且飞书姓名在管理员名单里的人。其他账号不能调用同步和导出。 */
 async function assertAdmin(): Promise<string> {
   let uid: string | undefined;
   try {
@@ -84,22 +84,15 @@ async function assertAdmin(): Promise<string> {
   }
   if (!uid) throw new Error("UNAUTHORIZED");
 
-  const result = await (
-    db() as unknown as {
-      from: (table: string) => {
-        select: (columns: string) => {
-          eq: (column: string, value: unknown) => {
-            eq: (column: string, value: unknown) => PromiseLike<{ data: unknown[] | null }>;
-          };
-        };
-      };
-    }
-  )
-    .from("feedback_admins")
-    .select("user_id")
-    .eq("user_id", uid)
-    .eq("active", true);
-  if (!result.data || result.data.length === 0) throw new Error("FORBIDDEN");
+  const allowed = await callServiceRpc<boolean>(
+    {
+      envId: requireEnv("CLOUDBASE_ENV_ID"),
+      apiKey: requireEnv("CLOUDBASE_API_KEY"),
+    },
+    "feedback_uid_is_admin",
+    { target_uid: uid },
+  );
+  if (allowed !== true) throw new Error("FORBIDDEN");
   return uid;
 }
 
