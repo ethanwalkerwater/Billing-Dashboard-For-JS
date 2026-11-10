@@ -113,3 +113,27 @@ export function createServiceDb(options: ServiceDbOptions): PostgrestLike {
     },
   };
 }
+
+/** 调用 public schema 里的函数。云函数用它确认 uid 是否在飞书管理员名单中。 */
+export async function callServiceRpc<T>(options: ServiceDbOptions, fn: string, args: Record<string, unknown>): Promise<T> {
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const response = await fetchImpl(
+    `https://${options.envId}.api.tcloudbasegateway.com/v1/rdb/rest/rpc/${encodeURIComponent(fn)}`,
+    {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${options.apiKey}`,
+        "content-type": "application/json",
+        accept: "application/json",
+        "accept-profile": "public",
+        "content-profile": "public",
+      },
+      body: JSON.stringify(args),
+    },
+  );
+  const text = await response.text();
+  if (!response.ok) {
+    throw new Error(`调用 ${fn} 失败：HTTP ${response.status}`);
+  }
+  return (text ? JSON.parse(text) : null) as T;
+}

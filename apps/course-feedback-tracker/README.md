@@ -5,11 +5,11 @@
 - 工作台短链接：<https://jingshi.vercel.app/feedback>（Vercel 门户 308 跳转到下面的 CloudBase 地址）
 - 工作台原地址：<https://jingshi-test-d5gp401i44a0fa7a7-1300607705.tcloudbaseapp.com>
 - 门户入口：<https://jingshi.vercel.app/> 「学生反馈追踪系统」（源码在 `~/Documents/GitHub/菁仕后台主页`）
-- 教务账号：`jsjy`（另有一个以邮箱登录的备用账号）。**密码不写进仓库**，见 CloudBase 控制台的
-  「身份认证 → 用户管理」，或问项目负责人。
-  业务方原本要 `jsjy / jsjy`，但 CloudBase 密码策略要求 ≥8 位且至少 3 类字符（大写/小写/数字/符号），
-  实测 `jsjy` 直接报 `Invalid password length`，所以用了最接近的可接受形式。
-  登录不能去掉：所有学生/老师数据都靠 RLS 的管理员白名单保护，匿名访问等于公开。
+- 登录：飞书。CloudBase 身份源 ID 必须是 `feishu`。只有飞书姓名为包天翊、黄钢、徐翰超的账号可以进入；
+  其他飞书账号会被退出，数据库也不会放行。共享密码账号不再是管理员。
+  名单写在 [`src/domain/admin-allowlist.ts`](./src/domain/admin-allowlist.ts)，
+  数据库同一份名单在 [`migrations/202609170005_feishu_admin_allowlist.sql`](./migrations/202609170005_feishu_admin_allowlist.sql)，两边要一起改。
+  登录不能去掉：所有学生/老师数据都靠这条 RLS 保护，匿名访问等于公开。
 - 旧版短链接（仍可用，仅供已印出去的码）：`https://jingshi-test-d5gp401i44a0fa7a7-1300607705.ap-shanghai.app.tcloudbase.com/t/<token>`
 - 飞书事件回调：`https://jingshi-test-d5gp401i44a0fa7a7-1300607705.ap-shanghai.app.tcloudbase.com/webhooks/feishu`
 
@@ -19,7 +19,7 @@
 
 | 部分 | 做法 |
 |---|---|
-| 任务列表、筛选、统计、改状态、任务清单导出 | 浏览器用 `@cloudbase/js-sdk` 的 `rdb()`（PostgREST）直连数据库，RLS 只放行 `feedback_admins` 里的管理员 |
+| 任务列表、筛选、统计、改状态、任务清单导出 | 浏览器用 `@cloudbase/js-sdk` 的 `rdb()`（PostgREST）直连数据库，RLS 只放行飞书姓名在管理员名单里的人 |
 | 飞书课表同步、答卷对账、扫码短链接 302、飞书事件回调、课表/反馈 CSV 导出 | 单个云函数 `feedback-api` |
 | 二维码单张 PNG 与批量 ZIP | 浏览器里用 canvas + JSZip 生成，不经过云存储。**二维码直接编码带预填的飞书表单链接**，扫码零中转 |
 | 界面 | shadcn/ui 默认主题（zinc），Tailwind v4；组件按 shadcn 源码手写在 `src/components/ui/`（button/badge/card/input/checkbox/table/sheet/select/alert/separator） |
@@ -81,6 +81,7 @@ tcb db execute --sql "$(cat migrations/202609170001_initial_feedback_tracker.sql
 tcb db execute --sql "$(cat migrations/202609170002_task_status_audit.sql)"
 tcb db execute --sql "$(cat migrations/202609170003_response_unlinked_status.sql)"
 tcb db execute --sql "$(cat migrations/202609170004_name_binding.sql)"
+tcb db execute --sql "$(cat migrations/202609170005_feishu_admin_allowlist.sql)"
 ```
 
 > 测试必须用 `npm run test:course-feedback-tracker` 跑（工作区脚本），不能在仓库根目录直接

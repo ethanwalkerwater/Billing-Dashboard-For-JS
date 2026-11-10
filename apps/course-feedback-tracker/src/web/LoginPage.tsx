@@ -2,32 +2,45 @@ import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { auth } from "./cloudbase";
+import { auth, FEISHU_LOGIN_PROVIDER } from "./cloudbase";
 
-export function LoginPage({ onSignedIn }: { onSignedIn: () => void | Promise<void> }) {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+function loginFailure(message: string | undefined): string {
+  if (message && /provider feishu not found/i.test(message)) {
+    return "云开发里还没有开通飞书登录。";
+  }
+  return message || "飞书登录没有开始，请稍后再试";
+}
+
+export function LoginPage({
+  denied,
+  onSignedIn,
+}: {
+  denied: boolean;
+  onSignedIn: () => void | Promise<void>;
+}) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  async function submit(event: React.FormEvent) {
-    event.preventDefault();
+  async function signInWithFeishu() {
     setBusy(true);
     setError(null);
     try {
-      // CloudBase SDK 登录失败时返回 { error }，不会 throw——只 catch 的话页面会一声不吭。
-      // username 字段既接受用户名（jsjy）也接受绑定的邮箱，服务端会自己解析。
-      const result = (await auth.signInWithPassword({ username: email.trim(), password })) as {
-        error?: { message?: string } | null;
-      };
+      const redirectTo = `${window.location.origin}${window.location.pathname}`;
+      const result = (await auth.signInWithOAuth({
+        provider: FEISHU_LOGIN_PROVIDER,
+        options: { redirectTo },
+      })) as { error?: { message?: string } | null; data?: { url?: string | null } };
       if (result?.error) {
-        setError(result.error.message || "登录失败，请检查账号和密码");
+        setError(loginFailure(result.error.message));
+        return;
+      }
+      if (result?.data?.url) {
+        window.location.assign(result.data.url);
         return;
       }
       await onSignedIn();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "登录失败，请检查账号和密码");
+      setError(loginFailure(cause instanceof Error ? cause.message : undefined));
     } finally {
       setBusy(false);
     }
@@ -38,44 +51,14 @@ export function LoginPage({ onSignedIn }: { onSignedIn: () => void | Promise<voi
       <Card className="w-full max-w-sm">
         <CardHeader>
           <CardTitle className="text-xl">月度课程反馈</CardTitle>
-          <CardDescription>用教务账号登录工作台</CardDescription>
+          <CardDescription>使用飞书账号登录。只有指定的管理员可以进入。</CardDescription>
         </CardHeader>
-        <CardContent>
-          <form className="grid gap-4" onSubmit={submit}>
-            <div className="grid gap-2">
-              <label htmlFor="email" className="text-sm font-medium">
-                账号
-              </label>
-              <Input
-                id="email"
-                type="text"
-                autoComplete="username"
-                required
-                value={email}
-                onChange={(event) => setEmail(event.target.value)}
-              />
-            </div>
-            <div className="grid gap-2">
-              <label htmlFor="password" className="text-sm font-medium">
-                密码
-              </label>
-              <Input
-                id="password"
-                type="password"
-                autoComplete="current-password"
-                required
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-              />
-            </div>
-            {error ? <p className="text-destructive text-sm">{error}</p> : null}
-            <Button type="submit" className="w-full" disabled={busy}>
-              {busy ? "登录中…" : "登录"}
-            </Button>
-            <p className="text-muted-foreground text-center text-xs">
-              环境 {import.meta.env.VITE_CLOUDBASE_ENV_ID} · 仅管理员白名单可访问
-            </p>
-          </form>
+        <CardContent className="grid gap-4">
+          {denied ? <p className="text-destructive text-sm">这个飞书账号不能登录。</p> : null}
+          {error ? <p className="text-destructive text-sm">{error}</p> : null}
+          <Button type="button" className="w-full" disabled={busy} onClick={() => void signInWithFeishu()}>
+            {busy ? "正在前往飞书…" : "使用飞书登录"}
+          </Button>
         </CardContent>
       </Card>
     </main>
