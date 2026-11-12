@@ -604,6 +604,9 @@ impl Core {
             }
             // 合盖睡眠期间麦克风没在录：睡醒发现该停了，结束时间记成睡着那一刻，而不是打开电脑的时间
             let end = if slept { g.last_tick } else { now };
+            if g.active.as_ref().is_some_and(|a| !is_adhoc(&a.lesson.id) && g.last_tick < a.lesson.end_at && now >= a.lesson.end_at) {
+                self.shared.kick_upload.notify_one();
+            }
             g.last_tick = now;
             self.default_name(&mut g, now, false);
             let active_id = g.active.as_ref().map(|a| a.lesson.id.clone());

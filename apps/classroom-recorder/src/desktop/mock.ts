@@ -65,8 +65,9 @@ function startRec(lessonId: string, sec = 0, mode: AppState['rec']['mode'] = 're
 }
 function endRec() {
   const id = s.rec.lessonId!;
-  patch({ rec: rec('processing'), lessons: setLesson(id, { status: 'processing' }) });
-  later(() => patch({ rec: { ...s.rec, mode: 'gone' } }), 2600);
+  patch({ rec: { ...rec('processing'), uploading: true }, lessons: setLesson(id, { status: 'processing', pendingUpload: true }) });
+  later(() => patch({ rec: { ...s.rec, uploading: false }, lessons: setLesson(id, { pendingUpload: false }) }), 1400);
+  later(() => patch({ rec: { ...s.rec, mode: 'gone' } }), 3200);
   later(() => {
     const summary = s.lessons.find(l => l.id === id)?.summary ?? '';
     patch({ lessons: setLesson(id, { status: 'done', copied: false }), toast: { lessonId: id, title: '小雨今天的课堂总结好了', body: summary.replace(/\n+/g, ' ') } });

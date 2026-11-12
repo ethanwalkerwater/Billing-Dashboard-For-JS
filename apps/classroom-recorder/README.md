@@ -1,6 +1,6 @@
 # 菁仕课堂（classroom-recorder）
 
-老师在自己的 Mac / Windows 电脑上装「菁仕课堂」，用飞书登录后，App 按飞书课表自动录课、边录边传；下课后云端把录音转成文字，生成一段可直接发给家长的课堂总结和一份完整的课堂学情报告，再用飞书私信通知老师。
+老师在自己的 Mac / Windows 电脑上装「菁仕课堂」，用飞书登录后，App 按飞书课表自动录课、把录音保存在本机；下课后整段直传云存储，云端把录音转成文字，生成一段可直接发给家长的课堂总结和一份完整的课堂学情报告，再用飞书私信通知老师。
 
 - 设计与接口约定：[`docs/design.md`](docs/design.md)；产品方案：[`../../docs/课堂录制.html`](../../docs/课堂录制.html)；报告网页原型：[`../../docs/classroom-report.html`](../../docs/classroom-report.html)。
 - 随时录制：屏幕右侧的悬浮按钮（几秒不碰会淡下去）或菜单栏「随时录制」，不需要课表；结束时填主题、选「课程」（出家长总结 + 学情报告）或「会议」（出会议纪要）。
@@ -37,15 +37,17 @@
 
 ```
 桌面 App（Tauri，src-tauri + src/desktop）
-  │ 30 秒一段 MP3（约 120 KB）
+  │ 录制时每 30 秒落盘，结束后拼接并签名直传；课表课到计划下课时间保留一份保险录音
   ▼
 classroom-api（CloudBase HTTP 云函数，/classroom-api）
   ├─ 飞书网页登录 → 老师档案「飞书账号」→ 课表名
-  ├─ /lessons：课表（最近 7 天 + 明天）+ 数据库处理状态
-  ├─ 分段上传 → Storage 私有桶 classroom：{课表记录ID}/{seq}.mp3
-  └─ finish 时立即推进；转写完成由腾讯云回调 /asr/callback 推进；每 30 分钟定时器兜底（失败重试、回调丢失、App 没回来的课、清理过期录音）：
-       queued → 按序拼接 MP3 → 腾讯云录音文件识别（说话人分离，带 CallbackUrl）
-       → transcribing → 大模型判断哪个说话人是老师，转写标成「老师 / 学生」，删掉分段只留 merged.mp3
+  ├─ /schedule：后台启动 / 每天早晨只读飞书；/lessons：老师打开窗口或刷新时再取报告状态
+  ├─ /lessons/:id/upload-url：签名 60 秒，App 直接 PUT 到 Storage 私有桶
+  ├─ 旧版仍分段上传并在云端拼接
+  └─ finish 提交识别；腾讯云回调推进转写和总结；录课请求间隔检查其他待办
+       03:00、22:45（北京时间）兜底重试、清理过期录音、处理没收到 finish 的课
+       queued → 腾讯云录音文件识别（说话人分离，带 CallbackUrl）
+       → transcribing → 大模型判断哪个说话人是老师，转写标成「老师 / 学生」，删掉分段与多余的保险录音
        → summarizing → ① 整节课一次抽「课堂时间档案」（环节首尾相接、课堂瞬间、作业 / 下节课等事项；超过 12 万字才切开），程序检查
                      ② 只拿学习环节（闲聊、课前课后、课间不交给模型）写家长总结和报告 → ③ 用报告的知识点名把学习环节归成 8–12 章
                      作业、下节课、章节时间、各类分钟数由程序按档案算（会议纪要仍是超过 12000 字先分段摘要再汇总）
@@ -62,15 +64,15 @@ classroom-api（CloudBase HTTP 云函数，/classroom-api）
 | 表 | 主键 | 内容 |
 |---|---|---|
 | `classroom_auth` | 登录 state | `status` pending / done / not_teacher，10 分钟过期；App 领取 token 后删除 |
-| `classroom_sessions` | token 的 sha256 | `openId`、`name`、`scheduleName`。不存 token 明文；目前不过期，删行即吊销 |
-| `classroom_lessons` | 飞书课表 record_id | 老师 openId、学生、课程、时间；`stage`、`finish`、`asrTaskId`、`transcript`、`summary` / `editedSummary`、`report`、`archive`（课堂时间档案，含闲聊，只在后台看）、`reportToken`、`gapMinutes`、`audioSec`（实际录音秒数）、`rawTranscript`（后台第一次改转写前的原文）、`copied`、`attempts` / `error`、`lockedUntil`（处理租约）；`kind = merged` 的行是老师选几节课合并的一份反馈，`sources` = 那几节的编号，没有录音和转写（见 docs/design.md「合并反馈」） |
+| `classroom_sessions` | 会话 ID（旧 token 的 SHA-256） | `openId`、`name`、`scheduleName`。旧版照常查表，新版后台课表走 30 天签名令牌。删行可吊销旧版及新版的报告和上传权限 |
+| `classroom_lessons` | 飞书课表 record_id | 老师 openId、学生、课程、时间；`stage`、`finish`、`earlyAt`、`finalUploadAt`、`asrTaskId`、`transcript`、`summary` / `editedSummary`、`report`、`archive`（课堂时间档案，含闲聊，只在后台看）、`reportToken`、`gapMinutes`、`audioSec`（实际录音秒数）、`rawTranscript`（后台第一次改转写前的原文）、`copied`、`attempts` / `error`、`lockedUntil`（处理租约）；`kind = merged` 的行是老师选几节课合并的一份反馈，`sources` = 那几节的编号，没有录音和转写（见 docs/design.md「合并反馈」） |
 | `classroom_segments` | (`lessonId`, `seq`) | 每段的 sha256、字节数、Storage 对象名 |
 | `classroom_prompts` | `version` | 后台保存的提示词（通用规则 / 家长总结 / 学情报告 / 会议纪要四段；早于会议纪要的版本该列为空，读取时用默认），版本号最大的一行是线上；一行都没有时用 `logic.ts` 的 `DEFAULT_PROMPTS`（版本 0）。课程的 `promptVersion` 记生成时用的版本 |
 | `classroom_admin_sessions` | token 的 sha256 | 后台登录，30 天过期 |
 
-Storage 桶 `classroom`（私有）：分段 `{lessonId}/{seq}.mp3`（转写入库后删除）与合并后的 `{lessonId}/merged.mp3`（保留 30 天后删除，转写和总结一直保留），后台测试上传的音频在 `preview/{随机 ID}/audio`（分块拼好即删，拼好的音频不自动清理），腾讯云识别用 6 小时签名链接（`fullSignedURL`）下载。
+Storage 桶 `classroom`（私有）。新版完整录音是 `{lessonId}/merged.mp3`，保险录音是 `{lessonId}/early.mp3`，实际用于识别的一份在后台可回听。旧版分段 `{lessonId}/{seq}.mp3` 在转写入库后删除。课堂录音保留 30 天，转写和总结一直保留。后台测试上传的音频在 `preview/{随机 ID}/audio`，分块拼好即删，拼好的音频不自动清理。腾讯云识别用 6 小时签名链接下载。
 
-处理失败会记 `stage = failed`、`failedStage`、`error`，下一分钟从失败的那一步重试，累计 3 次后停止，私信老师（大白话）和管理员（技术原因），App 里显示「没能生成」。下课 2 小时后仍缺分段，就用已有分段出报告，报告页注明「录音缺失约 X 分钟」。App 没发 finish 就不传了（合盖睡着、关机、退出）：课表里的课过了下课时间且 15 分钟没收到分段、随时录制 30 分钟没收到分段，云端就按已结束出报告。档案上线时重出存量报告用 `scripts/rebuild-archive.ts`（先试跑出对比页，确认后把同一份结果写库；家长总结不动）。某节课要重跑：把 `stage` 改回 `queued`（或 `summarizing`）、`attempts` 改为 0，再 `tcb fn invoke classroom-api --params '{"action":"tick","lessonId":"rec…"}'`。
+处理失败会记 `stage = failed`、`failedStage`、`error`，由下一次录课请求或定时兜底继续，累计 3 次后通知老师和管理员。新版课表课在计划下课时传保险录音，签名后 20 分钟还没收到 finish 才具备收尾资格，有更新的完整上传时从那次签名起算。云端开始识别后，App 晚到的 finish 沿用旧版规则，已有报告继续出。旧版下课 2 小时后仍缺段时按已有分段出报告，并注明缺失分钟数。 档案上线时重出存量报告用 `scripts/rebuild-archive.ts`（先试跑出对比页，确认后把同一份结果写库；家长总结不动）。某节课要重跑：把 `stage` 改回 `queued`（或 `summarizing`）、`attempts` 改为 0，再 `tcb fn invoke classroom-api --params '{"action":"tick","lessonId":"rec…"}'`。
 
 ## 需要在后台配置的内容
 
@@ -100,6 +102,7 @@ Storage 桶 `classroom`（私有）：分段 `{lessonId}/{seq}.mp3`（转写入�
 | `ASR_ENGINE` | 默认 `16k_zh_en_2.0`（大模型 2.0，中英粤 + 方言，0.8 元/小时，同样支持说话人分离）；标准版 `16k_zh` 1.75 元/小时 |
 | `AI_BASE_URL` / `AI_API_KEY` / `AI_MODEL` | OpenAI 兼容接口，默认 DeepSeek `deepseek-chat` |
 | `CLOUDBASE_ENV_ID` / `CLOUDBASE_API_KEY` | PostgreSQL 与 Storage（service_role），同 course-feedback-tracker |
+| `CLASSROOM_REVOKED_OPEN_IDS` | 可选，禁止桌面老师登录和拉课表的飞书 open_id，逗号分隔。要吊销该老师的所有桌面会话，配置此项并删除对应 `classroom_sessions` 行。更换 `CLOUDBASE_API_KEY` 会使此前签发的桌面令牌失效。 |
 | `ADMIN_OPEN_IDS` | 后台管理员的飞书 open_id，逗号分隔。不在名单里的人登录后台会看到自己的 open_id，发过来加进去再部署 |
 
 ## 命令
@@ -111,7 +114,7 @@ npm run build:report -w @jingshi/classroom-recorder  # 报告网页 → dist-rep
 node apps/classroom-recorder/scripts/deploy-function.mjs --build-only   # 只打包云函数（无 server.env 也可）
 
 # 部署（先 tcb login）
-npm run deploy:functions -w @jingshi/classroom-recorder   # 打包 + tcb fn deploy + 创建每分钟定时器
+npm run deploy:functions -w @jingshi/classroom-recorder   # 打包 + tcb fn deploy；线上定时器单独切换
 npm run deploy:web -w @jingshi/classroom-recorder         # 报告网页 + 后台 + 工作台 → 静态托管 /classroom
 
 # 桌面 App

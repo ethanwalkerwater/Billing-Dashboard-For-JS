@@ -199,7 +199,7 @@ pub async fn discard_pending(core: &Arc<Core>) {
 
 /// 扫描本机所有课的目录：录完的课整节直传 + finish → 已完成 7 天的删除。上课时只存本机、不上传（数据库按「有访问的 5 分钟」计费），
 /// 只有课表课到计划下课时间还在录时，先传一份已录的（保险，老师合盖没点结束也能出报告）。
-/// 每节课各自退避 1s→2s→…→5min，互不阻塞；状态全在 lesson.json，重启后接着传。
+/// 每节课各自退避 1s→2s→…→5min；状态全在 lesson.json，重启后接着传。
 pub async fn upload_loop(core: Arc<Core>) {
     let mut backoff: HashMap<String, (i64, i64)> = HashMap::new(); // id → (下次时间, 退避秒数)
     loop {

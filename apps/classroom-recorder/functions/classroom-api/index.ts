@@ -68,13 +68,15 @@ export async function getObject(name: string): Promise<Buffer> {
   if (!response.ok) throw new Error(`下载分段失败：${name} ${response.status}`);
   return Buffer.from(await response.arrayBuffer());
 }
-/** 批量删除对象（接口每次最多 20 个）；删不掉只是多占存储，不影响流程 */
-async function removeObjects(names: string[]) {
+/** 批量删除对象（接口每次最多 20 个），失败时由后续清理再试。 */
+async function removeObjects(names: string[]): Promise<boolean> {
   const batches = Array.from({ length: Math.ceil(names.length / 20) }, (_, i) => names.slice(i * 20, i * 20 + 20));
-  await Promise.all(batches.map(async (prefixes) => {
+  const results = await Promise.allSettled(batches.map(async (prefixes) => {
     const response = await fetch(`${STORAGE()}/object/${BUCKET}`, { method: "DELETE", headers: { ...storageAuth(), "content-type": "application/json" }, body: JSON.stringify({ prefixes }) });
-    if (!response.ok) console.error("删除录音失败", response.status, (await response.text()).slice(0, 200));
+    if (!response.ok) throw new Error(`删除录音失败：${response.status} ${(await response.text()).slice(0, 200)}`);
   }));
+  for (const result of results) if (result.status === "rejected") console.error(result.reason);
+  return results.every((result) => result.status === "fulfilled");
 }
 /** 对象大小（字节），不存在返回 null；HEAD 不下载内容 */
 async function objectSize(name: string): Promise<number | null> {
@@ -707,8 +709,7 @@ async function processLesson(id: string, deadline: number) {
       if (patch.transcript !== undefined) {
         const early = `${id}/${L.EARLY_FILE}`;
         const unusedEarly = doc.earlyAt && doc.mergedFileId !== early ? [early] : [];
-        await removeObjects([...Object.values(doc.segments).map((s) => s.fileId), ...unusedEarly])
-          .catch((error) => console.error("清理转写临时录音失败", id, error));
+        await removeObjects([...Object.values(doc.segments).map((s) => s.fileId), ...unusedEarly]);
       }
       doc = { ...doc, ...patch };
       if (step.action === "direct" && doc.stage === "transcribing") break; // 回调到达时再查转写结果
@@ -767,12 +768,9 @@ async function expireAudio() {
     const names = new Set(row.mergedFileId ? [row.mergedFileId] : []);
     if (row.earlyAt) names.add(`${row._id}/${L.EARLY_FILE}`);
     if (row.finalUploadAt) names.add(`${row._id}/${L.AUDIO_FILE}`);
-    if (!row.earlyAt && !row.finalUploadAt) {
-      const segments = await pg<{ fileId: string }>("GET", SEGMENTS, `lessonId=${eq(row._id)}&select=fileId`);
-      for (const segment of segments) names.add(segment.fileId);
-    }
-    await removeObjects([...names]);
-    await updateLesson(row._id, { mergedFileId: null, audioDeletedAt: Date.now() });
+    const segments = await pg<{ fileId: string }>("GET", SEGMENTS, `lessonId=${eq(row._id)}&select=fileId`);
+    for (const segment of segments) names.add(segment.fileId);
+    if (await removeObjects([...names])) await updateLesson(row._id, { mergedFileId: null, audioDeletedAt: Date.now() });
   }
 }
 
