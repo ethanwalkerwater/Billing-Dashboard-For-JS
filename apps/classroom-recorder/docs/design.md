@@ -13,8 +13,8 @@ UI / UX 唯一依据：`docs/MVP.html`（老师端，含「随时录制」三步
   - Web 层（Vite + 原生 TS，无框架）只负责渲染三个窗口：`main`（主窗口）、`pill`（顶部胶囊）、`toast`（右上角通知）。
   - 菜单栏 / 托盘用 Tauri 原生托盘菜单；macOS 菜单栏标题显示录制计时。
 - **云端：CloudBase（环境 `jingshi-test-d5gp401i44a0fa7a7`）**
-  - HTTP 云函数 `classroom-api`（路径 `https://app.jsjy.asia/classroom-api`）+ 腾讯云转写完成回调推进处理流水线，每 30 分钟定时触发兜底。
-  - PostgreSQL 表 `classroom_lessons`、`classroom_segments`、`classroom_sessions`、`classroom_auth`（本环境没有文档型数据库）；Storage 私有桶 `classroom` 放录音分段与合并后的 MP3。
+  - HTTP 云函数 `classroom-api`（路径 `https://app.jsjy.asia/classroom-api`）+ 腾讯云转写完成回调推进处理流水线，北京时间 03:00、22:45 定时兜底，录课请求到来时也会顺带推进待办。
+  - PostgreSQL 表 `classroom_lessons`、`classroom_segments`、`classroom_sessions`、`classroom_auth`（本环境没有文档型数据库）；Storage 私有桶 `classroom` 放直传的整段 MP3、保险录音和旧版分段。
   - 静态托管 `https://app.jsjy.asia/classroom/report.html?t=<token>` 承载完整报告。
 - **登录：飞书网页授权**（应用 = 机器人「课表分析」`cli_a93a4faca0f8dcb6`，与老师档案「飞书账号」同一应用，open_id 一致）。
 
@@ -22,7 +22,7 @@ UI / UX 唯一依据：`docs/MVP.html`（老师端，含「随时录制」三步
 
 1. App `GET /auth/start` → `{ state, url }`，用系统浏览器打开 `url`（飞书授权页，redirect_uri = `/classroom-api/auth/callback`）。
 2. 飞书回调 `/auth/callback?code&state`：云函数换 user_access_token → 取 open_id/姓名 → 在老师档案表按「飞书账号」找老师（课表名优先，否则姓名）→ 生成 session token 写库，页面显示「登录成功，可以回到菁仕课堂」。
-3. App 每 2 秒 `GET /auth/poll?state=` 直到拿到 `{ token, teacher }`（state 10 分钟过期）。token 存本机 app 数据目录。
+3. App 每 2 秒 `GET /auth/poll?state=` 直到拿到 `{ token, teacher }`（state 10 分钟过期）。token 存本机 app 数据目录。0.1.12 起使用有效期 30 天的签名令牌，距过期 7 天内有成功请求就续期。升级时旧令牌首次请求换成签名令牌。
 
 ## HTTP 接口（除 auth/* 与 report 外均需 `Authorization: Bearer <token>`）
 
@@ -34,9 +34,11 @@ UI / UX 唯一依据：`docs/MVP.html`（老师端，含「随时录制」三步
 | `GET /auth/callback?code&state` | HTML 页面 |
 | `GET /auth/poll?state` | 202 `{ pending: true }` / 200 `{ token, teacher: { name } }` |
 | `GET /me` | `{ teacher: { name } }` |
-| `GET /lessons` | 这位老师最近 7 天 + 明天的课，见下方 `Lesson` |
+| `GET /schedule` | 同一时间范围的飞书课表，不取录音或报告状态，签名会话无需查库 |
+| `GET /lessons` | 这位老师最近 7 天 + 明天的课及录音、报告状态，见下方 `Lesson` |
+| `POST /lessons/:id/upload-url?kind=final\|early` | 给本人的课签发 60 秒 PUT 地址。返回 `{url}`；云端已接手时返回 `{done:true}`；随时录制只有 final |
 | `POST /lessons/:id/segments/:seq` | body = 原始 MP3 字节（HTTP 访问层以 base64 传入），header `x-sha256`；重复上传覆盖 → `{ ok: true }` |
-| `POST /lessons/:id/finish` | `{ startedAt, endedAt, segments: [{ seq, sha256, bytes }], topic?, kind?, pauses? }`（ISO 时间；`topic` / `kind = adhoc | meeting` 只对随时录制有效；`pauses = [{ start, end }]` 是老师点了暂停的时段，0.1.9 起）→ `{ missing: number[] }`；为空即开始处理 |
+| `POST /lessons/:id/finish` | `{ startedAt, endedAt, audio: { sha256, bytes }, topic?, kind?, pauses? }`。旧版用 `segments: [{ seq, sha256, bytes }]`（ISO 时间；`topic` / `kind = adhoc \| meeting` 只对随时录制有效；`pauses = [{ start, end }]` 是老师点了暂停的时段，0.1.9 起）→ `{ missing: number[] }`；为空即开始处理。直传对象大小不符时还会返回 `reupload: true` |
 | `PUT /lessons/:id/summary` | `{ text }` 保存老师改过的总结 |
 | `POST /lessons/:id/copied` | 标记已复制 |
 | `POST /lessons/:id/discard` | 老师在 App 里删了这节课：没出报告的不再处理（标失败、次数用满）；合并反馈直接删掉那一行 |
@@ -65,9 +67,9 @@ UI / UX 唯一依据：`docs/MVP.html`（老师端，含「随时录制」三步
 
 学情报告预览复用 `report.html`：后台把 `reportData` 写进同域 localStorage（`classroom-preview:draft|live`），用 `report.html#preview=draft` 打开。
 
-随时录制：课程编号 `adhoc-<16 位 hex>` 由 App 生成，`:id` 同样接受。第一次上传分段时按当前老师建档（不查课表），finish 时写入主题、类型和真实起止时间。
+随时录制：课程编号 `adhoc-<16 位 hex>` 由 App 生成，`:id` 同样接受。第一次申请上传地址或上传分段时按当前老师建档（不查课表），finish 时写入主题、类型和真实起止时间。
 `kind = meeting` 的整理成结构化会议纪要（`MeetingReport`：板块 → 议题、决定、待办、待跟进、发言占比；提示词是后台第四栏「会议纪要」，不套通用规则），纯文本【决定】【待办】【待跟进】由程序从同一份数据拼出，纪要网页同样走 `report.html?t=`（版式见 `docs/meeting-report.html`）；不判断老师 / 学生，不出家长总结和学情报告；`adhoc` 与课表课一样出家长总结和学情报告。
-录音（分段 + merged.mp3）保留 30 天，转写入库后先删分段；过期后删 merged.mp3、记 `audioDeletedAt`，转写和总结一直保留。
+录音保留 30 天。转写入库后删分段和未使用的保险音频；过期后删本课剩余的录音并记 `audioDeletedAt`，转写和总结一直保留。
 
 ```ts
 type LessonStatus = "upcoming" | "recording" | "processing" | "done" | "cancelled" | "failed" | "empty"; // failed、empty 从 0.1.10 起
@@ -80,7 +82,7 @@ interface Lesson {
   endAt: number;
   title: string;       // "IG 物理 · 小雨"  = 课程类型 · 学生
   topic: string;       // 云端整理出的主题 · 上课地点，可为空
-  status: LessonStatus;// 服务端视角；recording = 已收到分段但未 finish
+  status: LessonStatus;// 服务端视角；recording = 已签发上传地址或收到旧版分段，尚未 finish
   copied: boolean;
   summary?: string;    // done 时给出（老师改过的版本优先）
   reportUrl?: string;  // done 时给出
@@ -116,7 +118,7 @@ interface AppState {
     autoStopAt: string;                    // "17:10"
     autoStartAt: string;                   // "15:57"（pre 模式）
     savedSegments: number;
-    uploadedSegments: number;
+    uploading: boolean;
     online: boolean;
   };
   mics: string[]; mic: string;             // 当前麦克风
@@ -137,17 +139,17 @@ Commands（`invoke(name, args)`）：
 ## 录制规则（来自产品方案）
 
 - 随时录制：屏幕右侧悬浮按钮（`fab` 窗口，4 秒不碰淡成 25% 透明，悬停恢复，可拖动，设置里可关）或菜单栏「随时录制」，点一下开录，不需要课表、不参与自动开录，最长 3 小时。
-  结束后胶囊（和主窗口详情）请老师填主题、选「课程 / 会议」，分段照常上传，填好才提交 finish；10 分钟不填或又开始新的录制，按「课程 · 随时录制 HH:MM」处理。连堂的课到点自动开录时会先停掉随时录制。
+  结束后胶囊（和主窗口详情）请老师填主题、选「课程 / 会议」，停止后先传完整录音，填好才提交 finish；10 分钟不填或又开始新的录制，按「课程 · 随时录制 HH:MM」处理。连堂的课到点自动开录时会先停掉随时录制。
 
-- 拉课表：启动、登录、打开主窗口（10 分钟内不重复）、手动刷新、每天北京时间 7:00；不轮询报告状态（报告好了云端飞书私信老师）。老师可在 App 里删除某节课（只本机隐藏，录音丢弃并通知云端放弃）。开课前 10 分钟 → `pre`（胶囊出现，试音电平）；开课前 3 分钟自动开录；可提前最多 30 分钟手动开录。
+- 后台启动和每天北京时间 7:00 只拉飞书课表。登录、打开主窗口（10 分钟内不重复）和手动刷新会同时拉报告状态；报告好了云端飞书私信老师。老师可在 App 里删除某节课（只本机隐藏，录音丢弃并通知云端放弃）。开课前 10 分钟 → `pre`（胶囊出现，试音电平）；开课前 3 分钟自动开录；可提前最多 30 分钟手动开录。
 - 课表课下课后按声音停：下课时间后连续 3 分钟没人说话（麦克风电平约 -40 dBFS 以下）→ `quiet`，胶囊问「要结束录制吗」并倒计时 1 分钟，没人理就停，点「继续录」或又有人说话就接着按声音判断。上限下课后 30 分钟（最后 1 分钟 `ending` 倒计时，只能「现在停止」），连堂时下一节开录先到就先停。手动结束需二次确认（`confirm`）。
 - 结束要两步：胶囊上「暂停」是实心按钮、「结束」是文字按钮；确认卡片写清已录多久、结束后不能再接着录，红色按钮要按住 1 秒（松手取消），白色「继续录」在原来「结束」的位置，另有「改成暂停」。窗口里点「结束录制」，确认框就出在窗口里。「好像下课了」「下课后 30 分钟」这两个系统提醒仍是一键结束。
 - 暂停：胶囊、窗口、菜单栏都能暂停 / 继续。暂停时录音线程照常每 30 秒切段，但写的是静音（时间轴不断，云端流程不变），「已录」停表；继续时把暂停时段记进 `lesson.json`，finish 时报给云端，档案里挖成「暂停 N 分钟」（算上课时间、不算学习时间，同闲聊）。一次暂停最多提醒两次：满 10 分钟（胶囊 + 通知）、连续 1 分钟听到有人说话（只看音量），点「还在聊」就不再提醒；不会自动继续录。暂停到最晚停止时间照常自动结束。
-- 合盖睡眠：睡着期间不录；睡醒时已过了该停的时间就立刻停，结束时间记成睡着那一刻；没过就接着录。一直不打开电脑，云端在下课后、分段停传 15 分钟（随时录制停传 30 分钟）就用已收到的分段出报告，定时器每 30 分钟一次，所以总结约在下课后 15–45 分钟到；之后 App 补发的 finish 不再重出。
+- 合盖睡眠：睡着期间不录；睡醒时已过了该停的时间就立刻停，结束时间记成睡着那一刻；没过就接着录。课表课在计划下课时上传保险录音。若 20 分钟后仍未收到结束确认，后续录课请求或定时兜底可用保险录音出报告，最终时间取决于下一次触发。完整录音晚到时沿用既有报告。旧版仍用分段收尾。
 - 开录 2 分钟仍几乎无声 → `warn`，给出可切换的麦克风；录音不中断。麦克风断开 → 自动切到系统默认。
 - 「临时取消」的课不自动录。连堂：下一节自动开录时间点先停上一节再开下一节。
-- 录制中阻止系统睡眠；关窗只隐藏到菜单栏 / 托盘；App 崩溃重启后若仍在上课时间内自动续录，已录分段继续上传。
-- 分段先落盘（app 数据目录 `recordings/<lessonId>/<seq>.mp3` + `lesson.json` 上传记录）再上传；失败退避 1s→2s→…→5min；云端确认后本机保留 7 天。
+- 录制中阻止系统睡眠；关窗只隐藏到菜单栏 / 托盘；App 崩溃重启后若仍在上课时间内自动续录。
+- 录制时分段落盘（app 数据目录 `recordings/<lessonId>/<seq>.mp3` 和 `lesson.json`），结束后按顺序拼接并上传。失败退避 1s→2s→…→5min；云端确认后本机保留 7 天。
 
 ## 课堂时间档案与家长报告的时间（2026-10-27）
 

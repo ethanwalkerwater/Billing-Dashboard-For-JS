@@ -4,6 +4,7 @@
  */
 import assert from "node:assert/strict";
 import test from "node:test";
+import { asr } from "tencentcloud-sdk-nodejs-asr";
 import { CommonClient } from "tencentcloud-sdk-nodejs-common/tencentcloud/common";
 
 import * as L from "../src/server/logic";
@@ -129,6 +130,50 @@ test("直传的 finish：大小对不上让 App 重传；对上了才转入处�
   // 既没有分段也没有 audio：400
   fakeCloud(signed);
   assert.equal(parse(await call("/lessons/recA/finish", {}, { ...finish, audio: { sha256: "x", bytes: 1 } })).status, 400);
+});
+
+test("完整直传和保险收尾都只把 Storage 地址交给腾讯 ASR", async (t) => {
+  Object.assign(process.env, { TENCENT_SECRET_ID: "test-id", TENCENT_SECRET_KEY: "test-key" });
+  const submit = t.mock.method(asr.v20190614.Client.prototype, "CreateRecTask", async () => ({ Data: { TaskId: 42 } }));
+  t.mock.method(asr.v20190614.Client.prototype, "DescribeTaskStatus", async () => ({ Data: { Status: 2, ResultDetail: [] } }));
+  const requests: string[] = [];
+  let row: Record<string, unknown> = { ...mine, earlyAt: 1, finalUploadAt: 2 };
+  let deleted: string[] = [];
+  t.mock.method(globalThis, "fetch", async (input: string, init: RequestInit = {}) => {
+    const url = String(input), method = init.method ?? "GET";
+    requests.push(`${method} ${url}`);
+    if (url.includes("/classroom_sessions")) return Response.json([{ _id: sha256("tok"), openId: "ou_me" }]);
+    if (url.includes("/rdb/rest/classroom_lessons")) {
+      if (method === "PATCH") Object.assign(row, JSON.parse(String(init.body)));
+      return Response.json([row]);
+    }
+    if (method === "HEAD") return new Response(null, { headers: { "content-length": "120000" } });
+    if (url.includes("/object/sign/")) return Response.json({ fullSignedURL: url.replace("/object/sign/", "/signed/") });
+    if (method === "DELETE" && url.endsWith("/object/classroom")) {
+      deleted.push(...JSON.parse(String(init.body)).prefixes);
+      return Response.json([]);
+    }
+    throw new Error(`意外的请求 ${method} ${url}`);
+  });
+  const finish = { startedAt: "2026-11-12T08:00:00Z", endedAt: "2026-11-12T08:00:30Z", audio: { sha256: "a".repeat(64), bytes: 120_000 } };
+  assert.equal(parse(await call("/lessons/recA/finish", {}, finish)).status, 200);
+  assert.equal(row.stage, "transcribing");
+  assert.equal(row.mergedFileId, "recA/merged.mp3");
+  assert.match(submit.mock.calls[0].arguments[0]!.Url!, /signed\/classroom\/recA\/merged.mp3$/);
+  await call("/asr/callback", { lesson: "recA" });
+  assert.equal(row.stage, "empty");
+  assert.deepEqual(deleted, ["recA/early.mp3"]);
+
+  row = { ...mine, earlyAt: 1 };
+  deleted = [];
+  assert.deepEqual(await main({ action: "ride", lessonIds: ["recA"] }), { ok: true });
+  assert.equal(row.stage, "transcribing");
+  assert.equal(row.mergedFileId, "recA/early.mp3");
+  assert.match(submit.mock.calls[1].arguments[0]!.Url!, /signed\/classroom\/recA\/early.mp3$/);
+  await call("/asr/callback", { lesson: "recA" });
+  assert.equal(row.stage, "empty");
+  assert.deepEqual(deleted, []);
+  assert.ok(!requests.some((request) => /^(GET|PUT).*\/object\/authenticated|^PUT /.test(request)));
 });
 
 test("状态机：早传满 20 分钟才收尾；最近签过完整录音则优先等完整录音", () => {
