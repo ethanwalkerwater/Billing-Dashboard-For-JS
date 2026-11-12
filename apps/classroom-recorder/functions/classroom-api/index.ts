@@ -1,8 +1,8 @@
 /**
- * classroom-api —— 菁仕课堂云端（HTTP 访问服务路径 /classroom-api，转写完成靠腾讯云回调推进，定时触发 every-30-minutes 兜底）。
+ * classroom-api —— 菁仕课堂云端（HTTP 访问服务路径 /classroom-api，转写完成靠腾讯云回调推进，每日定时触发兜底）。
  * 接口与数据结构见 docs/design.md；纯逻辑在 src/server/logic.ts。
  *
- *   定时触发（每 30 分钟，兜底：失败重试、回调丢失、App 没回来的课、清理过期录音） runPipeline
+ *   定时触发（北京时间 03:00 和 22:45，兜底：失败重试、回调丢失、App 没回来的课、清理过期录音） runPipeline
  *   tcb fn invoke {"action":"tick"}                 手动推进一次
  *   tcb fn invoke {"action":"tick","lessonId":"rec…"} 只推进某节课
  *   {"action":"rebuild","lessonId":"rec…"}            按现在的流程重出报告，只返回不写库（scripts/rebuild-archive.ts 逐节调用）
@@ -10,6 +10,7 @@
 import { createHash, randomBytes } from "node:crypto";
 
 import { asr } from "tencentcloud-sdk-nodejs-asr";
+import { CommonClient } from "tencentcloud-sdk-nodejs-common/tencentcloud/common";
 
 import { FeishuClient } from "../../../course-feedback-tracker/src/server/feishu/client";
 import { parseTeacher, TEACHER_FIELDS } from "../../../teacher-birthday/src/domain/records";
@@ -36,9 +37,9 @@ const ADMINS = "classroom_admins";
  * 用环境 API Key（service_role）直连，同 course-feedback-tracker/functions/feedback-api/service-db.ts 的做法；
  * 这里需要 lt / 条件更新 / 条件删除，直接拼查询串比扩那个只支持 eq/in 的客户端省事。
  */
-export async function pg<T = any>(method: string, table: string, query = "", body?: unknown, prefer = "return=representation"): Promise<T[]> {
+export async function pg<T = any>(method: string, table: string, query = "", body?: unknown, prefer = "return=representation", signal?: AbortSignal): Promise<T[]> {
   const response = await fetch(`https://${requireEnv("CLOUDBASE_ENV_ID")}.api.tcloudbasegateway.com/v1/rdb/rest/${table}${query ? `?${query}` : ""}`, {
-    method,
+    method, signal,
     headers: {
       authorization: `Bearer ${requireEnv("CLOUDBASE_API_KEY")}`, "content-type": "application/json", accept: "application/json",
       "accept-profile": "public", "content-profile": "public", prefer,
@@ -111,13 +112,14 @@ const asrApi = () =>
   }));
 
 export const sha256 = (data: string | Buffer) => createHash("sha256").update(data).digest("hex");
+const RECORDING_ID = /^(rec[A-Za-z0-9]+|adhoc-[0-9a-f]{16})$/;
 const LEASE_MS = 6 * 60_000; // > 函数超时 300 s，进程被杀后 6 分钟自动释放
 
 // ---------- HTTP helpers ----------
 
 export interface HttpEvent {
   httpMethod?: string; path?: string; headers?: Record<string, string>; queryStringParameters?: Record<string, string>;
-  body?: string; isBase64Encoded?: boolean; Type?: string; TriggerName?: string; action?: string; lessonId?: string; prompts?: L.Prompts;
+  body?: string; isBase64Encoded?: boolean; Type?: string; TriggerName?: string; action?: string; lessonId?: string; lessonIds?: unknown; prompts?: L.Prompts;
 }
 type Session = { _id: string; openId: string; name: string; scheduleName: string };
 
@@ -721,18 +723,19 @@ async function processLesson(id: string, deadline: number) {
  * 腾讯云录音识别转完的回调。不信回调里的内容，只按 URL 里的课程编号接着处理：processLesson 会自己调
  * DescribeTaskStatus 确认真的转完了，伪造的请求最多让我们多查一次。必须回 code 0，否则腾讯云会重试；
  * 出总结要一两分钟，腾讯云等不及重试时，这节课已经不在 transcribing，直接回成功。
- * 回调丢了也不怕：每 30 分钟的定时器会兜底去问。
+ * 回调丢失时由后续录课请求或每日定时任务补查。
  */
 async function asrCallback(query: Record<string, string>) {
   const id = query.lesson ?? "";
-  if (!/^(rec[A-Za-z0-9]+|adhoc-[0-9a-f]{16})$/.test(id)) return json(200, { code: 0, message: "成功" });
+  if (!RECORDING_ID.test(id)) return json(200, { code: 0, message: "成功" });
   for (let i = 0; i < 12; i++) {
-    const doc = await getLesson(id);
-    if (doc?.stage !== "transcribing") break;
-    if (doc.lockedUntil < Date.now()) {
-      await processLesson(id, Date.now() + 170_000);
+    const doc = await getRow<LessonDoc>(LESSONS, id);
+    if (!doc) break;
+    if (doc.stage === "transcribing" && doc.lockedUntil < Date.now()) {
+      await Promise.all([processLesson(id, Date.now() + 170_000), piggyback(id)]);
       break;
     }
+    if (doc.stage !== "transcribing" && !((doc.stage === "recording" || doc.stage === "queued") && doc.lockedUntil > Date.now())) break;
     // 很短的录音会比 finish 那次请求先转完，它还拿着锁：等它放手再接着做，免得要等定时器
     await new Promise((resolve) => setTimeout(resolve, 5000));
   }
@@ -769,18 +772,63 @@ async function rebuild(lessonId: string, override?: L.Prompts) {
   return { ok: true, parentSummary: out.parentSummary, archive: out.archive, reportData: L.reportData({ ...doc, report, archive: out.archive }) };
 }
 
-async function runPipeline(lessonId?: string) {
-  const deadline = Date.now() + 170_000; // 函数超时 300 s，留出总结所需时间
-  if (lessonId) return processLesson(lessonId, deadline);
-  await expireAudio().catch((error) => console.error("清理过期录音失败", error));
-  const rows = await pg<{ _id: string }>("GET", LESSONS,
-    // 还在录、还在传的 recording 行什么都不用做，不查出来，免得同时上课的人多了把要处理的课挤出前 50（精确条件见 L.orphanEnded）
-    `stage=in.(recording,queued,transcribing,summarizing,failed)&attempts=lt.${L.MAX_ATTEMPTS}&lockedUntil=lt.${Date.now()}` +
-      `&or=(stage.neq.recording,updatedAt.lt.${Date.now() - L.ORPHAN_QUIET_MS})&select=_id&order=updatedAt.asc&limit=50`);
-  for (const { _id } of rows) {
-    if (Date.now() > deadline) break;
-    await processLesson(_id, deadline);
+const PIGGYBACK_INTERVAL_MS = 10 * 60_000;
+const CALLBACK_GRACE_MS = 15 * 60_000;
+const PIGGYBACK_BATCH = 5;
+let nextPiggybackAt = 0;
+
+function pendingLessons(now: number, limit: number, exclude?: string) {
+  const quiet = now - L.DIRECT_QUIET_MS;
+  const direct = `and(stage.eq.recording,or(earlyAt.not.is.null,finalUploadAt.not.is.null),or(earlyAt.is.null,earlyAt.lte.${quiet}),or(finalUploadAt.is.null,finalUploadAt.lte.${quiet}))`;
+  const legacy = `and(stage.eq.recording,earlyAt.is.null,finalUploadAt.is.null,or(and(kind.eq.lesson,endAt.lte.${now},updatedAt.lte.${now - L.ORPHAN_QUIET_MS}),and(kind.in.(adhoc,meeting),updatedAt.lte.${now - L.ADHOC_QUIET_MS})))`;
+  const queued = exclude
+    ? `and(stage.eq.queued,or(finalUploadAt.not.is.null,updatedAt.lte.${now - L.MISSING_GRACE_MS}))`
+    : "stage.eq.queued";
+  return pg<{ _id: string }>("GET", LESSONS,
+    `attempts=lt.${L.MAX_ATTEMPTS}&lockedUntil=lt.${now}&or=(${direct},${legacy},${queued},stage.in.(summarizing,failed),and(stage.eq.transcribing,updatedAt.lte.${now - CALLBACK_GRACE_MS}))` +
+      `&select=_id&order=updatedAt.asc&limit=${limit}${exclude ? `&_id=not.${eq(exclude)}` : ""}`,
+    undefined, "return=representation", exclude ? AbortSignal.timeout(1200) : undefined);
+}
+
+/** 只在正在访问数据库的请求中检查；SCF 接受事件后即可返回，后续处理由另一实例执行。 */
+async function piggyback(exclude: string) {
+  const now = Date.now();
+  const { TENCENTCLOUD_SECRETID: secretId, TENCENTCLOUD_SECRETKEY: secretKey, TENCENTCLOUD_SESSIONTOKEN: token } = process.env;
+  if (now < nextPiggybackAt) return;
+  nextPiggybackAt = now + PIGGYBACK_INTERVAL_MS;
+  if (!secretId || !secretKey || !token) {
+    console.warn("课堂兜底未获运行角色凭据");
+    return;
   }
+  try {
+    const rows = await pendingLessons(now, PIGGYBACK_BATCH, exclude);
+    if (!rows.length) return;
+    const client = new CommonClient("scf.tencentcloudapi.com", "2018-04-16", {
+      region: "ap-shanghai", credential: { secretId, secretKey, token }, profile: { httpProfile: { reqTimeout: 2 } },
+    });
+    const result = await client.request("Invoke", {
+      FunctionName: "classroom-api", Namespace: requireEnv("CLOUDBASE_ENV_ID"), InvocationType: "Event",
+      ClientContext: JSON.stringify({ action: "ride", lessonIds: rows.map(({ _id }) => _id) }),
+    });
+    console.info("课堂兜底已投递", result.RequestId, rows.length);
+  } catch (error) {
+    console.error("课堂兜底投递失败", error instanceof Error ? error.message : String(error));
+  }
+}
+
+async function processPending(ids: string[]) {
+  const deadline = Date.now() + 170_000;
+  for (const id of ids) {
+    if (Date.now() >= deadline) break;
+    await processLesson(id, deadline);
+  }
+}
+
+async function runPipeline(lessonId?: string) {
+  if (lessonId) return processPending([lessonId]);
+  await expireAudio().catch((error) => console.error("清理过期录音失败", error));
+  const rows = await pendingLessons(Date.now(), 50);
+  await processPending(rows.map(({ _id }) => _id));
 }
 
 // ---------- 后台（/classroom/admin/）----------
@@ -1104,6 +1152,12 @@ export async function main(event: HttpEvent) {
   hardStop = Date.now() + 280_000;
   if (typeof event.httpMethod !== "string") {
     if (event.action === "rebuild" && event.lessonId) return await rebuild(event.lessonId, readPrompts(event.prompts) ?? undefined);
+    if (event.action === "ride" && Array.isArray(event.lessonIds)) {
+      const ids = event.lessonIds.filter((id): id is string =>
+        typeof id === "string" && (RECORDING_ID.test(id) || L.isMergedId(id)));
+      await processPending([...new Set(ids)].slice(0, PIGGYBACK_BATCH));
+      return { ok: true };
+    }
     if (event.Type === "Timer" || event.TriggerName || event.action === "tick") {
       await runPipeline(event.lessonId);
       return { ok: true };
@@ -1141,8 +1195,11 @@ export async function main(event: HttpEvent) {
       const [, id, action, seq] = match;
       if (L.isMergedId(id) && (seq !== undefined || action === "finish" || action === "upload-url")) return fail(404, "NOT_FOUND", "接口不存在"); // 合并反馈没有录音
       if (method === "POST" && seq !== undefined) return await uploadSegment(event, session, id, Number(seq));
-      if (method === "POST" && action === "upload-url") return await signUpload(event, session, id, query.kind ?? "");
-      if (method === "POST" && action === "finish") return await finishLesson(event, session, id);
+      if (method === "POST" && (action === "upload-url" || action === "finish")) {
+        const response = action === "upload-url" ? await signUpload(event, session, id, query.kind ?? "") : await finishLesson(event, session, id);
+        if (response.statusCode === 200) await piggyback(id);
+        return response;
+      }
       if (method === "PUT" && action === "summary") {
         const text = jsonBody(event).text;
         if (typeof text !== "string" || !text.trim() || text.length > 5000) return fail(400, "BAD_BODY", "总结不能为空，且不超过 5000 字");

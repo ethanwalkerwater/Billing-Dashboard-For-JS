@@ -12,8 +12,11 @@
       "runtime": "Nodejs20.19",
       "handler": "index.main",
       "installDependency": false,
-      "description": "菁仕课堂：飞书登录、课表、录音上传，每分钟推进转写与课堂总结",
-      "triggers": [{ "name": "every-30-minutes", "type": "timer", "config": "0 0,30 * * * * *" }]
+      "description": "菁仕课堂：飞书登录、课表、录音上传与课堂总结",
+      "triggers": [
+        { "name": "classroom-late-sweep", "type": "timer", "config": "0 45 22 * * * *" },
+        { "name": "classroom-daily-sweep", "type": "timer", "config": "0 0 3 * * * *" }
+      ]
     }
   ]
 }

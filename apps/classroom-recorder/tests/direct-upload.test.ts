@@ -4,6 +4,7 @@
  */
 import assert from "node:assert/strict";
 import test from "node:test";
+import { CommonClient } from "tencentcloud-sdk-nodejs-common/tencentcloud/common";
 
 import * as L from "../src/server/logic";
 
@@ -11,7 +12,7 @@ Object.assign(process.env, { CLOUDBASE_ENV_ID: "env", CLOUDBASE_API_KEY: "key", 
 const { main, sha256 } = await import("../functions/classroom-api/index");
 
 type Call = { method: string; url: string; body?: string };
-function fakeCloud(lesson: Record<string, unknown> | undefined, opts: { size?: number | null; finishUpdates?: number } = {}) {
+function fakeCloud(lesson: Record<string, unknown> | undefined, opts: { size?: number | null; finishUpdates?: number; pending?: string[] } = {}) {
   const calls: Call[] = [];
   globalThis.fetch = (async (input: string, init: RequestInit = {}) => {
     const url = String(input), method = init.method ?? "GET";
@@ -19,7 +20,10 @@ function fakeCloud(lesson: Record<string, unknown> | undefined, opts: { size?: n
     const ok = (body: unknown, status = 200, headers: Record<string, string> = {}) => new Response(body === null ? null : JSON.stringify(body), { status, headers });
     if (url.includes("/rdb/rest/classroom_sessions")) return ok([{ _id: sha256("tok"), openId: "ou_me", name: "牛老师", scheduleName: "牛" }]);
     if (url.includes("/rdb/rest/classroom_segments")) return ok([]);
-    if (url.includes("/rdb/rest/classroom_lessons") && method === "GET") return ok(lesson ? [lesson] : []);
+    if (url.includes("/rdb/rest/classroom_lessons") && method === "GET") {
+      if (url.includes("attempts=lt.")) return ok((opts.pending ?? []).map((_id) => ({ _id })));
+      return ok(lesson ? [lesson] : []);
+    }
     if (url.includes("/rdb/rest/classroom_lessons") && method === "PATCH") {
       // finish 的条件更新：finishUpdates = 0 模拟「收尾已经在跑」；其余 PATCH（updatedAt、租约）照常
       if (url.includes("finish=is.null")) return ok(Array.from({ length: init.body?.toString().includes('"finish"') ? opts.finishUpdates ?? 1 : 1 }, () => ({ _id: lesson?._id })));
@@ -36,6 +40,33 @@ const call = (path: string, query: Record<string, string> = {}, body?: unknown) 
   main({ httpMethod: "POST", path: `/classroom-api${path}`, queryStringParameters: query, headers: { authorization: "Bearer tok", "x-device": "dev1" }, body: body === undefined ? undefined : JSON.stringify(body) });
 const parse = (res: any) => ({ status: res.statusCode as number, body: JSON.parse(res.body) });
 const mine = { _id: "recA", teacherOpenId: "ou_me", stage: "recording", attempts: 0, lockedUntil: 0, endAt: 0, updatedAt: 0, device: "dev1" };
+
+test("录课请求按实例节流查询待办，SCF 异步推进且不运行过期清理", async (t) => {
+  Object.assign(process.env, { TENCENTCLOUD_SECRETID: "id", TENCENTCLOUD_SECRETKEY: "key", TENCENTCLOUD_SESSIONTOKEN: "token" });
+  t.after(() => {
+    delete process.env.TENCENTCLOUD_SECRETID;
+    delete process.env.TENCENTCLOUD_SECRETKEY;
+    delete process.env.TENCENTCLOUD_SESSIONTOKEN;
+  });
+  const invoke = t.mock.method(CommonClient.prototype, "request", async () => ({ RequestId: "local" }));
+  const calls = fakeCloud({ ...mine, stage: "done" }, { pending: ["recB"] });
+  await call("/lessons/recA/upload-url", { kind: "final" });
+  await call("/lessons/recA/upload-url", { kind: "final" });
+  const checks = calls.filter((c) => c.url.includes("attempts=lt."));
+  assert.equal(checks.length, 1);
+  assert.match(checks[0].url, /earlyAt.lte./);
+  assert.match(checks[0].url, /_id=not.eq.recA/);
+  assert.equal(invoke.mock.callCount(), 1);
+  const [action, request] = invoke.mock.calls[0].arguments;
+  assert.equal(action, "Invoke");
+  assert.equal(request.InvocationType, "Event");
+  assert.deepEqual(JSON.parse(request.ClientContext), { action: "ride", lessonIds: ["recB"] });
+
+  const rideCalls = fakeCloud(undefined);
+  assert.deepEqual(await main({ action: "ride", lessonIds: ["recB", "recB", "invalid"] }), { ok: true });
+  assert.equal(rideCalls.length, 1);
+  assert.match(rideCalls[0].url, /_id=eq.recB.*lockedUntil=lt./);
+});
 
 test("签名直传：只给自己的课签，对象名由服务端定；已经在出报告的不再要录音", async () => {
   let calls = fakeCloud(mine);
