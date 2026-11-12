@@ -525,13 +525,21 @@ async function extractArchive(transcript: string, prompts: L.Prompts) {
 async function writeReport(meta: L.PromptMeta, archive: L.Archive, prompts: L.Prompts) {
   const messages = L.reportMessages(meta, archive, prompts);
   const headings = L.promptHeadings(prompts);
+  // 只有生效提示词是新 1️⃣ 格式才做抬头规范化；旧【】自定义模板和历史行为保持原样
+  const ctx = L.usesEmojiHeadings(prompts) ? L.summaryContext(meta, archive) : undefined;
   const raw = await chat(messages, true);
   let out: ReturnType<typeof L.parseSummary>;
   try {
-    out = L.parseSummary(raw, headings);
+    out = L.parseSummary(raw, headings, ctx);
   } catch (error) {
     const retry = await chat([...messages, { role: "assistant", content: raw }, { role: "user", content: `上面的输出不符合要求：${(error as Error).message}。请重新只输出符合结构的 JSON。` }], true);
-    out = L.parseSummary(retry, headings);
+    try {
+      out = L.parseSummary(retry, headings, ctx);
+    } catch (again) {
+      // 重试后仍命中 A7 就按句剥除；A3 只记日志放行。缺段名或剥空正文仍会抛错。
+      console.error("家长总结重试后仍未通过校验，尝试按句清理 A7；空段不放行", again);
+      out = L.parseSummary(retry, headings, ctx, { strict: false });
+    }
   }
   const points = out.report.mastery.map((m) => m.name);
   let chapters = await chat([{ role: "user", content: L.chapterPrompt(archive, points) }], true);
@@ -552,7 +560,12 @@ function pausesOf(doc: Pick<LessonDoc, "finish" | "startAt" | "audioSec">): Arra
   if (!pauses.length || doc.audioSec == null || !(Math.abs(wall - doc.audioSec) <= 60)) return [];
   return pauses.map((p) => [(Date.parse(p.start) - recStartOf(doc)) / 1000, (Date.parse(p.end) - recStartOf(doc)) / 1000]);
 }
-const metaOf = (doc: LessonDoc): L.PromptMeta => ({ student: doc.student, course: doc.course, teacher: doc.teacherName, monthDay: L.shMonthDay(doc.startAt) });
+const metaOf = (doc: LessonDoc): L.PromptMeta => ({
+  student: doc.student, course: doc.course, teacher: doc.teacherName, monthDay: L.shMonthDay(doc.startAt),
+  fullDate: L.shFullDate(doc.startAt),
+  // 抬头的时间行只写真实上课时间：随时录制的是录音时间、没选学生的课不写，都交给 timeRangeOf 判
+  timeRange: doc.student ? L.timeRangeOf(doc.startAt, doc.endAt, doc.kind) : undefined,
+});
 
 /**
  * 合并反馈：不重新转写、不重抽档案，把各节的档案接起来，只重写总结和报告（约 15 秒）。
@@ -573,11 +586,19 @@ async function mergedReport(doc: LessonDoc, prompts: L.Prompts) {
   const archive = L.mergeArchives(rows.map((r) => ({ lessonId: r._id, archive: r.archive!, recStart: recStartOf(r), plan: (r.endAt - r.startAt) / 1000 })));
   const last = rows.at(-1)!;
   const parts = archive.parts!;
+  const labels = L.partLabels(parts, true, true);
+  const days = [...new Set(parts.map((p) => L.shMonthDay(p.clock0 + p.start * 1000)))];
   const meta: L.PromptMeta = {
     ...metaOf(last),
     student: doc.student, // 最后一节可能是随时录制（没有学生名），用合并时定下的学生
     monthDay: L.shMonthDay(parts.at(-1)!.clock0 + parts.at(-1)!.start * 1000),
-    merged: { labels: L.partLabels(parts, true, true), days: [...new Set(parts.map((p) => L.shMonthDay(p.clock0 + p.start * 1000)))] },
+    fullDate: days.length > 1 ? days.join("、") : L.shFullDate(parts[0].clock0 + parts[0].start * 1000),
+    // 同一天列出各节时段；跨天只写日期，不写时间行
+    timeRange: doc.student && days.length === 1 ? labels.map((l) => l.split(" ").at(-1)!).join("、") : undefined,
+    merged: {
+      labels, days,
+      teachers: [...new Set(rows.map((r) => r.teacherName).filter(Boolean))],
+    },
   };
   const gapMinutes = rows.reduce((sum, r) => sum + (r.gapMinutes ?? 0), 0);
   const { parentSummary, report } = await writeReport(meta, archive, prompts);
