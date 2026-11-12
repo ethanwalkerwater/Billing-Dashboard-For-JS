@@ -1,4 +1,4 @@
-//! classroom-api：飞书登录轮询、拉课表、分段上传 + finish 清单、总结保存。
+//! classroom-api：飞书登录轮询、拉课表、下课后整节课直传 + finish（升级前录了一半的课仍按分段传）、总结保存。
 
 use crate::engine::{now_ms, Core, Lesson, MIN, NAME_WAIT};
 use crate::recorder;
@@ -176,7 +176,8 @@ pub async fn discard_pending(core: &Arc<Core>) {
 
 // ---------- 上传 ----------
 
-/// 扫描本机所有课的目录：补传未上传分段 → 录完的课提交清单 → 已完成 7 天的删除。
+/// 扫描本机所有课的目录：录完的课整节直传 + finish → 已完成 7 天的删除。上课时只存本机、不上传（数据库按「有访问的 5 分钟」计费），
+/// 只有课表课到计划下课时间还在录时，先传一份已录的（保险，老师合盖没点结束也能出报告）。
 /// 每节课各自退避 1s→2s→…→5min，互不阻塞；状态全在 lesson.json，重启后接着传。
 pub async fn upload_loop(core: Arc<Core>) {
     let mut backoff: HashMap<String, (i64, i64)> = HashMap::new(); // id → (下次时间, 退避秒数)
@@ -202,6 +203,7 @@ pub async fn upload_loop(core: Arc<Core>) {
                     Err(ApiError::Status(404 | 409, msg)) => {
                         eprintln!("[upload] {id}: permanently rejected: {msg}");
                         let _ = recorder::update(&dir, |lf| lf.failed = Some(msg));
+                        core.sent(&id, false);
                     }
                     Err(e) => {
                         let secs = backoff.get(&id).map_or(1, |b| (b.1 * 2).min(300));
@@ -231,7 +233,9 @@ async fn upload_lesson(core: &Arc<Core>, dir: &Path, id: &str) -> Result<(), Api
         }
         return Ok(());
     }
-    for seg in lf.segments.iter().filter(|s| !s.uploaded) {
+    // 升级到 0.1.12 前已经按分段传过一部分的课：照旧按分段传完，云端合并
+    let legacy = lf.segments.iter().any(|s| s.uploaded);
+    for seg in lf.segments.iter().filter(|s| legacy && !s.uploaded) {
         let bytes = match std::fs::read(recorder::seg_path(dir, seg.seq)) {
             Ok(b) => b,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -249,11 +253,31 @@ async fn upload_lesson(core: &Arc<Core>, dir: &Path, id: &str) -> Result<(), Api
         core.publish();
     }
     let mut lf = recorder::read(dir).map_err(local)?;
-    let Some(ended_at) = lf.ended_at else { return Ok(()) };
-    if lf.segments.iter().any(|s| !s.uploaded) {
+    let Some(ended_at) = lf.ended_at else {
+        return if legacy { Ok(()) } else { upload_early(core, dir, id, &lf).await };
+    };
+    if legacy && lf.segments.iter().any(|s| !s.uploaded) {
         return Ok(());
     }
-    // 随时录制：等老师填主题（分段照传），10 分钟没填按默认
+    // 一段都没录到的照旧报空清单，云端记「未录制」
+    let direct = !legacy && !lf.segments.is_empty();
+    if direct && lf.audio.is_none() {
+        let bytes = recorder::concat(dir, &lf).map_err(local)?;
+        let audio = recorder::Audio { sha256: recorder::sha256_hex(&bytes), bytes: bytes.len() as u64 };
+        if !put_audio(core, id, "final", bytes).await? {
+            // 云端已经开始整理，按已有录音继续。
+            recorder::update(dir, |lf| {
+                lf.finished = true;
+                lf.finished_at = Some(now_ms());
+            })
+            .map_err(local)?;
+            core.sent(id, true);
+            return Ok(());
+        }
+        recorder::update(dir, |lf| lf.audio = Some(audio)).map_err(local)?;
+        lf = recorder::read(dir).map_err(local)?;
+    }
+    // 随时录制：等老师填主题（录音照传），10 分钟没填按默认
     if crate::engine::is_adhoc(id) && lf.meta.is_none() {
         if now_ms() < ended_at + NAME_WAIT {
             return Ok(());
@@ -264,11 +288,11 @@ async fn upload_lesson(core: &Arc<Core>, dir: &Path, id: &str) -> Result<(), Api
             return Ok(()); // 正在等的那段由 tick 按默认填，下一轮再提交
         }
     }
-    let mut body = json!({
-        "startedAt": iso(lf.started_at),
-        "endedAt": iso(ended_at),
-        "segments": lf.segments.iter().map(|s| json!({ "seq": s.seq, "sha256": s.sha256, "bytes": s.bytes })).collect::<Vec<_>>(),
-    });
+    let mut body = json!({ "startedAt": iso(lf.started_at), "endedAt": iso(ended_at) });
+    match (&lf.audio, direct) {
+        (Some(a), true) => body["audio"] = json!({ "sha256": a.sha256, "bytes": a.bytes }),
+        _ => body["segments"] = json!(lf.segments.iter().map(|s| json!({ "seq": s.seq, "sha256": s.sha256, "bytes": s.bytes })).collect::<Vec<_>>()),
+    }
     if let Some(m) = &lf.meta {
         body["topic"] = json!(m.topic);
         body["kind"] = json!(m.kind);
@@ -279,22 +303,71 @@ async fn upload_lesson(core: &Arc<Core>, dir: &Path, id: &str) -> Result<(), Api
         body["pauses"] = json!(pauses.iter().map(|(a, b)| json!({ "start": iso(*a), "end": iso(*b) })).collect::<Vec<_>>());
     }
     let v: Value = core.call(Method::POST, &format!("/lessons/{id}/finish"), |rb| rb.json(&body)).await?.json().await.map_err(|_| ApiError::Net)?;
+    if direct && v["reupload"].as_bool() == Some(true) {
+        recorder::update(dir, |lf| lf.audio = None).map_err(local)?;
+        return Err(ApiError::Local("云端没有收到完整录音，稍后重新上传".into()));
+    }
     let missing: Vec<u32> = v["missing"].as_array().map(|a| a.iter().filter_map(|x| x.as_u64().map(|n| n as u32)).collect()).unwrap_or_default();
     let n = lf.segments.len();
-    recorder::update(dir, |lf| {
+    let done = recorder::update(dir, |lf| {
         if !missing.is_empty() {
             lf.segments.iter_mut().filter(|s| missing.contains(&s.seq)).for_each(|s| s.uploaded = false);
         } else if lf.ended_at == Some(ended_at) && lf.segments.len() == n {
             lf.finished = true;
             lf.finished_at = Some(now_ms());
         }
+        lf.finished
     })
     .map_err(local)?;
     if !missing.is_empty() {
         core.shared.kick_upload.notify_one();
     }
+    if done {
+        core.sent(id, true);
+    }
     core.publish();
     Ok(())
+}
+
+/// 课表课到计划下课时间还在录（多半在拖堂，或老师忘了点结束）：先把已录的部分直传一份（云端存 {id}/early.mp3），
+/// 老师直接合盖没点结束，云端过了最晚停止时间也能用它出报告。只传一次，拖堂照常接着录；随时录制没有计划下课时间，不传。
+async fn upload_early(core: &Arc<Core>, dir: &Path, id: &str, lf: &recorder::LessonFile) -> Result<(), ApiError> {
+    let recording = core.lock().active.as_ref().is_some_and(|a| a.lesson.id == id);
+    if !early_due(id, lf, recording, now_ms()) {
+        return Ok(());
+    }
+    let bytes = recorder::concat(dir, lf).map_err(local)?;
+    put_audio(core, id, "early", bytes).await?;
+    recorder::update(dir, |lf| lf.early_at = Some(now_ms())).map_err(local)?;
+    Ok(())
+}
+
+fn early_due(id: &str, lf: &recorder::LessonFile, recording: bool, now: i64) -> bool {
+    recording && !crate::engine::is_adhoc(id) && lf.early_at.is_none() && !lf.segments.is_empty() && now >= lf.lesson.end_at
+}
+
+/// 要一个签名上传地址，拿到马上直传（签名服务端固定 60 秒有效，失败下一轮重新签、整段重传）。
+/// Ok(false) = 云端已经不要这份录音了（已经在用别的录音出报告）。
+async fn put_audio(core: &Arc<Core>, id: &str, kind: &str, bytes: Vec<u8>) -> Result<bool, ApiError> {
+    let v: Value = core.call(Method::POST, &format!("/lessons/{id}/upload-url?kind={kind}"), |rb| rb).await?.json().await.map_err(|_| ApiError::Net)?;
+    if v["done"].as_bool() == Some(true) {
+        return Ok(false);
+    }
+    let url = v["url"].as_str().ok_or(ApiError::Net)?;
+    // 一节 90 分钟约 21 MB；上行慢的网络也要传得完，不用客户端默认的 90 秒超时
+    let res = core.http.put(url).header(reqwest::header::CONTENT_TYPE, "audio/mpeg").header("x-upsert", "true").timeout(Duration::from_secs(30 * 60)).body(bytes).send().await;
+    match res {
+        Ok(r) if r.status().is_success() => Ok(true),
+        // 存储的报错（签名过期等）一律按网络问题退避重试，不能当成云端拒收（403/404/409 在上面有别的含义）
+        Ok(r) => {
+            eprintln!("[upload] {id}: storage {kind} {}", r.status());
+            Err(ApiError::Net)
+        }
+        Err(_) => {
+            core.set_online(false);
+            Err(ApiError::Net)
+        }
+    }
 }
 
 // ---------- 合并反馈 ----------
@@ -328,4 +401,39 @@ pub async fn save_summary(core: &Arc<Core>, id: &str, text: &str) -> Result<(), 
 pub async fn mark_copied(core: &Arc<Core>, id: &str) -> Result<(), String> {
     core.call(Method::POST, &format!("/lessons/{id}/copied"), |rb| rb).await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::recorder::{LessonFile, Segment};
+
+    #[test]
+    fn early_once_at_planned_end() {
+        let seg = Segment { seq: 1, sha256: String::new(), bytes: 3, uploaded: false };
+        let mut lf = LessonFile { segments: vec![seg], ..Default::default() };
+        lf.lesson.end_at = 1000;
+        assert!(!early_due("recA", &lf, true, 999)); // 还没到计划下课
+        assert!(early_due("recA", &lf, true, 1000));
+        assert!(!early_due("recA", &lf, false, 1000)); // 不在录（崩溃遗留的）不传
+        assert!(!early_due("adhoc-0123456789abcdef", &lf, true, 1000)); // 随时录制没有计划下课时间
+        lf.early_at = Some(1000);
+        assert!(!early_due("recA", &lf, true, 99_999)); // 只传一次，拖堂接着录
+    }
+
+    #[test]
+    fn concat_in_seq_order_checks_source_files() {
+        let dir = std::env::temp_dir().join(format!("classroom-concat-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(recorder::seg_path(&dir, 2), b"bb").unwrap();
+        std::fs::write(recorder::seg_path(&dir, 1), b"a").unwrap();
+        let seg = |seq, bytes: &[u8]| Segment { seq, sha256: recorder::sha256_hex(bytes), bytes: bytes.len() as u64, uploaded: false };
+        let lf = LessonFile { segments: vec![seg(2, b"bb"), seg(1, b"a")], ..Default::default() };
+        assert_eq!(recorder::concat(&dir, &lf).unwrap(), b"abb");
+        std::fs::write(recorder::seg_path(&dir, 2), b"bc").unwrap();
+        assert!(recorder::concat(&dir, &lf).is_err());
+        std::fs::remove_file(recorder::seg_path(&dir, 2)).unwrap();
+        assert!(recorder::concat(&dir, &lf).is_err());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 }

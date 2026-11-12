@@ -329,6 +329,16 @@ pub struct LessonFile {
     pub pauses: Vec<(i64, i64)>,
     /// 正在暂停（开始时间）：崩溃重启后续录时接着暂停，不能悄悄录上真声音
     pub paused_at: Option<i64>,
+    /// 0.1.12 起：停止后整节课拼成一个 MP3 直传成功、还没 finish；云端说没收全就清掉重传
+    pub audio: Option<Audio>,
+    /// 课表课到计划下课时间那次保险上传成功的时间（只传一次）
+    pub early_at: Option<i64>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct Audio {
+    pub sha256: String,
+    pub bytes: u64,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -380,6 +390,21 @@ pub fn update<R>(dir: &Path, f: impl FnOnce(&mut LessonFile) -> R) -> std::io::R
     Ok(r)
 }
 
+/// 已录的分段按序号直接拼成一个 MP3（帧可直接拼接，云端原来也是这么合并的）
+pub fn concat(dir: &Path, lf: &LessonFile) -> std::io::Result<Vec<u8>> {
+    let mut segs: Vec<&Segment> = lf.segments.iter().collect();
+    segs.sort_by_key(|s| s.seq);
+    let mut out = Vec::with_capacity(segs.iter().map(|s| s.bytes as usize).sum());
+    for s in segs {
+        let bytes = std::fs::read(seg_path(dir, s.seq))?;
+        if bytes.len() as u64 != s.bytes || sha256_hex(&bytes) != s.sha256 {
+            return Err(std::io::Error::other(format!("录音分段 {} 校验失败", s.seq)));
+        }
+        out.extend_from_slice(&bytes);
+    }
+    Ok(out)
+}
+
 pub fn sha256_hex(bytes: &[u8]) -> String {
     Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect()
 }
@@ -423,6 +448,7 @@ pub fn begin(dir: &Path, lesson: &Lesson, now: i64, stop_at: i64) -> std::io::Re
         adopt_disk(dir, lf);
         lf.lesson = lesson.clone();
         lf.ended_at = None;
+        lf.audio = None; // 续录了，之前传的整段不算数
         lf.stop_at = lf.stop_at.max(stop_at); // 续录时保留之前「再录 15 分钟」
         if lf.started_at == 0 {
             lf.started_at = now;

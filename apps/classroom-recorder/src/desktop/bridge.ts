@@ -16,6 +16,9 @@ export interface Lesson {
   student?: string;
   /** 合并反馈由哪几节课合并 */
   sources?: string[];
+  /** 本机已录完、录音还没交给云端（断网时恢复后自动上传） */
+  pendingUpload?: boolean;
+  uploadFailed?: boolean;
 }
 export const isMeeting = (l?: Lesson) => l?.kind === 'meeting';
 export type RecMode = 'idle' | 'pre' | 'recording' | 'paused' | 'confirm' | 'warn' | 'quiet' | 'ending' | 'processing' | 'naming' | 'gone';
@@ -27,7 +30,8 @@ export interface AppState {
     mode: RecMode; lessonId: string | null; sec: number; endLeft: number; autoStopAt: string; autoStartAt: string;
     /** 暂停着（「结束？」确认时 mode 是 confirm，靠它知道底下是不是暂停）；pausedSec = 这次暂停了多久；nudge = 胶囊上的暂停提醒 */
     paused: boolean; pausedSec: number; nudge: '' | 'long' | 'voice';
-    savedSegments: number; uploadedSegments: number; online: boolean;
+    /** 上课时只存本机、下课后一次上传；uploading = 刚结束的那节还在上传 */
+    savedSegments: number; uploading: boolean; online: boolean;
   };
   mics: string[]; mic: string;
   autostart: boolean;

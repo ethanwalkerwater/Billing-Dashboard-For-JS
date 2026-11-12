@@ -19,6 +19,12 @@ export const MISSING_GRACE_MS = 2 * HOUR;
  */
 export const ORPHAN_QUIET_MS = 15 * 60_000;
 export const ADHOC_QUIET_MS = 30 * 60_000;
+export const DIRECT_QUIET_MS = 20 * 60_000;
+export const AUDIO_FILE = "merged.mp3";
+export const EARLY_FILE = "early.mp3";
+/** 还能收整节课录音的课：没开始处理的，或者收尾时什么录音都没找到（empty 且没有转写）的 */
+export const acceptsAudio = (doc: { stage: Stage; transcript?: string | null }) =>
+  doc.stage === "recording" || (doc.stage === "empty" && doc.transcript == null);
 /** 不算录制：录音不到 5 分钟，且转写里说的话不到 100 个字（约 25 秒的话；线上 5 分钟内的真课都有几百字） */
 export const EMPTY_MAX_SEC = 5 * 60;
 export const EMPTY_MAX_CHARS = 100;
@@ -156,8 +162,10 @@ export interface LessonDoc {
   /** 第一台上传的电脑；同一节课只收这台的分段 */
   device?: string | null;
   segments: Record<string, { sha256: string; bytes: number; fileId: string }>;
-  /** pauses = 老师点了暂停的时段（ISO），这段 App 录的是静音 */
-  finish?: { startedAt: string; endedAt: string; segments: FinishSegment[]; pauses?: Array<{ start: string; end: string }> };
+  earlyAt?: number | null;
+  finalUploadAt?: number | null;
+  /** pauses 是录制中暂停的时段；audio 是整段直传的清单，此时 segments 为空。 */
+  finish?: { startedAt: string; endedAt: string; segments: FinishSegment[]; pauses?: Array<{ start: string; end: string }>; audio?: { sha256: string; bytes: number } };
   mergedFileId?: string;
   asrTaskId?: number | null;
   transcript?: string;
@@ -428,31 +436,37 @@ export function missingSeqs(expected: FinishSegment[], stored: LessonDoc["segmen
 export type Step =
   | { action: "none" | "wait" | "poll" | "summarize" }
   | { action: "retry"; stage: Stage }
-  | { action: "merge"; seqs: number[]; gapMinutes: number };
+  | { action: "merge"; seqs: number[]; gapMinutes: number }
+  /** 直传的整段录音：按顺序找第一个存在的对象（{id}/文件名），直接提交转写，不下载不重传 */
+  | { action: "direct"; files: string[] };
 
 /** 转写里实际说了多少字（去掉 [说话人 时间] 标签、标点和空白） */
 export const spokenChars = (transcript: string) => transcript.replace(/\[[^\]]*\]/g, "").replace(/[\s\p{P}]/gu, "").length;
 export const isEmptyRecording = (audioSec: number, transcript: string) => audioSec < EMPTY_MAX_SEC && spokenChars(transcript) < EMPTY_MAX_CHARS;
 
 /** 没发 finish 的 recording 行：App 是不是已经不会再传了（见 ORPHAN_QUIET_MS） */
-export function orphanEnded(doc: Pick<LessonDoc, "kind" | "endAt" | "updatedAt">, now: number): boolean {
+export function orphanEnded(doc: Pick<LessonDoc, "kind" | "endAt" | "updatedAt" | "earlyAt" | "finalUploadAt">, now: number): boolean {
+  if (doc.earlyAt || doc.finalUploadAt) return now >= Math.max(doc.earlyAt ?? 0, doc.finalUploadAt ?? 0) + DIRECT_QUIET_MS;
   // 随时录制建档时 kind = adhoc，finish 才可能改成 meeting
   if (doc.kind === "adhoc" || doc.kind === "meeting") return now >= doc.updatedAt + ADHOC_QUIET_MS;
   return now >= doc.endAt && now >= doc.updatedAt + ORPHAN_QUIET_MS;
 }
 
-export function nextStep(doc: Pick<LessonDoc, "stage" | "failedStage" | "attempts" | "finish" | "segments" | "kind" | "endAt" | "updatedAt">, now: number): Step {
+export function nextStep(doc: Pick<LessonDoc, "stage" | "failedStage" | "attempts" | "finish" | "segments" | "kind" | "endAt" | "updatedAt" | "earlyAt" | "finalUploadAt">, now: number): Step {
   if (doc.stage === "failed") {
     return doc.attempts < MAX_ATTEMPTS && doc.failedStage ? { action: "retry", stage: doc.failedStage } : { action: "none" };
   }
   if (doc.stage === "transcribing") return { action: "poll" };
   if (doc.stage === "summarizing") return { action: "summarize" };
-  // App 没发 finish 就不传了（合盖睡着、关机、退出）：用已收到的分段先出报告；一段都没有则合并时报错走失败重试
-  // ponytail: 没有清单就算不出缺失时长，gapMinutes 记 0；App 之后补发 finish 不会重出报告
   if (doc.stage === "recording" && !doc.finish && orphanEnded(doc, now)) {
-    return { action: "merge", seqs: Object.keys(doc.segments).map(Number).sort((a, b) => a - b), gapMinutes: 0 };
+    const seqs = Object.keys(doc.segments).map(Number).sort((a, b) => a - b);
+    if (doc.earlyAt || doc.finalUploadAt) {
+      return { action: "direct", files: [...(doc.finalUploadAt ? [AUDIO_FILE] : []), ...(doc.earlyAt ? [EARLY_FILE] : [])] };
+    }
+    return { action: "merge", seqs, gapMinutes: 0 };
   }
   if (doc.stage !== "queued" || !doc.finish) return { action: "none" };
+  if (doc.finish.audio) return { action: "direct", files: [AUDIO_FILE] };
   const missing = missingSeqs(doc.finish.segments, doc.segments);
   const endedAt = Date.parse(doc.finish.endedAt);
   if (missing.length && Number.isFinite(endedAt) && now < endedAt + MISSING_GRACE_MS) return { action: "wait" };

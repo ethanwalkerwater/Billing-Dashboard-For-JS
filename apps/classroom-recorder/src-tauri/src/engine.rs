@@ -65,6 +65,11 @@ pub struct Lesson {
     /// 合并反馈（kind = "merged"）由哪几节课合并
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sources: Vec<String>,
+    /// 本机已录完、录音还没交给云端（只出现在本机快照里）
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub pending_upload: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub upload_failed: bool,
 }
 
 /// 随时录制：编号由 App 生成，不在课表里，不参与自动开录
@@ -234,6 +239,9 @@ pub struct Inner {
     pub lessons: Vec<Lesson>,
     pub active: Option<Active>,
     pub ended: HashSet<String>,
+    /// 本机已录完、云端还没确认收到（finish 没成功）的课
+    pub unsent: HashSet<String>,
+    pub upload_failures: HashSet<String>,
     /// 本机的随时录制（课表里没有）；云端列表还没有它或还没整理完时，用这份显示
     pub adhoc: HashMap<String, Lesson>,
     /// 刚结束、等老师填主题的随时录制：(编号, 结束时间)
@@ -276,6 +284,8 @@ impl Inner {
         }
         for l in &mut v {
             l.needs_name = self.naming.as_ref().is_some_and(|(id, _)| *id == l.id);
+            l.pending_upload = self.unsent.contains(&l.id);
+            l.upload_failed = self.upload_failures.contains(&l.id);
             if self.active.as_ref().is_some_and(|a| a.lesson.id == l.id) {
                 l.status = "recording".into();
             } else if self.ended.contains(&l.id) && matches!(l.status.as_str(), "upcoming" | "recording") {
@@ -288,6 +298,7 @@ impl Inner {
 
 struct RecView {
     mode: &'static str,
+    uploading: bool,
     lesson_id: Option<String>,
     sec: i64,
     paused: bool,
@@ -384,6 +395,11 @@ impl Core {
                 }
             }
             if lf.ended_at.is_some() {
+                if lf.failed.is_some() {
+                    g.upload_failures.insert(id.clone());
+                } else if !lf.finished {
+                    g.unsent.insert(id.clone());
+                }
                 g.ended.insert(id);
             } else if lf.started_at > 0 {
                 g.orphans.push((id, lf.stop_at.max(stop_at_of(&lf.lesson))));
@@ -434,6 +450,7 @@ impl Core {
             } else {
                 let _ = recorder::update(&dir, |lf| lf.ended_at = Some(now));
                 g.ended.insert(lesson.id.clone());
+                g.unsent.insert(lesson.id.clone());
             }
             return Err(e);
         }
@@ -464,6 +481,7 @@ impl Core {
             }
         }
         g.ended.insert(a.lesson.id.clone());
+        g.unsent.insert(a.lesson.id.clone());
         g.last_sec = (now - a.started_at - a.paused_ms) / 1000;
         g.processing_until = Some(now + 2600);
         if is_adhoc(&a.lesson.id) {
@@ -477,6 +495,20 @@ impl Core {
         }
         g.last_id = Some(a.lesson.id);
         self.shared.kick_upload.notify_one();
+    }
+
+    /// 云端已经收到这节课的录音（或云端说不用再传）：胶囊从「正在上传」换成「已上传，可以合上电脑了」几秒再收起
+    pub fn sent(self: &Arc<Self>, id: &str, success: bool) {
+        {
+            let mut g = self.lock();
+            if !success {
+                g.upload_failures.insert(id.to_string());
+            }
+            if g.unsent.remove(id) && g.active.is_none() && g.last_id.as_deref() == Some(id) {
+                g.processing_until = success.then(|| now_ms() + 4000);
+            }
+        }
+        self.publish();
     }
 
     // ---------- 随时录制 ----------
@@ -578,6 +610,7 @@ impl Core {
                 let Some(dir) = self.lesson_dir(&id) else { continue };
                 let end = std::fs::metadata(dir.join("lesson.json")).and_then(|m| m.modified()).map(|t| chrono::DateTime::<chrono::Utc>::from(t).timestamp_millis()).unwrap_or(now);
                 if recorder::end(&dir, end).is_ok() {
+                    g.unsent.insert(id.clone());
                     g.ended.insert(id);
                     self.shared.kick_upload.notify_one();
                 }
@@ -637,7 +670,8 @@ impl Core {
     // ---------- 快照与界面 ----------
 
     fn rec_view(&self, g: &Inner, now: i64) -> RecView {
-        let mut r = RecView { mode: "idle", lesson_id: None, sec: 0, paused: false, paused_sec: 0, nudge: "", end_left: 0, auto_stop_at: String::new(), auto_start_at: String::new() };
+        let uploading = g.last_id.as_ref().is_some_and(|id| g.unsent.contains(id));
+        let mut r = RecView { mode: "idle", uploading, lesson_id: None, sec: 0, paused: false, paused_sec: 0, nudge: "", end_left: 0, auto_stop_at: String::new(), auto_start_at: String::new() };
         if let Some(a) = &g.active {
             let silent = !self.shared.heard.load(Ordering::Relaxed) && now - a.mic_since >= SILENT_WARN;
             let stop = self.stop_of(a);
@@ -664,7 +698,8 @@ impl Core {
             r.mode = "naming";
             r.lesson_id = Some(id.clone());
             r.sec = if g.last_id.as_ref() == Some(id) { g.last_sec } else { 0 };
-        } else if g.processing_until.is_some_and(|t| now < t) {
+        } else if g.processing_until.is_some_and(|t| now < t) || (uploading && g.online) {
+            // 刚结束：传完前胶囊一直在（断网时收起，主窗口里写着恢复后自动上传）
             r.mode = "processing";
             r.lesson_id = g.last_id.clone();
             r.sec = g.last_sec;
@@ -679,13 +714,13 @@ impl Core {
     }
 
     fn state_json(&self, g: &Inner, r: &RecView) -> Value {
-        let (saved, uploaded) = r
+        let saved = r
             .lesson_id
             .as_deref()
             .filter(|_| r.mode != "pre")
             .and_then(|id| self.lesson_dir(id))
             .and_then(|d| recorder::read(&d).ok())
-            .map_or((0, 0), |lf| (lf.segments.len(), lf.segments.iter().filter(|s| s.uploaded).count()));
+            .map_or(0, |lf| lf.segments.len());
         let mic = Some(self.shared.mic.lock().unwrap().clone())
             .filter(|m| !m.is_empty())
             .or_else(|| Some(g.cfg.mic.clone()).filter(|m| !m.is_empty()))
@@ -705,7 +740,7 @@ impl Core {
                 "autoStopAt": r.auto_stop_at,
                 "autoStartAt": r.auto_start_at,
                 "savedSegments": saved,
-                "uploadedSegments": uploaded,
+                "uploading": r.uploading,
                 "online": g.online,
             },
             "mics": g.mics,
@@ -899,6 +934,8 @@ impl Core {
             }
             g.orphans.retain(|(o, _)| o != id);
             g.ended.remove(id);
+            g.unsent.remove(id);
+            g.upload_failures.remove(id);
             g.lessons.retain(|l| l.id != id);
             g.adhoc.remove(id);
             if g.toast.as_ref().is_some_and(|t| t["lessonId"] == id) {
@@ -1244,6 +1281,8 @@ mod tests {
             meta: None,
             pauses: vec![],
             paused_at: None,
+            audio: None,
+            early_at: None,
         };
         assert_eq!(recorder::read(&dir).unwrap(), want);
         // 损坏的 lesson.json 不能被当成空记录覆盖

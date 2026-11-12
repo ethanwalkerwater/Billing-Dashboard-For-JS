@@ -203,8 +203,7 @@ function renderDetail(l: Lesson | undefined) {
   } else if (l.status === 'recording') {
     const r = s.rec;
     body = `<div class="hero rec"><div class="big red num" data-sec></div><div class="sub">${l.kind ? '随时录制 · 结束时再填主题，最长 3 小时' : `正在录制 · 拖堂会接着录，下课后安静 3 分钟会问你是否结束，最晚 ${esc(r.autoStopAt)}`}</div>
-      <div class="chips"><span class="chip num">本机已保存 ${r.savedSegments} 段</span><span class="chip num">已上传 ${r.uploadedSegments} 段</span>${
-        r.online ? '<span class="chip ok">● 网络正常</span>' : '<span class="chip warn">● 网络断开，恢复后自动补传</span>'}</div>
+      <div class="chips"><span class="chip num">本机已保存 ${r.savedSegments} 段</span><span class="chip">结束后一次上传</span></div>
       <div class="acts"><button class="primary" data-act="pause">暂停</button><button class="ghost" data-act="stop">结束录制</button></div></div>
       <p class="empty">可以关掉这个窗口，录音会继续；屏幕顶部的胶囊会一直陪着你。</p>`;
   } else if (l.kind === 'merged' && l.status !== 'done') {
@@ -212,8 +211,14 @@ function renderDetail(l: Lesson | undefined) {
       <div class="sub">${busy ? '大约 15 秒；不用重新转写，直接用各节已经整理好的课堂记录' : l.status === 'failed' ? '生成没成功，可以点「重新选课程」再试一次' : '生成没成功，云端会在 30 分钟内自动重试；也可以点「重新选课程」再试一次'}</div>${busy ? '' : '<div class="acts"><button class="ghost" data-act="merge-again">重新选课程</button></div>'}</div>`;
   } else if (l.status === 'failed' && l.kind !== 'merged') {
     body = '<div class="hero"><div class="sub lead">没能生成总结</div><div class="sub">已经自动重试 3 次。录音还在，已通知管理员处理，好了会发到你的飞书</div></div>';
+  } else if (l.status === 'processing' && l.uploadFailed) {
+    body = '<div class="hero"><div class="sub lead">录音上传未完成</div><div class="sub">录音仍在这台电脑上，请联系教务处理</div></div>';
+  } else if (l.status === 'processing' && l.pendingUpload) {
+    body = s.rec.online
+      ? '<div class="hero"><div class="sub lead"><span class="spin dark" style="display:inline-block;vertical-align:-2px;margin-right:8px"></span>正在上传录音…</div><div class="sub">传完就开始整理，传完前请先别合上电脑</div></div>'
+      : '<div class="hero"><div class="sub lead">录音还没上传</div><div class="sub">录音已保存在这台电脑上，网络恢复后会自动上传，传完才开始整理</div></div>';
   } else if (l.status === 'processing') {
-    body = '<div class="hero"><div class="sub lead">正在整理这节课…</div><div class="sub">录音已全部上传，总结一般 10 分钟内好，好了会发到你的飞书；回到这里点右上角刷新也能看到</div></div>';
+    body = '<div class="hero"><div class="sub lead">正在整理这节课…</div><div class="sub">录音已上传，可以合上电脑了。总结一般 10 分钟内好，好了会发到你的飞书；回到这里点右上角刷新也能看到</div></div>';
   } else if (l.status === 'cancelled') {
     body = '<div class="hero"><div class="sub lead">这节课在课表上标了「临时取消」</div><div class="sub">不会自动录制</div></div>';
   } else {
