@@ -13,7 +13,7 @@
     "test": "tsx --test tests/*.test.ts",
     "build:report": "vite build --config vite.report.config.ts",
     "deploy:functions": "node scripts/deploy-function.mjs",
-    "deploy:web": "npm run build:report && tcb hosting deploy dist-report /classroom -e jingshi-test-d5gp401i44a0fa7a7"
+    "deploy:web": "npm run build:report && mkdir -p dist-work && sed \"s#\\.\\./assets/#/classroom/assets/#g\" dist-report/workbench/index.html > dist-work/index.html && tcb hosting deploy dist-report /classroom -e jingshi-test-d5gp401i44a0fa7a7 && tcb hosting deploy dist-work /work -e jingshi-test-d5gp401i44a0fa7a7"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.8.0",
@@ -24,6 +24,7 @@
     "@types/node": "^24.3.0",
     "esbuild": "^0.28.2",
     "tencentcloud-sdk-nodejs-asr": "^4.1.326",
+    "tencentcloud-sdk-nodejs-common": "^4.1.220",
     "tsx": "^4.20.5",
     "typescript": "^5.9.2",
     "vite": "^7.1.4"
