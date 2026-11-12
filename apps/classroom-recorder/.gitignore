@@ -6,3 +6,4 @@ src-tauri/target/
 src-tauri/gen/
 server.env
 cloudbaserc.local.json
+dist-work/

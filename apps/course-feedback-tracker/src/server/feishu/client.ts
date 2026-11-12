@@ -176,6 +176,14 @@ export class FeishuClient {
     return data.record;
   }
 
+  async createRecord(input: { appToken: string; tableId: string; fields: Record<string, unknown> }): Promise<FeishuRecord> {
+    const data = await this.request<{ record: FeishuRecord }>(
+      `/open-apis/bitable/v1/apps/${encodeURIComponent(input.appToken)}/tables/${encodeURIComponent(input.tableId)}/records`,
+      { method: "POST", body: JSON.stringify({ fields: input.fields }) },
+    );
+    return data.record;
+  }
+
   /** 机器人发消息；receiveIdType 为 open_id（私聊）或 chat_id（群）。 */
   async sendMessage(input: {
     receiveIdType: "open_id" | "chat_id";

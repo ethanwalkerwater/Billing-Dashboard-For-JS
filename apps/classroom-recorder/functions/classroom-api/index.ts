@@ -15,8 +15,9 @@ import { FeishuClient } from "../../../course-feedback-tracker/src/server/feishu
 import { parseTeacher, TEACHER_FIELDS } from "../../../teacher-birthday/src/domain/records";
 import * as L from "../../src/server/logic";
 import type { LessonDoc, Stage } from "../../src/server/logic";
+import { formRoute, workbenchRoute } from "./workbench";
 
-function requireEnv(name: string): string {
+export function requireEnv(name: string): string {
   const value = process.env[name]?.trim();
   if (!value) throw new Error(`缺少环境变量 ${name}`);
   return value;
@@ -27,7 +28,7 @@ const SESSIONS = "classroom_sessions";
 const LESSONS = "classroom_lessons";
 const SEGMENTS = "classroom_segments";
 const PROMPTS = "classroom_prompts";
-const ADMIN_SESSIONS = "classroom_admin_sessions";
+export const ADMIN_SESSIONS = "classroom_admin_sessions";
 const ADMINS = "classroom_admins";
 
 /**
@@ -35,7 +36,7 @@ const ADMINS = "classroom_admins";
  * 用环境 API Key（service_role）直连，同 course-feedback-tracker/functions/feedback-api/service-db.ts 的做法；
  * 这里需要 lt / 条件更新 / 条件删除，直接拼查询串比扩那个只支持 eq/in 的客户端省事。
  */
-async function pg<T = any>(method: string, table: string, query = "", body?: unknown, prefer = "return=representation"): Promise<T[]> {
+export async function pg<T = any>(method: string, table: string, query = "", body?: unknown, prefer = "return=representation"): Promise<T[]> {
   const response = await fetch(`https://${requireEnv("CLOUDBASE_ENV_ID")}.api.tcloudbasegateway.com/v1/rdb/rest/${table}${query ? `?${query}` : ""}`, {
     method,
     headers: {
@@ -55,12 +56,12 @@ async function pg<T = any>(method: string, table: string, query = "", body?: unk
 const STORAGE = () => `https://${requireEnv("CLOUDBASE_ENV_ID")}.api.tcloudbasegateway.com/v1/storages`;
 const BUCKET = "classroom";
 const storageAuth = () => ({ authorization: `Bearer ${requireEnv("CLOUDBASE_API_KEY")}` });
-async function putObject(name: string, bytes: Buffer, contentType = "audio/mpeg"): Promise<string> {
+export async function putObject(name: string, bytes: Buffer, contentType = "audio/mpeg"): Promise<string> {
   const response = await fetch(`${STORAGE()}/object/${BUCKET}/${name}`, { method: "PUT", headers: { ...storageAuth(), "content-type": contentType }, body: new Uint8Array(bytes) });
   if (!response.ok) throw new Error(`存储录音失败：${response.status} ${(await response.text()).slice(0, 200)}`);
   return name;
 }
-async function getObject(name: string): Promise<Buffer> {
+export async function getObject(name: string): Promise<Buffer> {
   const response = await fetch(`${STORAGE()}/object/authenticated/${BUCKET}/${name}`, { headers: storageAuth() });
   if (!response.ok) throw new Error(`下载分段失败：${name} ${response.status}`);
   return Buffer.from(await response.arrayBuffer());
@@ -73,19 +74,19 @@ async function removeObjects(names: string[]) {
     if (!response.ok) console.error("删除录音失败", response.status, (await response.text()).slice(0, 200));
   }));
 }
-async function signedUrl(name: string, expiresIn: number): Promise<string> {
+export async function signedUrl(name: string, expiresIn: number): Promise<string> {
   const response = await fetch(`${STORAGE()}/object/sign/${BUCKET}/${name}`, { method: "POST", headers: { ...storageAuth(), "content-type": "application/json" }, body: JSON.stringify({ expiresIn }) });
   const body = (await response.json().catch(() => ({}))) as { fullSignedURL?: string }; // signedURL 是带 /v1/storages 的相对路径
   if (!response.ok || !body.fullSignedURL) throw new Error(`获取合并录音临时链接失败：${response.status}`);
   return body.fullSignedURL;
 }
 
-const eq = (value: string | number) => `eq.${encodeURIComponent(String(value))}`;
-const inList = (values: string[]) => `in.(${values.map((v) => encodeURIComponent(`"${v}"`)).join(",")})`;
+export const eq = (value: string | number) => `eq.${encodeURIComponent(String(value))}`;
+export const inList = (values: string[]) => `in.(${values.map((v) => encodeURIComponent(`"${v}"`)).join(",")})`;
 
 let feishuClient: FeishuClient | undefined;
-const feishu = () => (feishuClient ??= new FeishuClient({ appId: requireEnv("FEISHU_APP_ID"), appSecret: requireEnv("FEISHU_APP_SECRET") }));
-const schedule = () => ({ appToken: requireEnv("SCHEDULE_APP_TOKEN"), tableId: requireEnv("SCHEDULE_TABLE_ID") });
+export const feishu = () => (feishuClient ??= new FeishuClient({ appId: requireEnv("FEISHU_APP_ID"), appSecret: requireEnv("FEISHU_APP_SECRET") }));
+export const schedule = () => ({ appToken: requireEnv("SCHEDULE_APP_TOKEN"), tableId: requireEnv("SCHEDULE_TABLE_ID") });
 
 let asrClient: InstanceType<typeof asr.v20190614.Client> | undefined;
 const asrApi = () =>
@@ -95,24 +96,24 @@ const asrApi = () =>
     profile: { httpProfile: { endpoint: "asr.tencentcloudapi.com" } },
   }));
 
-const sha256 = (data: string | Buffer) => createHash("sha256").update(data).digest("hex");
+export const sha256 = (data: string | Buffer) => createHash("sha256").update(data).digest("hex");
 const LEASE_MS = 6 * 60_000; // > 函数超时 300 s，进程被杀后 6 分钟自动释放
 
 // ---------- HTTP helpers ----------
 
-interface HttpEvent {
+export interface HttpEvent {
   httpMethod?: string; path?: string; headers?: Record<string, string>; queryStringParameters?: Record<string, string>;
   body?: string; isBase64Encoded?: boolean; Type?: string; TriggerName?: string; action?: string; lessonId?: string; prompts?: L.Prompts;
 }
 type Session = { _id: string; openId: string; name: string; scheduleName: string };
 
-const json = (statusCode: number, body: unknown) => ({
+export const json = (statusCode: number, body: unknown) => ({
   statusCode,
   headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "access-control-allow-origin": "*" },
   body: JSON.stringify(body),
   isBase64Encoded: false,
 });
-const fail = (statusCode: number, error: string, message: string) => json(statusCode, { error, message });
+export const fail = (statusCode: number, error: string, message: string) => json(statusCode, { error, message });
 const escapeHtml = (value: string) => value.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 const page = (statusCode: number, title: string, message: string) => ({
   statusCode,
@@ -125,11 +126,11 @@ main{width:min(420px,calc(100% - 32px));padding:36px 32px;background:var(--paper
 </style></head><body><main><div class="brand"><span class="mark">菁</span>菁仕课堂</div><h1>${escapeHtml(title)}</h1><p>${escapeHtml(message)}</p></main></body></html>`,
 });
 
-function header(event: HttpEvent, name: string): string {
+export function header(event: HttpEvent, name: string): string {
   for (const [key, value] of Object.entries(event.headers ?? {})) if (key.toLowerCase() === name) return String(value);
   return "";
 }
-function jsonBody(event: HttpEvent): Record<string, any> {
+export function jsonBody(event: HttpEvent): Record<string, any> {
   if (!event.body) return {};
   try {
     return JSON.parse(event.isBase64Encoded ? Buffer.from(event.body, "base64").toString("utf8") : event.body);
@@ -138,7 +139,7 @@ function jsonBody(event: HttpEvent): Record<string, any> {
   }
 }
 
-const getRow = async <T>(table: string, id: string): Promise<T | undefined> => (await pg<T>("GET", table, `_id=${eq(id)}&limit=1`))[0];
+export const getRow = async <T>(table: string, id: string): Promise<T | undefined> => (await pg<T>("GET", table, `_id=${eq(id)}&limit=1`))[0];
 /** 课程行 + 分段表拼成 LessonDoc */
 async function getLesson(id: string): Promise<LessonDoc | undefined> {
   const row = await getRow<Omit<LessonDoc, "segments">>(LESSONS, id);
@@ -158,7 +159,7 @@ async function authenticate(event: HttpEvent): Promise<Session | undefined> {
 const redirectUri = () => `${requireEnv("API_BASE_URL").replace(/\/$/, "")}/auth/callback`;
 
 /** 老师 App（kind 为空）和后台网页（kind = admin）共用同一个飞书回调地址，靠 state 行区分 */
-async function authorizeUrl(kind?: "admin") {
+async function authorizeUrl(kind?: "admin" | "workbench") {
   const state = randomBytes(16).toString("base64url");
   await pg("POST", AUTH, "", [{ _id: state, status: "pending", expiresAt: Date.now() + 10 * 60_000, ...(kind ? { kind } : {}) }], "return=minimal");
   const url = new URL("https://accounts.feishu.cn/open-apis/authen/v1/authorize");
@@ -198,7 +199,7 @@ async function authCallback(query: Record<string, string>) {
   if (!auth || auth.expiresAt < Date.now() || auth.status !== "pending") return page(400, "登录链接已过期", "请回到菁仕课堂，重新点「飞书登录」。");
   if (!query.code) return page(400, "没有完成授权", "请回到菁仕课堂，重新点「飞书登录」并同意授权。");
   try {
-    if (auth.kind === "admin") return await adminCallback(state, query.code);
+    if (auth.kind === "admin" || auth.kind === "workbench") return await adminCallback(state, query.code, auth.kind);
     const { openId, name } = await feishuUser(query.code);
     const match = await findTeacher(openId, name);
     if (!match) {
@@ -407,7 +408,7 @@ async function getReport(token: string) {
 
 const download = getObject;
 
-async function chat(messages: Array<{ role: string; content: string }>, jsonMode = false, maxTokens = 4000): Promise<string> {
+export async function chat(messages: Array<{ role: string; content: string }>, jsonMode = false, maxTokens = 4000): Promise<string> {
   const response = await fetch(`${requireEnv("AI_BASE_URL").replace(/\/$/, "")}/chat/completions`, {
     method: "POST",
     headers: { authorization: `Bearer ${requireEnv("AI_API_KEY")}`, "content-type": "application/json" },
@@ -721,7 +722,7 @@ type AdminSession = { _id: string; openId: string; name: string; expiresAt: numb
 const ADMIN_TTL_MS = 30 * L.DAY;
 const adminUrl = () => requireEnv("REPORT_BASE_URL").replace(/report\.html$/, "admin/");
 const adminOpenIds = () => (process.env.ADMIN_OPEN_IDS ?? "").split(",").map((id) => id.trim()).filter(Boolean);
-const isAdmin = async (openId: string) =>
+export const isAdmin = async (openId: string) =>
   adminOpenIds().includes(openId) || (await pg("GET", ADMINS, `openId=${eq(openId)}&select=openId`)).length > 0;
 const canSee = (admin: AdminSession, doc: { teacherOpenId: string }) => admin.role === "admin" || doc.teacherOpenId === admin.openId;
 
@@ -735,19 +736,30 @@ async function notifyAdmins(text: string) {
 }
 const redirect = (location: string) => ({ statusCode: 302, headers: { location, "cache-control": "no-store" }, body: "", isBase64Encoded: false });
 
-async function adminCallback(state: string, code: string) {
+/** 后台和工作台：管理员、教务（wb_roles）不一定是老师；其他人要在老师档案里对得上。对上了记下课表名，工作台按它筛课表 */
+async function adminCallback(state: string, code: string, kind: string) {
   const claimed = await pg("DELETE", AUTH, `_id=${eq(state)}&status=eq.pending`);
   if (!claimed.length) return page(400, "登录链接已过期", "请回到后台重新登录。");
   const user = await feishuUser(code);
-  let name = user.name;
-  if (!(await isAdmin(user.openId))) {
-    const match = await findTeacher(user.openId, user.name);
-    if (!match) return page(403, "老师档案里还没有你", `${user.name || "你"}，「老师信息」表里没有找到你的姓名，请联系教务添加后再登录。`);
-    name = match.teacher.name;
+  const [admin, staff] = await Promise.all([isAdmin(user.openId), pg("GET", "wb_roles", `openId=${eq(user.openId)}&select=openId`)]);
+  const privileged = admin || staff.length > 0;
+  const match = await findTeacher(user.openId, user.name).catch((error) => {
+    if (!privileged) throw error;
+    console.error("[classroom-api] 管理员登录时查老师档案失败", error);
+    return null;
+  });
+  if (!match && !privileged) {
+    // 教务多半不在老师档案里：记下来并通知管理员，管理员在工作台「录课管理 → 教务」里选上就能进
+    await pg("POST", "wb_people", "on_conflict=openId", [{ openId: user.openId, name: user.name || "未命名", triedAt: Date.now() }], "resolution=merge-duplicates,return=minimal");
+    await notifyAdmins(`${user.name || "有人"} 想登录菁仕工作台，但不在老师档案里。如果是教务，请在工作台「录课管理 → 教务」里把他设为教务。`);
+    return page(403, "还没有开通", `${user.name || "你"}，「老师信息」表里没有找到你，已通知管理员。开通后再点一次「用飞书登录」。`);
   }
   const token = randomBytes(32).toString("base64url");
-  await pg("POST", ADMIN_SESSIONS, "", [{ _id: sha256(token), openId: user.openId, name: name || "老师", expiresAt: Date.now() + ADMIN_TTL_MS }], "return=minimal");
-  return redirect(`${adminUrl()}#token=${token}`); // 放在 # 后面，不进服务器日志；网页读出后立刻从地址栏清掉
+  await pg("POST", ADMIN_SESSIONS, "", [{
+    _id: sha256(token), openId: user.openId, name: match?.teacher.name || user.name || "老师", scheduleName: match?.teacher.scheduleName ?? null, expiresAt: Date.now() + ADMIN_TTL_MS,
+  }], "return=minimal");
+  const target = kind === "workbench" ? new URL("/work/", requireEnv("REPORT_BASE_URL")).href : adminUrl(); // 工作台短地址 /work/，旧地址 /classroom/workbench/ 也还能打开
+  return redirect(`${target}#token=${token}`); // 放在 # 后面，不进服务器日志；网页读出后立刻从地址栏清掉
 }
 
 async function authenticateAdmin(event: HttpEvent): Promise<AdminSession | undefined> {
@@ -1038,7 +1050,9 @@ export async function main(event: HttpEvent) {
     if (method === "GET" && path === "/auth/poll") return await authPoll(query.state ?? "");
     if (method === "GET" && path === "/report") return await getReport(query.t ?? "");
     if (method === "POST" && path === "/asr/callback") return await asrCallback(query);
-    if (method === "GET" && path === "/admin/login") return redirect((await authorizeUrl("admin")).url);
+    if (method === "GET" && path === "/admin/login") return redirect((await authorizeUrl(query.to === "workbench" ? "workbench" : "admin")).url);
+    if (path === "/wb-form") return await formRoute(method, event, query);
+    if (path.startsWith("/wb/")) return await workbenchRoute(method, path, event, query);
     if (path.startsWith("/admin/")) {
       const admin = await authenticateAdmin(event);
       if (!admin) return fail(401, "UNAUTHORIZED", "登录已失效，请重新用飞书登录");

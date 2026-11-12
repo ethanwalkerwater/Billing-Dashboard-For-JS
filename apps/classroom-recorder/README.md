@@ -7,6 +7,32 @@
 - 后台：`https://app.jsjy.asia/classroom/admin/`，飞书登录。老师（「老师信息」表里有的）只看自己的课程和会议，可以改转写、在报告网页上改文字；超级管理员 = `ADMIN_OPEN_IDS`（创建者）+ 后台「管理员」页里加的人（`classroom_admins` 表），看全部老师。按课程听 / 下载录音、看 / 下载转写、看家长总结和学情报告；改提示词，用已有课程、上传音频或粘贴转写试生成，和线上版本并排对比，确认后「应用到全部老师」。
 - 完整报告：`https://app.jsjy.asia/classroom/report.html?t=<token>`，不需要登录，靠 32 位随机 token 防猜。只有白天模式。加 `&edit=1`（后台报告页的「编辑」）进编辑模式：用后台的登录，点文字原地改，支持简单 Markdown，版式不变；第一次改时 AI 原稿存进 `rawReport`。「下载 PDF」调用浏览器打印，另存的文件名为 `学生_课程_日期_课堂学情报告`。
 
+## 菁仕工作台
+
+`https://app.jsjy.asia/work/`（旧地址 `/classroom/workbench/` 也能打开；`deploy:web` 把同一个页面改成绝对资源路径另传一份到 `/work/`），飞书登录（和后台共用登录和 token）。界面照 [`docs/学生档案.html`](../../docs/学生档案.html) v9 原型，产品档案见 [`docs/PRODUCT.md`](../../docs/PRODUCT.md)。代码：`src/workbench/`（网页，原生 JS）、`functions/classroom-api/workbench.ts`（接口 `/classroom-api/wb/*`）、`src/server/workbench.ts`（纯逻辑，前后端共用）、`tests/workbench.test.ts`。
+
+| 角色 | 是谁 | 看什么 |
+|---|---|---|
+| 老师 | 老师档案对上的人，按「课表名」筛课表 | 自己的课表；「我的学员」= 最近 90 天给他上过课或已排课（开会、考试、取消的不算），列表只列自己的课，这个月没有自己课的学生排在下面并显示上次上课；学生档案里能看到其他科；看不到标记、备注、归属老师、服务老师、渠道 |
+| 教务 | `wb_roles`，管理员在「录课管理 → 教务」里加 | 全部学员和课表，在列表里直接改阶段，标记、备注、跟进、列设置、新建学员 |
+| 管理员 | `ADMIN_OPEN_IDS` + `classroom_admins` | 教务的全部，加录课管理（链到原后台）和教务名单；账号菜单里能「以老师身份查看」 |
+
+不在老师档案里、也不是教务的人登录会被拦下，名字记进 `wb_people` 并私信管理员，管理员在「录课管理 → 教务」里直接选他。
+
+数据：
+
+- 课表、学员信息是飞书的快照，存在 `wb_cache`（`m:YYYY-MM` 一个月一行紧凑数组，`roster` 一行）。打开页面先用快照，过期了网页再调一次 `/wb/sync`：当月和下月 10 分钟、更早的和更晚的一天、学员信息 30 分钟，「刷新」按钮 1 分钟。同一时间只有一个人去拉飞书（按 `syncedAt` 原子领取）。没有定时器。
+- 每节课的学情来自 `classroom_lessons`（合并反馈算到它合并的每一节上）；家长总结用老师改过的那份。
+- 工作台自己的数据：`wb_students`（阶段、画像、目标）、`wb_marks`（每门课每月每列一个值）、`wb_config`（列设置）、`wb_monthly`（AI 月报）、`wb_milestones`、`wb_grades`、`wb_todos`、`wb_suggestions`（AI 画像建议）。附件存 `classroom` 桶 `wb/{学生}/…`，单个不超过 2 MB，图片在浏览器里先压缩。
+- 月报：第一次打开「月度记录」时按当月有报告的课生成一次（DeepSeek），存起来；「掌握得好 / 还要巩固」按每个知识点最后一次状态直接算，模型只写两句话。当月有新报告时菜单里「按最新报告重新生成」，上个月的有新报告且没人改过会自动重出一次。
+- 画像建议：打开档案时，有报告的课比上次多了才调一次模型，只用词表里的标签、要两节课的证据，采纳才写进画像，忽略的 30 天内不再提。
+- 家长收集表：档案里「发收集表给家长」复制一个不用登录的链接（`/classroom/workbench/form.html?t=…`，接口 `/classroom-api/wb-form`），家长点选学习偏好、辅导经历、家长沟通三块（同一套词表）再写一句，提交后并进画像，来源记成「妈妈填的收集表」。
+- 成绩单识别：上传截图或 PDF 后调腾讯云「通用文字识别」（GeneralBasicOCR，PDF 取第一页），再让 DeepSeek 整理成行，网页上核对后保存；同一场考试已录过的标灰跳过。**要先在腾讯云控制台开通文字识别**（每月 1000 次免费），没开通时提示后转手动填写，原件照样保存。
+- 交接卡：同一门课换了老师（新老师 30 天内第一次上或马上要上），新老师的那节课上和档案概览里出现交接卡（目标、上一位老师最后一次报告讲到哪、要巩固的、作业、画像），新老师点「我看过了」（教务可以替他确认）；没确认前教务的跟进里有一条系统提醒。
+- 新建学员写进飞书「学员信息」（姓名、学校、学制、初始年级、联系方式、渠道，在读）；阶段只存在工作台（飞书没有阶段字段，「排课提醒」只用来推默认阶段）。
+
+资源：打开一次约 0.3–0.6 秒（512 MB），一次同步两个月约 3–4 秒；按十几个人每天打开几次估，每月几百个资源点，月报和画像建议的模型调用另算（每份几秒）。函数返回头 `x-wb-ms` 是函数里实际花的毫秒数。
+
 ## 架构
 
 ```
@@ -86,7 +112,7 @@ node apps/classroom-recorder/scripts/deploy-function.mjs --build-only   # 只打
 
 # 部署（先 tcb login）
 npm run deploy:functions -w @jingshi/classroom-recorder   # 打包 + tcb fn deploy + 创建每分钟定时器
-npm run deploy:web -w @jingshi/classroom-recorder         # 报告网页 + 后台 → 静态托管 /classroom
+npm run deploy:web -w @jingshi/classroom-recorder         # 报告网页 + 后台 + 工作台 → 静态托管 /classroom
 
 # 桌面 App
 npm run app:dev -w @jingshi/classroom-recorder     # 本地调试
