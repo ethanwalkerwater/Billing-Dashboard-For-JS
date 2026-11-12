@@ -242,9 +242,9 @@ fn show_main(app: &AppHandle) {
         let _ = w.set_focus();
     }
     if let Some(core) = app.try_state::<Arc<Core>>() {
-        let last = core.last_fetch.load(std::sync::atomic::Ordering::Relaxed);
-        if last != 0 && engine::now_ms() - last > 10 * engine::MIN {
-            core.kick_fetch.notify_one();
+        let last = core.last_status_fetch.load(std::sync::atomic::Ordering::Relaxed);
+        if engine::now_ms() - last > 10 * engine::MIN {
+            core.request_status();
         }
         update::on_open(core.inner());
     }

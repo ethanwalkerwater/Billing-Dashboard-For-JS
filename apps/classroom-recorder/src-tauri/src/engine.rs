@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -343,8 +343,11 @@ pub struct Core {
     pub rec: Sender<Msg>,
     pub shared: Arc<Shared>,
     pub kick_fetch: tokio::sync::Notify,
-    /// 上次拉成功课表的时间（ms）：主窗口获得焦点时据此节流，睡醒时据此判断是否错过了早上那次
+    pub fetch_lock: tokio::sync::Mutex<()>,
+    pub foreground_fetch: AtomicBool,
+    /// 后台拉课表和前台拉报告状态分别节流。
     pub last_fetch: std::sync::atomic::AtomicI64,
+    pub last_status_fetch: std::sync::atomic::AtomicI64,
     ui: Mutex<TrayUi>,
 }
 
@@ -414,7 +417,7 @@ impl Core {
         }
         let api = std::env::var("CLASSROOM_API").unwrap_or_else(|_| "https://app.jsjy.asia/classroom-api".into());
         let http = reqwest::Client::builder().connect_timeout(Duration::from_secs(10)).timeout(Duration::from_secs(90)).build()?;
-        let core = Arc::new(Core { app, dir, api, http, inner: Mutex::new(g), rec, shared, kick_fetch: Default::default(), last_fetch: Default::default(), ui: Default::default() });
+        let core = Arc::new(Core { app, dir, api, http, inner: Mutex::new(g), rec, shared, kick_fetch: Default::default(), fetch_lock: Default::default(), foreground_fetch: Default::default(), last_fetch: Default::default(), last_status_fetch: Default::default(), ui: Default::default() });
         core.save_cfg(&core.lock().cfg);
         Ok(core)
     }
@@ -1085,13 +1088,23 @@ impl Core {
         }
     }
 
-    /// 新课表到达：云端从 processing 变 done 且有总结 → 弹通知。
-    /// token = 发请求时的登录；期间退出或换了账号，这份课表作废。
-    pub fn set_lessons(self: &Arc<Self>, token: &str, lessons: Vec<Lesson>) {
+    pub fn request_status(&self) {
+        self.foreground_fetch.store(true, Ordering::Relaxed);
+        self.kick_fetch.notify_one();
+    }
+
+    /// 只有前台拉取的状态可以覆盖已经取得的报告。期间换了账号则丢弃响应。
+    pub fn set_lessons(self: &Arc<Self>, generation: u32, mut lessons: Vec<Lesson>, with_status: bool) {
         {
             let mut g = self.lock();
-            if g.cfg.token.as_deref() != Some(token) {
+            if g.login_gen != generation {
                 return;
+            }
+            self.last_fetch.store(now_ms(), Ordering::Relaxed);
+            if with_status {
+                self.last_status_fetch.store(now_ms(), Ordering::Relaxed);
+            } else {
+                keep_lesson_status(&mut lessons, &g.lessons);
             }
             let before: HashMap<String, String> = g.merged().into_iter().map(|l| (l.id, l.status)).collect();
             g.lessons = lessons.into_iter().filter(|l| !g.cfg.hidden.contains_key(&l.id)).collect();
@@ -1109,6 +1122,22 @@ impl Core {
         }
         self.publish();
     }
+}
+
+fn keep_lesson_status(schedule: &mut Vec<Lesson>, previous: &[Lesson]) {
+    let by_id: HashMap<_, _> = previous.iter().filter(|lesson| lesson.kind.is_none()).map(|lesson| (&lesson.id, lesson)).collect();
+    for lesson in schedule.iter_mut() {
+        if let Some(old) = by_id.get(&lesson.id) {
+            if !matches!(old.status.as_str(), "upcoming" | "cancelled") {
+                lesson.status.clone_from(&old.status);
+                lesson.topic.clone_from(&old.topic);
+                lesson.summary.clone_from(&old.summary);
+                lesson.report_url.clone_from(&old.report_url);
+                lesson.copied = old.copied;
+            }
+        }
+    }
+    schedule.extend(previous.iter().filter(|lesson| lesson.kind.is_some()).cloned());
 }
 
 fn clear_auth(g: &mut Inner) {
@@ -1148,6 +1177,23 @@ mod tests {
 
     fn lesson(id: &str, start: i64, mins: i64, status: &str) -> Lesson {
         Lesson { id: id.into(), start_at: start, end_at: start + mins * MIN, status: status.into(), ..Default::default() }
+    }
+
+    #[test]
+    fn background_schedule_keeps_loaded_report_status() {
+        let upcoming = |id: &str, status: &str| Lesson { id: id.into(), status: status.into(), ..Default::default() };
+        let mut scheduled = vec![upcoming("recA", "upcoming"), upcoming("recB", "cancelled")];
+        let previous = vec![
+            Lesson { summary: Some("已整理".into()), copied: true, ..upcoming("recA", "done") },
+            upcoming("recB", "upcoming"),
+            Lesson { kind: Some("meeting".into()), ..upcoming("adhoc-0123456789abcdef", "done") },
+        ];
+        keep_lesson_status(&mut scheduled, &previous);
+        assert_eq!(scheduled[0].status, "done");
+        assert_eq!(scheduled[0].summary.as_deref(), Some("已整理"));
+        assert!(scheduled[0].copied);
+        assert_eq!(scheduled[1].status, "cancelled");
+        assert_eq!(scheduled[2], previous[2]);
     }
 
     #[test]

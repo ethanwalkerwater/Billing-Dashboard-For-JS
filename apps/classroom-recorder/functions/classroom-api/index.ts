@@ -17,6 +17,7 @@ import { parseTeacher, TEACHER_FIELDS } from "../../../teacher-birthday/src/doma
 import * as L from "../../src/server/logic";
 import type { LessonDoc, Stage } from "../../src/server/logic";
 import { formRoute, workbenchRoute } from "./workbench";
+import { issueSession, readSession, SESSION_RENEW_MS, type Session } from "./session";
 
 export function requireEnv(name: string): string {
   const value = process.env[name]?.trim();
@@ -121,7 +122,7 @@ export interface HttpEvent {
   httpMethod?: string; path?: string; headers?: Record<string, string>; queryStringParameters?: Record<string, string>;
   body?: string; isBase64Encoded?: boolean; Type?: string; TriggerName?: string; action?: string; lessonId?: string; lessonIds?: unknown; prompts?: L.Prompts;
 }
-type Session = { _id: string; openId: string; name: string; scheduleName: string };
+
 
 export const json = (statusCode: number, body: unknown) => ({
   statusCode,
@@ -166,9 +167,24 @@ async function getLesson(id: string, withSegments = true): Promise<LessonDoc | u
 }
 const updateLesson = (id: string, patch: Record<string, unknown>) => pg("PATCH", LESSONS, `_id=${eq(id)}`, { ...patch, updatedAt: Date.now() }, "return=minimal");
 
-async function authenticate(event: HttpEvent): Promise<Session | undefined> {
+const signedSessionKey = () => requireEnv("CLOUDBASE_API_KEY");
+const wantsSignedSession = (event: HttpEvent) => header(event, "x-classroom-signed-session") === "1";
+const revokedTeacher = (openId: string) =>
+  (process.env.CLASSROOM_REVOKED_OPEN_IDS ?? "").split(",").some((id) => id.trim() === openId);
+
+async function authenticate(event: HttpEvent, scheduleOnly: boolean): Promise<{ session: Session; renewal?: string } | undefined> {
   const token = header(event, "authorization").replace(/^Bearer\s+/i, "").trim();
-  return token ? getRow<Session>(SESSIONS, sha256(token)) : undefined;
+  if (token.startsWith("s1.")) {
+    const claims = readSession(token, signedSessionKey());
+    if (!claims || revokedTeacher(claims.openId)) return;
+    // 已经访问数据库的操作仍允许通过删除会话行立即吊销。
+    const session = scheduleOnly ? claims : await getRow<Session>(SESSIONS, claims._id);
+    if (!session || session.openId !== claims.openId) return;
+    return { session, renewal: claims.exp - Date.now() <= SESSION_RENEW_MS ? issueSession(session, signedSessionKey()) : undefined };
+  }
+  const session = token ? await getRow<Session>(SESSIONS, sha256(token)) : undefined;
+  if (!session || revokedTeacher(session.openId)) return;
+  return { session, renewal: wantsSignedSession(event) ? issueSession(session, signedSessionKey()) : undefined };
 }
 
 // ---------- 飞书登录 ----------
@@ -233,30 +249,32 @@ async function authCallback(query: Record<string, string>) {
   }
 }
 
-async function authPoll(state: string) {
+async function authPoll(state: string, signed: boolean) {
   const auth = state ? await getRow<{ status: string; expiresAt: number; openId: string; name: string; scheduleName: string }>(AUTH, state) : undefined;
   if (!auth || auth.expiresAt < Date.now()) return fail(410, "EXPIRED", "登录已过期，请重新登录");
   if (auth.status === "pending") return json(202, { pending: true });
-  if (auth.status === "not_teacher") return fail(403, "NOT_A_TEACHER", "「老师信息」表里还没有你，已通知教务添加，添加好后再登录");
+  if (auth.status === "not_teacher" || (auth.openId && revokedTeacher(auth.openId))) return fail(403, "NOT_A_TEACHER", "「老师信息」表里还没有你，已通知教务添加，添加好后再登录");
   // 原子领取：同一个 state 只发一次 token；数据库只存 token 的 sha256
   const claimed = await pg("DELETE", AUTH, `_id=${eq(state)}&status=eq.done`);
   if (!claimed.length) return fail(410, "EXPIRED", "登录已过期，请重新登录");
   const token = randomBytes(32).toString("base64url");
-  await pg("POST", SESSIONS, "", [{ _id: sha256(token), openId: auth.openId, name: auth.name, scheduleName: auth.scheduleName, createdAt: Date.now() }], "return=minimal");
-  return json(200, { token, teacher: { name: auth.name } });
+  const session = { _id: sha256(token), openId: auth.openId, name: auth.name, scheduleName: auth.scheduleName };
+  await pg("POST", SESSIONS, "", [{ ...session, createdAt: Date.now() }], "return=minimal");
+  return json(200, { token: signed ? issueSession(session, signedSessionKey()) : token, teacher: { name: auth.name } });
 }
 
 // ---------- 课程 ----------
 
-async function listLessons(session: Session) {
-  const now = Date.now();
-  const { from, to } = L.lessonWindow(now);
+async function listLessons(session: Session, scheduleOnly: boolean) {
+  const { from, to } = L.lessonWindow(Date.now());
   const records = await feishu().searchRecords({ ...schedule(), fieldNames: L.SCHEDULE_FIELDS, filter: L.scheduleFilter(session.scheduleName, from, to) });
   const lessons = records
     .map(L.parseScheduleRecord)
     // 没有学生的是会议 / 例会 / 「空出」占位，不当课录（「空出」常是 00:00–23:00，否则会整天自动录）
     .filter((lesson): lesson is L.ScheduleLesson => lesson !== null && Boolean(lesson.student) && lesson.startAt >= from && lesson.startAt < to)
     .sort((a, b) => a.startAt - b.startAt);
+  const base = requireEnv("REPORT_BASE_URL");
+  if (scheduleOnly) return json(200, { lessons: lessons.map((lesson) => L.toLesson(lesson, undefined, base)) });
   const ids = lessons.map((lesson) => lesson.id);
   const docs = ids.length
     ? await pg<LessonDoc>("GET", LESSONS, `_id=${inList(ids)}&teacherOpenId=${eq(session.openId)}&select=_id,stage,attempts,copied,summary,editedSummary,reportToken,report`)
@@ -266,7 +284,6 @@ async function listLessons(session: Session) {
     `teacherOpenId=${eq(session.openId)}&kind=in.(adhoc,meeting)&startAt=gte.${from}&startAt=lt.${to}&select=_id,course,kind,startAt,endAt,stage,attempts,copied,summary,editedSummary,reportToken`);
   const merged = await pg<LessonDoc>("GET", LESSONS,
     `teacherOpenId=${eq(session.openId)}&kind=eq.merged&startAt=gte.${from}&startAt=lt.${to}&select=_id,student,course,kind,startAt,endAt,stage,attempts,copied,summary,editedSummary,reportToken,sources`);
-  const base = requireEnv("REPORT_BASE_URL");
   return json(200, { lessons: [
     ...lessons.map((lesson) => L.toLesson(lesson, byId.get(lesson.id), base)),
     ...adhoc.map((doc) => L.adhocLesson(doc, base)),
@@ -1170,7 +1187,7 @@ export async function main(event: HttpEvent) {
     const query = event.queryStringParameters ?? {};
     if (method === "GET" && path === "/auth/start") return await authStart();
     if (method === "GET" && path === "/auth/callback") return await authCallback(query);
-    if (method === "GET" && path === "/auth/poll") return await authPoll(query.state ?? "");
+    if (method === "GET" && path === "/auth/poll") return await authPoll(query.state ?? "", wantsSignedSession(event));
     if (method === "GET" && path === "/report") return await getReport(query.t ?? "");
     if (method === "POST" && path === "/asr/callback") return await asrCallback(query);
     if (method === "GET" && path === "/admin/login") return redirect((await authorizeUrl(query.to === "workbench" ? "workbench" : "admin")).url);
@@ -1182,35 +1199,43 @@ export async function main(event: HttpEvent) {
       return await adminRoute(method, path, event, query, admin);
     }
 
-    const session = await authenticate(event);
-    if (!session) return fail(401, "UNAUTHORIZED", "登录已失效，请重新使用飞书登录");
-    if (method === "GET" && path === "/me") return json(200, { teacher: { name: session.name } });
-    if (method === "GET" && path === "/lessons") return await listLessons(session);
-
-    const merge = path.match(/^\/merges\/(merged-[0-9a-f]{16})$/);
-    if (merge && method === "POST") return await saveMerge(event, session, merge[1]);
-
-    const match = path.match(/^\/lessons\/(rec[A-Za-z0-9]+|adhoc-[0-9a-f]{16}|merged-[0-9a-f]{16})\/(segments\/(\d{1,5})|finish|upload-url|summary|copied|discard)$/);
-    if (match) {
-      const [, id, action, seq] = match;
-      if (L.isMergedId(id) && (seq !== undefined || action === "finish" || action === "upload-url")) return fail(404, "NOT_FOUND", "接口不存在"); // 合并反馈没有录音
-      if (method === "POST" && seq !== undefined) return await uploadSegment(event, session, id, Number(seq));
-      if (method === "POST" && (action === "upload-url" || action === "finish")) {
-        const response = action === "upload-url" ? await signUpload(event, session, id, query.kind ?? "") : await finishLesson(event, session, id);
-        if (response.statusCode === 200) await piggyback(id);
-        return response;
-      }
-      if (method === "PUT" && action === "summary") {
-        const text = jsonBody(event).text;
-        if (typeof text !== "string" || !text.trim() || text.length > 5000) return fail(400, "BAD_BODY", "总结不能为空，且不超过 5000 字");
-        return await ownedPatch(id, session, { editedSummary: text });
-      }
-      if (method === "POST" && action === "copied") return await ownedPatch(id, session, { copied: true });
-      if (method === "POST" && action === "discard") return await discardLesson(session, id);
+    const auth = await authenticate(event, method === "GET" && path === "/schedule");
+    if (!auth) return fail(401, "UNAUTHORIZED", "登录已失效，请重新使用飞书登录");
+    const response = await desktopRoute(method, path, event, query, auth.session);
+    if (response.statusCode < 400 && auth.renewal) {
+      return { ...response, headers: { ...response.headers, "x-classroom-session": auth.renewal } };
     }
-    return fail(404, "NOT_FOUND", "接口不存在");
+    return response;
   } catch (error) {
     console.error(error);
     return fail(500, "INTERNAL", "服务暂时不可用，请稍后重试");
   }
+}
+
+async function desktopRoute(method: string, path: string, event: HttpEvent, query: Record<string, string>, session: Session) {
+  if (method === "GET" && path === "/me") return json(200, { teacher: { name: session.name } });
+  if (method === "GET" && (path === "/lessons" || path === "/schedule")) return await listLessons(session, path === "/schedule");
+
+  const merge = path.match(/^\/merges\/(merged-[0-9a-f]{16})$/);
+  if (merge && method === "POST") return await saveMerge(event, session, merge[1]);
+
+  const match = path.match(/^\/lessons\/(rec[A-Za-z0-9]+|adhoc-[0-9a-f]{16}|merged-[0-9a-f]{16})\/(segments\/(\d{1,5})|finish|upload-url|summary|copied|discard)$/);
+  if (match) {
+    const [, id, action, seq] = match;
+    if (L.isMergedId(id) && (seq !== undefined || action === "finish" || action === "upload-url")) return fail(404, "NOT_FOUND", "接口不存在"); // 合并反馈没有录音
+    if (method === "POST" && seq !== undefined) return await uploadSegment(event, session, id, Number(seq));
+    if (method === "POST" && (action === "upload-url" || action === "finish")) {
+      const response = action === "upload-url" ? await signUpload(event, session, id, query.kind ?? "") : await finishLesson(event, session, id);
+      if (response.statusCode === 200) await piggyback(id);
+      return response;
+    }
+    if (method === "PUT" && action === "summary") {
+      const text = jsonBody(event).text;
+      if (typeof text !== "string" || !text.trim() || text.length > 5000) return fail(400, "BAD_BODY", "总结不能为空，且不超过 5000 字");
+      return await ownedPatch(id, session, { editedSummary: text });
+    }
+    if (method === "POST" && action === "copied") return await ownedPatch(id, session, { copied: true });
+    if (method === "POST" && action === "discard") return await discardLesson(session, id);
+  }
+  return fail(404, "NOT_FOUND", "接口不存在");
 }
