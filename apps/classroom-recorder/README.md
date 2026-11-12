@@ -122,6 +122,8 @@ npm run app:dev -w @jingshi/classroom-recorder     # 本地调试
 npm run app:build -w @jingshi/classroom-recorder   # 本机打包
 ```
 
+定时器切换用 `tcb fn trigger create classroom-api --config-file cloudbaserc.json`，再用 `tcb fn detail classroom-api` 核对线上清单。CLI 3.8.2 会按配置替换整组触发器。在应用目录运行 `tcb config update fn` 也会同步 `cloudbaserc.json` 的触发器。需要保留线上触发器的代码发布用 `tcb fn code update`，配置变更与定时器切换分阶段时用独立配置文件。
+
 ### 发版与更新
 
 1. 改 `src-tauri/tauri.conf.json` 和 `src-tauri/Cargo.toml` 的 `version`（例如 0.1.3），提交。
