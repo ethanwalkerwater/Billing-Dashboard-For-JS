@@ -7,7 +7,7 @@
  * 1. 找到这个 tag 触发的 Actions 构建，下载 Mac / Windows 安装包和更新包（含签名）；
  * 2. 改成英文文件名，传到 CloudBase 静态托管 https://app.jsjy.asia/downloads/classroom/<版本>/（国内 CDN，老师下载快）；
  * 3. 首次安装用的固定链接也更新：jingshi-classroom-mac.dmg / jingshi-classroom-windows-setup.exe；
- * 4. 最后才传 latest.json —— 传完这一步，老师的 App 在一小时内（空闲时）自动更新；
+ * 4. 最后才传 latest.json，老师打开 App 看到「重启更新」后可手动安装；
  * 5. 在 GitHub 建一个 Release 留档（附同样的文件）。
  *
  * 需要本机 gh 登录的是仓库管理员账号（ethanwalkerwater），以及 tcb login。CloudBase 密钥不进 GitHub。
@@ -74,5 +74,5 @@ const assets = readdirSync(out).map((f) => join(out, f));
 run("gh", ["release", "create", tag, ...assets, "-R", REPO, "--title", `菁仕课堂 ${version}`, "--notes", "老师端录课 App（macOS 通用版 / Windows）。国内下载与自动更新走 app.jsjy.asia。"]);
 
 const online = await (await fetch(`${BASE}/latest.json?t=${Date.now()}`)).json().catch(() => null);
-console.log(`\n已发布 ${version}（线上 latest.json：${online?.version ?? "暂未读到，CDN 可能有几分钟缓存"}）。老师的 App 空闲时一小时内自动更新。`);
+console.log(`\n已发布 ${version}（线上 latest.json：${online?.version ?? "暂未读到，CDN 可能有几分钟缓存"}）。老师在 App 里看到「重启更新」后可手动安装。`);
 console.log(`首次安装：${BASE}/jingshi-classroom-mac.dmg  ${BASE}/jingshi-classroom-windows-setup.exe`);
