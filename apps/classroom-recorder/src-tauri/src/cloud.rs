@@ -45,7 +45,7 @@ impl Core {
             let g = self.lock();
             (g.cfg.token.clone().ok_or(ApiError::Auth)?, g.cfg.device.clone())
         };
-        let res = f(self.http.request(method, format!("{}{path}", self.api)).bearer_auth(&token).header("x-device", device)).send().await;
+        let res = f(self.http.request(method, format!("{}{path}", self.api)).bearer_auth(&token).header("x-device", device).header("x-classroom-signed-session", "1")).send().await;
         self.set_online(matches!(&res, Ok(r) if r.status().as_u16() < 500));
         let res = res.map_err(|_| ApiError::Net)?;
         match res.status().as_u16() {
@@ -57,7 +57,16 @@ impl Core {
                 let msg = res.json::<Value>().await.ok().and_then(|v| v["message"].as_str().map(String::from));
                 Err(ApiError::Status(s, msg.unwrap_or_else(|| format!("服务暂时不可用（{s}）"))))
             }
-            _ => Ok(res),
+            _ => {
+                if let Some(renewed) = res.headers().get("x-classroom-session").and_then(|value| value.to_str().ok()) {
+                    let mut g = self.lock();
+                    if g.cfg.token.as_deref() == Some(token.as_str()) {
+                        g.cfg.token = Some(renewed.into());
+                        self.save_cfg(&g.cfg);
+                    }
+                }
+                Ok(res)
+            }
         }
     }
 }
@@ -91,7 +100,7 @@ async fn poll_login(core: Arc<Core>, state: String, gen: u32) {
         if core.lock().login_gen != gen {
             return; // 用户重新点了登录或退出
         }
-        let Ok(res) = core.http.get(format!("{}/auth/poll", core.api)).query(&[("state", &state)]).send().await else { continue };
+        let Ok(res) = core.http.get(format!("{}/auth/poll", core.api)).query(&[("state", &state)]).header("x-classroom-signed-session", "1").send().await else { continue };
         match res.status().as_u16() {
             200 => {
                 let Ok(v) = res.json::<Value>().await else { break };
@@ -101,12 +110,14 @@ async fn poll_login(core: Arc<Core>, state: String, gen: u32) {
                     if g.login_gen != gen {
                         return;
                     }
+                    g.login_gen += 1;
+                    g.lessons.clear();
                     g.cfg.token = Some(token.into());
                     g.cfg.teacher = Some(v["teacher"].clone());
                     g.logging_in = false;
                     core.save_cfg(&g.cfg);
                 }
-                core.kick_fetch.notify_one();
+                core.request_status();
                 core.shared.kick_upload.notify_one();
                 core.publish();
                 if let Some(w) = core.app.get_webview_window("main") {
@@ -130,28 +141,38 @@ async fn poll_login(core: Arc<Core>, state: String, gen: u32) {
 
 // ---------- 课表 ----------
 
-/// 拉一次课表。手动「刷新」直接调它，好把失败原因告诉老师。
+/// 老师主动打开窗口、刷新时一起取录音与报告状态。
 pub async fn fetch_once(core: &Arc<Core>) -> Result<(), String> {
-    let token = core.lock().cfg.token.clone().ok_or("请先用飞书登录")?;
-    let mut v: Value = core.call(Method::GET, "/lessons", |rb| rb).await?.json().await.map_err(|_| "课表数据异常，请稍后再试")?;
+    fetch_lessons(core, true).await
+}
+
+async fn fetch_lessons(core: &Arc<Core>, with_status: bool) -> Result<(), String> {
+    let _request = core.fetch_lock.lock().await;
+    let generation = core.lock().login_gen;
+    let path = if with_status { "/lessons" } else { "/schedule" };
+    let mut v: Value = core.call(Method::GET, path, |rb| rb).await?.json().await.map_err(|_| "课表数据异常，请稍后再试")?;
     let lessons = serde_json::from_value::<Vec<Lesson>>(v["lessons"].take()).map_err(|_| "课表数据异常，请稍后再试")?;
-    core.set_lessons(&token, lessons);
-    core.last_fetch.store(now_ms(), std::sync::atomic::Ordering::Relaxed);
+    core.set_lessons(generation, lessons, with_status);
     Ok(())
 }
 
-/// 自动拉课表：启动时一次，之后按 engine::fetch_wait 等（每天早上一次），或被 kick_fetch 叫醒（登录、打开主窗口、睡醒时错过了早上那次）。
+/// 后台启动、每天早上和错过刷新后的唤醒只拉课表；状态由老师打开主窗口时请求。
 pub async fn fetch_loop(core: Arc<Core>) {
+    use std::sync::atomic::Ordering::Relaxed;
     loop {
-        if core.lock().cfg.token.is_some() {
-            if let Err(e) = fetch_once(&core).await {
-                eprintln!("[lessons] {e}");
+        let with_status = core.foreground_fetch.swap(false, Relaxed);
+        let now = now_ms();
+        let last = core.last_fetch.load(Relaxed);
+        let due = last == 0 || now >= crate::engine::next_morning(last);
+        if (with_status || due) && core.lock().cfg.token.is_some() {
+            match fetch_lessons(&core, with_status).await {
+                Ok(()) => discard_pending(&core).await,
+                Err(e) => eprintln!("[lessons] {e}"),
             }
-            discard_pending(&core).await;
             let c = core.clone();
             let _ = tauri::async_runtime::spawn_blocking(move || c.refresh_mics()).await;
         }
-        let wait = crate::engine::fetch_wait(now_ms(), core.last_fetch.load(std::sync::atomic::Ordering::Relaxed));
+        let wait = crate::engine::fetch_wait(now_ms(), core.last_fetch.load(Relaxed));
         tokio::select! {
             _ = tokio::time::sleep(Duration::from_millis(wait as u64)) => {}
             _ = core.kick_fetch.notified() => {}
