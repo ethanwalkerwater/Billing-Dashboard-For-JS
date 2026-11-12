@@ -555,6 +555,9 @@ async function transcribe(file: File): Promise<string> {
   for (;;) {
     setBusy(`腾讯云转写中，已等 ${Math.round((Date.now() - started) / 1000)} 秒（1 小时的录音约需几分钟）`);
     await new Promise((resolve) => setTimeout(resolve, 5000));
+    while (document.hidden) {
+      await new Promise<void>((resolve) => document.addEventListener('visibilitychange', () => resolve(), { once: true }));
+    }
     const s = await api<{ status: string; transcript?: string; message?: string }>(`/admin/asr/${taskId}`);
     if (s.status === 'failed') throw new Error(s.message);
     if (s.status === 'done') {

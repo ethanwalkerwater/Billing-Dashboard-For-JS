@@ -8,7 +8,7 @@
     {
       "name": "classroom-api",
       "timeout": 300,
-      "memorySize": 512,
+      "memorySize": 256,
       "runtime": "Nodejs20.19",
       "handler": "index.main",
       "installDependency": false,
