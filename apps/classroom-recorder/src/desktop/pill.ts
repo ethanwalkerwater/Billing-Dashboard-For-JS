@@ -36,7 +36,8 @@ function render() {
     .map(m => `<option value="${esc(m)}"${m === S!.mic ? ' selected' : ''}>${m === S!.mic ? '' : '切换到 '}${esc(m)}</option>`).join('')}</select>`;
   else if (rec.mode === 'quiet') h = '<span class="dot"></span><span class="col"><span class="t1">好像下课了，要结束录制吗？</span><span class="t2 num" data-end></span></span><button class="btn" data-act="keep">继续录</button><button class="btn red" data-act="end">结束</button>';
   else if (rec.mode === 'ending') h = '<span class="dot"></span><span class="col"><span class="t1 num" data-end></span><span class="t2 num">已到下课后 30 分钟 · 已录 <span data-sec></span></span></span><button class="btn red" data-act="end">现在停止</button>';
-  else if (rec.mode === 'processing') h = `<span class="spin"></span><span class="col"><span class="t1">${adhoc ? '已结束，正在整理…' : '已结束，正在整理课堂…'}</span><span class="t2">好了会通知你，可以合上电脑了</span></span>`;
+  else if (rec.mode === 'processing' && rec.uploading) h = '<span class="spin"></span><span class="col"><span class="t1">已结束，正在上传录音…</span><span class="t2">传完前请先别合上电脑</span></span>';
+  else if (rec.mode === 'processing') h = `<span class="col"><span class="t1">录音已上传，可以合上电脑了</span><span class="t2">${adhoc ? '整理' : '课堂总结'}好了会通知你</span></span>`;
   else if (rec.mode === 'naming') h = `<form data-name="${esc(rec.lessonId)}"><span class="t1">这段录音是关于什么？</span>
     <input name="topic" maxlength="30" placeholder="例如：教研周会、雅思口语试讲" autocomplete="off" aria-label="主题">
     <span class="seg" role="radiogroup" aria-label="类型"><button type="button" data-kind="adhoc" class="on">课程</button><button type="button" data-kind="meeting">会议</button></span>

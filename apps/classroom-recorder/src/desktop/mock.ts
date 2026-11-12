@@ -24,7 +24,7 @@ let s: AppState = {
       reportUrl: l.tx ? `https://app.jsjy.asia/classroom/report.html?t=demo-${l.id}` : undefined,
     };
   }),
-  rec: { mode: 'idle', lessonId: 'xiaoyu', sec: 0, paused: false, pausedSec: 0, nudge: '', endLeft: 60, autoStopAt: '17:30', autoStartAt: '15:57', savedSegments: 0, uploadedSegments: 0, online: true },
+  rec: { mode: 'idle', lessonId: 'xiaoyu', sec: 0, paused: false, pausedSec: 0, nudge: '', endLeft: 60, autoStopAt: '17:30', autoStartAt: '15:57', savedSegments: 0, uploading: false, online: true },
   mics: ['MacBook Pro 麦克风', 'AirPods Pro', 'USB 领夹麦'],
   mic: 'MacBook Pro 麦克风',
   autostart: true,
@@ -40,7 +40,7 @@ const emit = (event: string, payload: unknown) => listeners.get(event)?.forEach(
 const patch = (p: Partial<AppState>) => { s = { ...s, ...p }; emit('app-state', s); };
 const setLesson = (id: string, p: Partial<Lesson>) => s.lessons.map(l => (l.id === id ? { ...l, ...p } : l));
 const rec = (mode: AppState['rec']['mode'], sec = s.rec.sec): AppState['rec'] => ({
-  ...s.rec, mode, sec, paused: false, pausedSec: 0, nudge: '', savedSegments: Math.floor(sec / 30) + 1, uploadedSegments: Math.floor(sec / 30),
+  ...s.rec, mode, sec, paused: false, pausedSec: 0, nudge: '', savedSegments: Math.floor(sec / 30) + 1, uploading: false,
 });
 const pause = (nudge: AppState['rec']['nudge'] = '', pausedSec = 0) => patch({ rec: { ...s.rec, mode: 'paused', paused: true, pausedSec, nudge } });
 
