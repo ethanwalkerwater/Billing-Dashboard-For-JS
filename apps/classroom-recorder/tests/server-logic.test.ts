@@ -63,7 +63,7 @@ test("转写格式：说话人从 1 开始、分钟不按小时回绕；ResultDe
 });
 
 const validJson = () => ({
-  parentSummary: "浩然家长您好，今天（10月15日）的IG数学课向您汇报一下：\n\n【今天学了什么】\n1. 配方法\n\n【课堂表现】\n**很好**\n\n【课后建议】\n练习\n\n有任何问题欢迎随时联系我～",
+  parentSummary: "【浩然 · IG数学学习反馈】\n\n📅 日期：10月15日\n\n1️⃣ 本节学习内容\n配方法\n\n2️⃣ 课堂表现与掌握情况\n**很好**\n\n3️⃣ 后续建议\n练习\n\n有任何问题欢迎随时联系我～",
   report: {
     topic: "二次函数", lead: "配方熟练", content: ["1. 三种形式", "配方法"],
     mastery: [{ name: "配方法", status: "基本掌握", evidence: "独立完成" }],
@@ -82,7 +82,7 @@ test("大模型 JSON：容忍代码块、去掉 markdown 和编号；缺字段�
   assert.throws(() => L.parseSummary(JSON.stringify(badStatus)), /status/);
   const noHeading = validJson();
   noHeading.parentSummary = "家长您好";
-  assert.throws(() => L.parseSummary(JSON.stringify(noHeading)), /【今天学了什么】/);
+  assert.throws(() => L.parseSummary(JSON.stringify(noHeading)), /1️⃣ 本节学习内容/);
   const noIssue = validJson() as any;
   delete noIssue.report.issue;
   assert.throws(() => L.parseSummary(JSON.stringify(noIssue)), /issue/);
@@ -279,19 +279,36 @@ test("上海时区的 7 天窗口与报告数据", () => {
 });
 
 test("提示词：占位符换成本课信息；标题校验跟着家长总结提示词走", () => {
-  const meta = { student: "浩然", course: "IG数学", teacher: "徐翰超", monthDay: "10月15日" };
+  const meta = { student: "浩然", course: "IG数学", teacher: "徐翰超", monthDay: "10月15日", fullDate: "2026年10月15日", timeRange: "13:30–15:00" };
   const [system, user] = L.reportMessages(meta, L.parseArchive(JSON.stringify(archiveJson())));
   assert.match(system.content, /说话人N/);
-  assert.match(user.content, /今天（10月15日）的IG数学课/);
-  assert.match(user.content, /「浩然家长您好」/);
-  assert.match(user.content, /\{称呼\}/);
-  assert.deepEqual(L.promptHeadings(L.DEFAULT_PROMPTS), ["【今天学了什么】", "【课堂表现】", "【课后建议】"]);
+  assert.match(user.content, /日期 2026年10月15日；时间 13:30–15:00/);
+  assert.match(user.content, /【浩然 · IG数学学习反馈】/);
+  assert.match(user.content, /🕐 时间：13:30–15:00/);
+  assert.match(user.content, /👨‍🏫 授课老师：徐翰超/);
+  assert.deepEqual(L.promptHeadings(L.DEFAULT_PROMPTS), ["1️⃣ 本节学习内容", "2️⃣ 课堂表现与掌握情况", "3️⃣ 后续建议", "4️⃣ 课后任务"]);
+  // 默认模板必须带 1️⃣2️⃣3️⃣ 段名，主链路不会静默失去检查
+  assert.equal(L.usesEmojiHeadings(L.DEFAULT_PROMPTS), true);
+  // A5/S：建议回扣同一卡点；下节课安排不能凑建议条数；家长总结不设字数上下限。
+  assert.match(L.DEFAULT_PROMPTS.parent, /每条对应 2️⃣ 里的同一个卡点/);
+  assert.match(L.DEFAULT_PROMPTS.parent, /不能引入新问题/);
+  assert.match(L.DEFAULT_PROMPTS.parent, /下节课.*不计.*建议/);
+  assert.doesNotMatch(L.DEFAULT_PROMPTS.parent, /\d+\s*[–—~-]\s*\d+\s*字|字数|字以内|至少\s*\d+\s*字/);
+
+  // 没有真实起止时间：整行时间删掉，不把 {时间} 留给模型
+  const [, noTime] = L.reportMessages({ ...meta, timeRange: undefined }, L.parseArchive(JSON.stringify(archiveJson())));
+  assert.doesNotMatch(noTime.content, /🕐 时间/);
+  assert.doesNotMatch(noTime.content, /\{时间\}/);
 
   const custom = { ...L.DEFAULT_PROMPTS, parent: "分两段：【本课收获】【回家练习】" };
+  assert.equal(L.usesEmojiHeadings(custom), false);
   const out = validJson();
   out.parentSummary = "家长您好\n\n【本课收获】\n配方\n\n【回家练习】\n练习";
   assert.equal(L.parseSummary(JSON.stringify(out), L.promptHeadings(custom)).parentSummary, out.parentSummary);
-  assert.throws(() => L.parseSummary(JSON.stringify(out)), /【今天学了什么】/);
+  assert.throws(() => L.parseSummary(JSON.stringify(out)), /1️⃣ 本节学习内容/);
+
+  // 老的自定义提示词两种标题都没有：不校验，只 warn（对接人 11-05 拍板）
+  assert.deepEqual(L.promptHeadings({ ...L.DEFAULT_PROMPTS, parent: "写得像老师发微信，不要客套" }), []);
 });
 
 test("区分老师：只认转写里存在的编号，判成全员老师等于没判断，标签按编号替换", () => {
@@ -425,7 +442,7 @@ test("合并反馈：几节的档案接成一条时间线（两节之间 5 分�
   const twoDays = L.mergeArchives(items(START + 24 * 3_600_000 - 5 * 60_000));
   assert.equal(L.reportData({ ...doc, archive: twoDays }).time, "10.15 13:30–15:30、10.16 13:30–15:30");
   const [, user2] = L.reportMessages({ student: "浩然", course: "IG数学", teacher: "王芳", monthDay: "10月16日", merged: { labels: L.partLabels(twoDays.parts!, true), days: ["10月15日", "10月16日"] } }, twoDays);
-  assert.match(user2.content, /第一行写成「\{称呼\}，这两次课（10月15日、10月16日）的IG数学课向您汇报一下：」/);
+  assert.doesNotMatch(user2.content, /向您汇报一下/); // 抬头由程序生成，旧合并指令已删
 
   const row = L.mergedLesson({ _id: "merged-0123456789abcdef", student: "浩然", course: "IG数学", startAt: START, endAt: START + HOUR_MS, stage: "done", sources: ["recA", "recB"], summary: "总结", reportToken: "tok" } as unknown as LessonDoc, "https://x/report.html");
   assert.deepEqual([row.title, row.kind, row.sources, row.status, row.reportUrl], ["浩然 · 合并反馈", "merged", ["recA", "recB"], "done", "https://x/report.html?t=tok"]);
@@ -450,4 +467,164 @@ test("不算录制：不到 5 分钟且说话不到 100 字；失败重试用完
   assert.equal(L.lessonStatus(schedule, { stage: "empty", attempts: 0 }), "empty");
   assert.equal(L.lessonStatus(schedule, { stage: "failed", attempts: 2 }), "processing");
   assert.equal(L.lessonStatus(schedule, { stage: "failed", attempts: L.MAX_ATTEMPTS }), "failed");
+});
+
+const pmeta = (extra: Record<string, unknown> = {}) => ({ student: "浩然", course: "IG数学", teacher: "王芳", monthDay: "10月15日", ...extra });
+
+test("抬头时间：随时录制、不到 5 分钟、没学生都不写时间行", () => {
+  assert.equal(L.timeRangeOf(START, START + 90 * 60_000, "lesson"), "13:30–15:00");
+  assert.equal(L.timeRangeOf(START, START + 4 * 60_000, "lesson"), undefined);
+  assert.equal(L.timeRangeOf(START, START + 90 * 60_000, "adhoc"), undefined);
+});
+
+test("家长总结抬头：标题/日期/时间/老师一律程序写，模型写的丢掉；没时间就不留时间行", () => {
+  const a = L.parseArchive(JSON.stringify(archiveJson()));
+  const ctx = L.summaryContext(pmeta({ fullDate: "2026年10月15日", timeRange: "13:30–15:00" }), a);
+  assert.equal(ctx.title, "【浩然 · IG数学学习反馈】");
+  assert.equal(L.summaryContext(pmeta({ student: "" }), a).title, "【IG数学学习反馈】"); // 缺学生不留多余分隔符
+  const wrong = "【别人家孩子数学学习反馈】\n\n📅 日期：2026年1月1日\n🕐 时间：23:00–23:30\n👨‍🏫 授课老师：李老师\n\n1️⃣ 本节学习内容\n配方法\n\n2️⃣ 课堂表现与掌握情况\n在提示下完成\n\n3️⃣ 后续建议\n练习\n\n有任何问题欢迎随时联系我～";
+  const s = L.parseSummary(JSON.stringify({ ...validJson(), parentSummary: wrong }), L.promptHeadings(L.DEFAULT_PROMPTS), ctx).parentSummary;
+  assert.match(s, /^【浩然 · IG数学学习反馈】\n\n📅 日期：2026年10月15日\n🕐 时间：13:30–15:00\n👨‍🏫 授课老师：王芳老师\n\n1️⃣ 本节学习内容/);
+  assert.doesNotMatch(s, /别人家孩子|2026年1月1日|23:00|李老师|有任何问题/);
+  const noTime = L.parseSummary(JSON.stringify({ ...validJson(), parentSummary: wrong }), L.promptHeadings(L.DEFAULT_PROMPTS), { ...ctx, timeRange: undefined }).parentSummary;
+  assert.doesNotMatch(noTime, /🕐 时间/);
+  // 合并反馈：多位老师按出现顺序去重列出；一个都没有就不写老师行
+  assert.equal(L.summaryContext(pmeta({ merged: { labels: [], days: [], teachers: ["王芳", "李强", "王芳"] } }), a).teacher, "王芳老师、李强老师");
+  assert.equal(L.summaryContext(pmeta({ teacher: "" }), a).teacher, ""); // 没有老师就不写这一行
+});
+
+test("4️⃣ 只认档案里的作业：漏写补上，没作业硬写整段删", () => {
+  const a = L.parseArchive(JSON.stringify(archiveJson()));
+  const ctx = L.summaryContext(pmeta(), a);
+  assert.deepEqual(ctx.homework, ["第 3 题再做一遍"]);
+  const body = "1️⃣ 本节学习内容\n配方法\n\n2️⃣ 课堂表现与掌握情况\n在提示下完成\n\n3️⃣ 后续建议\n练习";
+  const out = (parentSummary: string) => JSON.stringify({ ...validJson(), parentSummary });
+  assert.match(L.parseSummary(out(body), L.promptHeadings(L.DEFAULT_PROMPTS), ctx).parentSummary, /4️⃣ 课后任务\n第 3 题再做一遍$/);
+  const noHw = L.summaryContext(pmeta(), { ...a, facts: [] });
+  const s2 = L.parseSummary(out(body + "\n\n4️⃣ 课后任务\n刷两套真题"), L.promptHeadings(L.DEFAULT_PROMPTS), noHw).parentSummary;
+  assert.doesNotMatch(s2, /4️⃣|刷两套真题/);
+});
+
+test("家长总结：清掉 markdown；A7 分数等级抛错重试；分段字数只记日志", () => {
+  const a = L.parseArchive(JSON.stringify(archiveJson()));
+  const ctx = L.summaryContext(pmeta(), a);
+  const out = (parentSummary: string) => JSON.stringify({ ...validJson(), parentSummary });
+  const messy = "1️⃣ 本节学习内容\n# 配方法\n- 三种形式\n\n2️⃣ 课堂表现与掌握情况\n在提示下完成\n\n3️⃣ 后续建议\n练习";
+  assert.doesNotMatch(L.parseSummary(out(messy), L.promptHeadings(L.DEFAULT_PROMPTS), ctx).parentSummary, /^#|^- /m);
+  assert.throws(() => L.parseSummary(out("1️⃣ 本节学习内容\n正确率 80%\n\n2️⃣ 课堂表现与掌握情况\n在提示下完成\n\n3️⃣ 后续建议\n练习"), L.promptHeadings(L.DEFAULT_PROMPTS), ctx), /分数|百分比|等级/);
+  const ok = "1️⃣ 本节学习内容\n做了 2 道真题，1.5 小时\n\n2️⃣ 课堂表现与掌握情况\n在提示下完成\n\n3️⃣ 后续建议\n练习";
+  assert.match(L.parseSummary(out(ok), L.promptHeadings(L.DEFAULT_PROMPTS), ctx).parentSummary, /2 道真题/);
+
+  const logs: string[] = [];
+  const orig = console.log;
+  console.log = (...args: unknown[]) => { logs.push(args.map(String).join(" ")); };
+  try { L.parseSummary(out(ok), L.promptHeadings(L.DEFAULT_PROMPTS), ctx); } finally { console.log = orig; }
+  const line = logs.find((l) => l.startsWith("[parentSummary] 字数"))!;
+  assert.match(line, /1️⃣=\d+ 2️⃣=\d+ 3️⃣=\d+ 4️⃣=\d+/);
+  assert.doesNotMatch(line, /A2/); // 字数只记日志，不是任何标准
+});
+
+test("A3：档案里有老师纠正或提示环节，2️⃣ 必须写出提示下做到的部分；没有就不要求", () => {
+  const a = L.parseArchive(JSON.stringify(archiveJson()));
+  const withFix: L.Archive = { ...a, moments: [...a.moments, { time: 100, type: "老师纠正", text: "先看方向" }] };
+  const ctx = L.summaryContext(pmeta(), withFix);
+  assert.equal(ctx.needsHint, true);
+  const out = (parentSummary: string) => JSON.stringify({ ...validJson(), parentSummary });
+  const independent = out("1️⃣ 本节学习内容\n配方法\n\n2️⃣ 课堂表现与掌握情况\n能够独立配方\n\n3️⃣ 后续建议\n练习");
+  assert.throws(() => L.parseSummary(independent, L.promptHeadings(L.DEFAULT_PROMPTS), ctx), /提示|引导|纠正/);
+  const clean = L.summaryContext(pmeta(), { ...a, moments: [], segments: a.segments.map((s) => ({ ...s, detail: "" })) });
+  assert.equal(clean.needsHint, false);
+  assert.match(L.parseSummary(independent, L.promptHeadings(L.DEFAULT_PROMPTS), clean).parentSummary, /能够独立配方/);
+  // strict:false 放行 A3，但 A7 剥空正文和缺段名都必须失败。
+  assert.match(L.parseSummary(independent, L.promptHeadings(L.DEFAULT_PROMPTS), ctx, { strict: false }).parentSummary, /能够独立配方/);
+  const stillBad = out("1️⃣ 本节学习内容\n配方法\n\n2️⃣ 课堂表现与掌握情况\n专注度很高\n\n3️⃣ 后续建议\n练习");
+  assert.throws(() => L.parseSummary(stillBad, L.promptHeadings(L.DEFAULT_PROMPTS), ctx, { strict: false }), /2️⃣.*正文.*空/);
+  assert.throws(() => L.parseSummary(out("家长您好"), L.promptHeadings(L.DEFAULT_PROMPTS), ctx, { strict: false }), /1️⃣ 本节学习内容/);
+});
+
+test("A7 兜底：strict:false 按句剥掉含分数等级的句子，其余内容和段名保留", () => {
+  const a = L.parseArchive(JSON.stringify(archiveJson()));
+  const ctx = L.summaryContext(pmeta(), a);
+  const out = (parentSummary: string) => JSON.stringify({ ...validJson(), parentSummary });
+  const bad = out("1️⃣ 本节学习内容\n学习了三种形式。正确率 80%。练习了配方法。\n\n2️⃣ 课堂表现与掌握情况\n专注度较高。在提示下完成配方；正确率 80%；其他步骤独立完成。\n\n3️⃣ 后续建议\n整理错题。优秀。");
+  const s = L.parseSummary(bad, L.promptHeadings(L.DEFAULT_PROMPTS), ctx, { strict: false }).parentSummary;
+  assert.doesNotMatch(s, /正确率|专注度|优秀/);
+  assert.match(s, /学习了三种形式。练习了配方法。/);
+  assert.match(s, /在提示下完成配方；其他步骤独立完成。/);
+  assert.match(s, /3️⃣ 后续建议\n整理错题。/);
+  // 剥完各段仍有正常正文时才可生成（缺段名仍然报错，见上一条）
+});
+
+test("B1 A7 兜底：得分/满分/7-10 这类分数写法也拦、按分句剥", () => {
+  const a = L.parseArchive(JSON.stringify(archiveJson()));
+  const ctx = L.summaryContext(pmeta(), a);
+  const out = (parentSummary: string) => JSON.stringify({ ...validJson(), parentSummary });
+  const scored = out("1️⃣ 本节学习内容\n练习了配方法。\n\n2️⃣ 课堂表现与掌握情况\n在提示下完成配方，本次测验得分 85 分，满分 100 分。\n\n3️⃣ 后续建议\n练习。");
+  assert.throws(() => L.parseSummary(scored, L.promptHeadings(L.DEFAULT_PROMPTS), ctx), /分数|百分比|等级/);
+  assert.throws(() => L.parseSummary(scored, L.promptHeadings(L.DEFAULT_PROMPTS), ctx, { strict: false }), /2️⃣.*正文.*空/);
+
+  const ratio = out("1️⃣ 本节学习内容\n练习了配方法。\n\n2️⃣ 课堂表现与掌握情况\n十道题对了七道（7/10），得了 85 分。\n\n3️⃣ 后续建议\n练习。");
+  assert.throws(() => L.parseSummary(ratio, L.promptHeadings(L.DEFAULT_PROMPTS), ctx, { strict: false }), /2️⃣.*正文.*空/);
+  // 同一句里的「十道题对了八道」也得整句删掉（没依据的数字）
+  const eighty = out("1️⃣ 本节学习内容\n练习了配方法。\n\n2️⃣ 课堂表现与掌握情况\n十道题对了八道，正确率八成。\n\n3️⃣ 后续建议\n练习。");
+  assert.throws(() => L.parseSummary(eighty, L.promptHeadings(L.DEFAULT_PROMPTS), ctx, { strict: false }), /2️⃣.*正文.*空/);
+});
+
+test("B1 A7 兜底：剥空 2️⃣ 时判失败，不补中性句", () => {
+  const a = L.parseArchive(JSON.stringify(archiveJson()));
+  const ctx = L.summaryContext(pmeta(), a);
+  const out = (parentSummary: string) => JSON.stringify({ ...validJson(), parentSummary });
+  const empty2 = out("1️⃣ 本节学习内容\n练习了配方法。\n\n2️⃣ 课堂表现与掌握情况\n专注度较高。\n\n3️⃣ 后续建议\n练习。");
+  assert.throws(() => L.parseSummary(empty2, L.promptHeadings(L.DEFAULT_PROMPTS), ctx, { strict: false }), /2️⃣.*正文.*空/);
+});
+
+test("B1/S16：评分上下文整句剥除，普通 7/10 和积分教学保留", () => {
+  const ctx = L.summaryContext(pmeta(), L.parseArchive(JSON.stringify(archiveJson())));
+  const math = "计算 7/10，把积分拆成两部分。";
+  const body = (performance: string) => JSON.stringify({ ...validJson(), parentSummary: `1️⃣ 本节学习内容\n${math}\n\n2️⃣ 课堂表现与掌握情况\n${performance}\n\n3️⃣ 后续建议\n先列出配方步骤再核对符号。` });
+  for (const score of ["得分 85 分", "满分 100 分", "本次测验为 7/10", "十道题对了七道（7/10）", "考试成绩为 85 分", "答题统计为 7/10", "这次考了 85 分", "考试得分85分"]) {
+    for (const separator of ["。", "；", "\n"]) {
+      const raw = body(`在提示下完成配方${separator}先核对条件，${score}${separator}其他步骤独立完成。`);
+      assert.throws(() => L.parseSummary(raw, undefined, ctx), /分数|百分比|等级/, score);
+      const cleaned = L.parseSummary(raw, undefined, ctx, { strict: false }).parentSummary;
+      assert.ok(cleaned.includes(math), math);
+      assert.ok(cleaned.includes(`在提示下完成配方${separator}`));
+      assert.ok(cleaned.includes("其他步骤独立完成。"));
+      assert.ok(!cleaned.includes("先核对条件"), score); // 逗号前的同句内容一起剥除。
+      assert.ok(!cleaned.includes(score), score);
+    }
+  }
+  for (const strict of [true, false]) {
+    const ordinary = "在提示下计算 7/10，并辨认钟面上的 85 分刻度。";
+    assert.ok(L.parseSummary(body(ordinary), undefined, ctx, { strict }).parentSummary.includes(ordinary));
+  }
+});
+
+test("B1/S16：逐个 1️⃣2️⃣3️⃣ 空正文都失败，含 3️⃣ 后有 4️⃣", () => {
+  const baseCtx = L.summaryContext(pmeta(), L.parseArchive(JSON.stringify(archiveJson())));
+  const headings = ["1️⃣ 本节学习内容", "2️⃣ 课堂表现与掌握情况", "3️⃣ 后续建议"];
+  for (const homework of [[], ["把配方步骤写一遍"]]) {
+    const ctx = { ...baseCtx, homework };
+    for (const emptyAt of [0, 1, 2]) {
+      for (const empty of [" \n\t ", "专注度较高。", "本次测验为 7/10。", "成绩为 85 分。"]) {
+        const parentSummary = headings.map((heading, i) => `${heading}\n${i === emptyAt ? empty : "在提示下核对配方步骤。"}`).join("\n\n")
+          + (homework.length ? `\n\n4️⃣ 课后任务\n${homework[0]}` : "");
+        const raw = JSON.stringify({ ...validJson(), parentSummary });
+        assert.throws(() => L.parseSummary(raw, undefined, ctx, { strict: false }), new RegExp(`${emptyAt + 1}️⃣.*正文.*空`));
+        if (!empty.trim()) assert.throws(() => L.parseSummary(raw, undefined, ctx), /正文.*空/);
+      }
+    }
+  }
+});
+
+test("B2/S45：分钟、分步、分布、分式和钟点两种 strict 都保留", () => {
+  const ctx = L.summaryContext(pmeta(), L.parseArchive(JSON.stringify(archiveJson())));
+  const content = "用 20 分钟分步讲解概率分布。把 1/2 代入公式求值。化成 3/4 再通分。把积分拆成两部分。分数7/10保持不变。";
+  const performance = "在提示下完成第 15 题，做了 2 道真题，耗时 1.5 小时。测验前用 15 分钟复习分布。";
+  const advice = "先分步核对公式。下节课明天 10 点 30 分开始。下节课也可能 10点30分开始。下节课测验从10点30分开始。考试前用15 分钟分步复习概率分布。";
+  const raw = JSON.stringify({ ...validJson(), parentSummary: `1️⃣ 本节学习内容\n${content}\n\n2️⃣ 课堂表现与掌握情况\n${performance}\n\n3️⃣ 后续建议\n${advice}` });
+  for (const strict of [true, false]) {
+    const summary = L.parseSummary(raw, undefined, ctx, { strict }).parentSummary;
+    for (const sentence of [content, performance, advice]) assert.ok(summary.includes(sentence), sentence);
+  }
 });

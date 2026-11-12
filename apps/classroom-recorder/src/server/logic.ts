@@ -262,6 +262,17 @@ const shanghai = (ms: number) => new Date(ms + 8 * HOUR).toISOString();
 export const shDate = (ms: number) => shanghai(ms).slice(0, 10);
 export const shTime = (ms: number) => shanghai(ms).slice(11, 16);
 export const shMonthDay = (ms: number) => `${Number(shanghai(ms).slice(5, 7))}月${Number(shanghai(ms).slice(8, 10))}日`;
+/** 家长总结抬头用的完整日期：「2026年10月28日」 */
+export const shFullDate = (ms: number) => {
+  const s = shanghai(ms);
+  return `${s.slice(0, 4)}年${Number(s.slice(5, 7))}月${Number(s.slice(8, 10))}日`;
+};
+/**
+ * 家长总结抬头的「🕐 时间」。随时录制的起止是录音时间、不是上课时间；不到 5 分钟的多半是误触或课没录全，
+ * 这两种情况都不写时间行，绝不编。
+ */
+export const timeRangeOf = (startAt: number, endAt: number, kind?: LessonKind) =>
+  !startAt || !endAt || endAt - startAt < 5 * 60_000 || kind === "adhoc" ? undefined : `${shTime(startAt)}–${shTime(endAt)}`;
 export const dayStart = (ms: number) => Math.floor((ms + 8 * HOUR) / DAY) * DAY - 8 * HOUR;
 
 /** 最近 7 天 + 今天 + 明天：[今天 0 点 - 7 天, 后天 0 点) */
@@ -587,25 +598,27 @@ export function chunkTranscript(transcript: string, max = CHUNK_CHARS): string[]
 const ROLE_RULE =
   "转写里的「老师」「学生」是 AI 根据说话内容预先判断的，个别句子可能标错；仍是「说话人N」的说明没能判断。负责讲解知识、提问、纠错和布置任务的是老师，其余是学生。不要按谁说得多来判断——口语课上学生往往比老师说得多。";
 
-const SAMPLE = `浩然家长您好，今天（10月15日）的 IG 数学课向您汇报一下：
+const SAMPLE = `【浩然 · 数学学习反馈】
 
-【今天学了什么】
-1. quadratic function 的三种形式：standard form、vertex form、factored form，以及它们之间怎么互相转换；
-2. 用 completing the square（配方法）求 turning point（顶点）和 line of symmetry；
-3. 做了 2 道历年真题里的作图题。
+📅 日期：2026年10月15日
+🕐 时间：17:30–19:30
+👨‍🏫 授课老师：王老师
 
-【课堂表现】
-浩然 completing the square 的步骤已经很熟练，作图题第一次就画对了开口方向和 turning point。需要注意的是，审题时容易漏看“x > 0”这类条件，今天有一题因此多写了一个解。
+1️⃣ 本节学习内容
+学习 quadratic function 的三种形式 standard form、vertex form 和 factored form，以及三种形式之间的互相转换；练习用 completing the square 求 turning point 和 line of symmetry，并做了两道真题里的作图题。
 
-【课后建议】
-请孩子做题前先用笔圈出题目里的条件。下节课我们会讲二次不等式。
+2️⃣ 课堂表现与掌握情况
+浩然能够熟练完成 completing the square 的每一步，并能自己写出 vertex form；在提示下，可以根据图像判断开口方向和 turning point 的位置，并解释 factored form 的两个根和 x 轴交点的关系。目前在审题时容易漏看 x > 0 这类取值范围条件，有一题因此多写了一个解；另外在把图像信息转成表达式时，还需提示先确认 a 的正负。
 
-有任何问题欢迎随时联系我～`;
+3️⃣ 后续建议
+建议做题前先用笔圈出题目里的取值范围和其他附加条件，做完再对照一遍。整理三种形式的转换步骤，每道题先写出 a、h、k，再画图核对。`;
 
 export interface PromptMeta {
   student: string; course: string; teacher: string; monthDay: string;
-  /** 合并反馈：各节的日期时间（如「10月24日 13:05–14:35」）、涉及的日期（不止一天时总结开头要改） */
-  merged?: { labels: string[]; days: string[] };
+  /** 抬头用的完整日期（2026年10月28日）和起止时间（14:00–16:00）；拿不到就不写 */
+  fullDate?: string; timeRange?: string;
+  /** 合并反馈：各节的日期时间（如「10月24日 13:05–14:35」）、涉及的日期（不止一天时写各天）、各节老师（去重） */
+  merged?: { labels: string[]; days: string[]; teachers?: string[] };
 }
 
 /** 后台可编辑的四段提示词；JSON 结构与 status 取值写死在代码里（parseSummary / parseMeetingReport 依赖它们）。meeting 只给会议用，不套 rules */
@@ -617,13 +630,30 @@ export const DEFAULT_PROMPTS: Prompts = {
 可信原则：只使用转写里有依据的内容，不编造学生的表现、分数或没讲过的知识点。某一项在转写里找不到足够依据时，直接写「本课数据不足」，不要硬凑。
 
 英文术语：课上老师用英文讲的学科术语、考试用语和题型名（如 turning point、completing the square、Part 2、Task Response、Paper 1），直接写英文原词，不要翻译成中文，也不要写成「中文（英文）」；转写可能把英文识别错，按学科标准写法纠正拼写。课上本来就用中文讲的概念照常写中文。`,
-  parent: `parentSummary 写作要求（纯文字，老师会复制到微信直接发给家长）：
-- 第一行：「{称呼}，今天（{日期}）的{课程}课向您汇报一下：」。称呼默认用「{学生}家长您好」；只有转写里明确说到对接的是妈妈或爸爸时，才写「{学生}妈妈您好」或「{学生}爸爸您好」。
-- 接着依次三段，标题各占一行：【今天学了什么】用 1. 2. 3. 编号列 1–3 条；【课堂表现】先写一个具体的进步，再写一个需要改进的地方，不空夸；【课后建议】写具体可执行的练习，转写里提到了下节课内容就补一句。
-- 最后一行：「有任何问题欢迎随时联系我～」
-- 段与段之间空一行，总长 250–400 字。用家长能看懂的话，不写分数、正确率、专注度这类评判性数字，不用中文教研术语；英文术语照通用规则保留英文，只给最关键、家长最可能看不懂的词在第一次出现时补括号中文，整篇最多 3 处，其余英文词不加注释；加了英文也要守住 250–400 字。例：写「用 completing the square（配方法）求 turning point（顶点）」，不要写「用配方法（completing the square）求顶点（turning point）」。不用 Markdown 符号（不要 **、#、- ）。
+  parent: `parentSummary 写作要求（纯文字，老师会复制到微信直接发给家长；不要 markdown）：
+- 第一行：【{学生} · {课程}学习反馈】。
+- 空一行，照抄下面三行（日期、时间、老师），一行一行连着写，不要空行，不要改动：
+  📅 日期：{日期}
+  🕐 时间：{时间}
+  👨‍🏫 授课老师：{老师}
+  课程信息里没有给时间的，这一行就不要写。
+- 再空一行，依次写 1️⃣ 本节学习内容、2️⃣ 课堂表现与掌握情况、3️⃣ 后续建议；转写里老师明确布置了作业，再加 4️⃣ 课后任务。段与段之间空一行。
+- 不要写开头的称呼和结尾的客套话。
 
-范例（只学格式和语气，不要照抄内容）：
+1️⃣ 本节学习内容：一段话，动词开头，写学了什么概念、练了什么题型或步骤，用分号串起来。不编号，不评价。
+
+2️⃣ 课堂表现与掌握情况：一段话，按三档写，每档都要有课堂里的具体题目、步骤、方法或原话作证据：
+- 学生自己做到的，用「能够…」「可以…」+ 具体动作；老师讲过什么、学生问过什么，都不算。
+- 需要提示才做到的，用「在提示下…」「在引导下…」「跟随…步骤…」，写清提示的是什么；跟着老师的步骤做出来属于这一档。
+- 现在还卡住的，用「目前…需要分步提示」「还需提示…」「需要加强核对」，点到具体概念、审题点或英文关键词，并写出他会怎么错。
+三档顺序固定；本课确实没有某一档就如实不写；没有卡点时写「本课没有出现需要提示的环节」。不要在「能够独立」的地方又写「需要提示」。
+
+3️⃣ 后续建议：2–3 条。每条对应 2️⃣ 里的同一个卡点，只针对这个卡点写「怎么做」，不能引入新问题；先做什么、再核对什么，或整理什么清单、先画什么图。一条一个动作，能当天照着做。不新增作业；不写「多练习」「注意审题」这种没有动作的话。转写说了下节课讲什么，可以在最后补一句，但下节课的内容不计为一条建议。
+
+4️⃣ 课后任务：只有老师明确布置了作业才写，按老师说的原意，不添加。
+英文术语保留原词，括号中文最多 3 处。不写分数、正确率、百分比和优秀/良好这类等级，不写专注度。
+
+范例（只学写法和语气，不要照抄内容）：
 ${SAMPLE}`,
   report: `- topic：本课主题，12 字以内，如「二次函数」「Part 2 难忘的旅行」
 - lead：一句话总结，35 字以内：已经能做到什么，下一步重点是什么
@@ -653,14 +683,33 @@ const SKELETON = `{
   }
 }`;
 
-/** 提示词里的 {学生} {课程} {日期} {老师} 换成本课信息；{称呼} 这类留给模型 */
+/** 提示词里的 {学生} {课程} {日期} {时间} {老师} 换成本课信息；{称呼} 这类留给模型 */
 function fill(template: string, meta: PromptMeta): string {
-  const values: Record<string, string> = { 学生: meta.student || "学生", 课程: meta.course, 日期: meta.monthDay, 老师: meta.teacher };
-  return template.replace(/\{(学生|课程|日期|老师)\}/g, (_, key: string) => values[key]);
+  const values: Record<string, string> = {
+    学生: meta.student || "学生", 课程: meta.course, 老师: meta.teacher,
+    日期: meta.fullDate || meta.monthDay, 时间: meta.timeRange ?? "",
+  };
+  // 没有真实起止时间时，提示词和范例里的时间行整行删掉，不把占位符或范例时间留给模型
+  const text = meta.timeRange ? template : template.replace(/^[^\n]*(?:\{时间\}|🕐)[^\n]*\n?/gm, "");
+  return text.replace(/\{(学生|课程|日期|时间|老师)\}/g, (_, key: string) => values[key]);
 }
 
-/** 家长总结提示词里出现的【标题】，生成结果必须都有 */
-export const promptHeadings = (prompts: Prompts) => [...new Set(prompts.parent.match(/【[^】\n]{1,12}】/g) ?? [])];
+/** 提示词里的段名：行首「1️⃣ 本节学习内容」，冒号后面的说明和范例里的重复行都不要 */
+const EMOJI_HEADING = /^([1-9]️⃣)[ \t]*([^：:\n]{1,20})/gm;
+/** 生效的家长总结提示词用的是新 1️⃣ 段名吗？只有这种才做抬头规范化，旧【】模板和历史行为保持原样 */
+export const usesEmojiHeadings = (prompts: Prompts) => new RegExp(EMOJI_HEADING.source, "m").test(prompts.parent);
+
+/**
+ * 家长总结提示词里的段名，生成结果必须都有：有 1️⃣ 段名就只认 1️⃣；旧格式认【…】但跳过总标题；
+ * 两种都没有（老的自定义提示词）返回空数组、只 warn，不拦生成。
+ */
+export const promptHeadings = (prompts: Prompts): string[] => {
+  const emoji = [...prompts.parent.matchAll(EMOJI_HEADING)].map((m) => `${m[1]} ${m[2].trim()}`);
+  if (emoji.length) return [...new Set(emoji)];
+  const brackets = [...new Set(prompts.parent.match(/【[^】\n]{1,12}】/g) ?? [])].filter((h) => !/学习反馈】$/.test(h));
+  if (!brackets.length) console.warn("自定义提示词没有可识别的段落标题，跳过 parentSummary 标题校验");
+  return brackets;
+};
 
 // ---------- 第一步：整节课 → 课堂时间档案（结构写死在代码里，程序要靠它检查） ----------
 
@@ -798,7 +847,6 @@ const segLine = (s: Segment, i: number) => `${i}. ${mmss(s.start * 1000)}–${mm
 /** 合并反馈：每一节开头加一行「—— 第 N 节 ——」 */
 const partHead = (a: Archive, list: Segment[], i: number) =>
   a.parts && (i === 0 || partOf(a, list[i - 1].start) !== partOf(a, list[i].start)) ? `—— 第 ${partOf(a, list[i].start) + 1} 节 ——\n` : "";
-const CN_NUM = ["零", "一", "两", "三", "四", "五", "六", "七", "八"];
 
 /** 作业、下节课由程序从档案的「事项」取：下节课只认最后 30 分钟里说的（前面说的多半是「下半堂课」） */
 export function archiveFacts(a: Archive) {
@@ -828,11 +876,9 @@ ${fill(prompts.rules, meta)}
 只输出一个 JSON 对象，不要 markdown 代码块，不要任何其他文字。`;
   const m = meta.merged;
   const merged = m
-    ? `\n这是 ${m.labels.length} 节课合并的一份反馈（${m.labels.join("、")}），把它们当成一次汇报来写，不要逐节分开写。${m.days.length > 1
-      ? `这几节不在同一天：parentSummary 第一行写成「{称呼}，这${CN_NUM[m.labels.length] ?? m.labels.length}次课（${m.days.join("、")}）的${meta.course || "本"}课向您汇报一下：」，其余照常。`
-      : ""}\n`
+    ? `\n这是 ${m.labels.length} 节课合并的一份反馈（${m.labels.join("、")}），把它们当成一次汇报来写，不要逐节分开写。\n`
     : "";
-  const user = `课程信息：学生 ${meta.student || "学生"}；课程 ${meta.course || "本课"}；日期 ${meta.monthDay}；老师 ${meta.teacher}。
+  const user = `课程信息：学生 ${meta.student || "学生"}；课程 ${meta.course || "本课"}；日期 ${meta.fullDate || meta.monthDay}${meta.timeRange ? `；时间 ${meta.timeRange}` : ""}；老师 ${meta.teacher}。
 ${merged}
 JSON 结构：
 ${SKELETON}
@@ -1090,13 +1136,125 @@ function str(value: unknown, name: string): string {
   return value.trim();
 }
 
+// ---------- 家长总结：抬头三行由程序写死（模型写的日期/时间/老师一律覆盖） ----------
+
+export interface SummaryContext {
+  title: string;
+  date: string;
+  timeRange?: string;
+  /** 已拼好「老师」；合并反馈是「张三老师、李四老师」 */
+  teacher: string;
+  homework: string[];
+  /** 本课有老师纠正的瞬间、或学习环节里写了提示/引导/纠正/提醒 → 2️⃣ 必须写出「在提示下」那一档 */
+  needsHint: boolean;
+}
+
+const teacherText = (names: string[]) => [...new Set(names.filter(Boolean))].map((n) => (/老师$/.test(n) ? n : `${n}老师`)).join("、");
+
+export function summaryContext(meta: PromptMeta, archive: Archive): SummaryContext {
+  // 学生和课程之间用「·」隔开，英文和中文粘一起太难读；缺一个就不留分隔符
+  const who = [(meta.student || "").trim(), (meta.course || "").trim()].filter(Boolean).join(" · ");
+  return {
+    title: `【${who}学习反馈】`,
+    date: meta.fullDate || meta.monthDay,
+    timeRange: meta.timeRange,
+    teacher: teacherText(meta.merged?.teachers?.length ? meta.merged.teachers : [meta.teacher]),
+    homework: archiveFacts(archive).homework,
+    // 老师纠正过、或环节说明里写了提示/引导/纠正/提醒，才要求 2️⃣ 写出提示下完成的部分
+    needsHint: archive.moments.some((m) => m.type === "老师纠正")
+      || archive.segments.some((s) => LEARN_KINDS.includes(s.kind) && /提示|引导|纠正|提醒/.test(s.detail || "")),
+  };
+}
+
+/** 正文各段字数（去掉空白），只写日志给上线后抽看，不作任何标准 */
+export function summaryCharCounts(text: string): Record<string, number> {
+  const heads = [...text.matchAll(/^([1-4]️⃣)[^\n]*$/gm)];
+  const out: Record<string, number> = {};
+  heads.forEach((h, i) => { out[h[1]] = text.slice(h.index! + h[0].length, i + 1 < heads.length ? heads[i + 1].index : undefined).replace(/\s/g, "").length; });
+  return out;
+}
+
+/** 纯文字：去掉 **、行首 #、行首「- 」；其它 markdown 排版不常见，真出现再加 */
+const plainText = (raw: string) =>
+  raw.replace(/\r\n/g, "\n").replace(/\*\*/g, "").replace(/^[ \t]*#{1,6}[ \t]*/gm, "").replace(/^[ \t]*-[ \t]+/gm, "");
+/** 模型自己写的标题、抬头、结尾客套：都由程序重写，整行丢掉 */
+const dropLine = (t: string) => /^【.*学习反馈】$/.test(t) || /^(📅|🕐|👨‍🏫|👨🏫)/.test(t) || /^有任何问题/.test(t);
+
+/** 4️⃣ 只认档案里的作业事实：有作业漏写就按原句补，没作业硬写就整段删（4️⃣ 在文末，删尾安全） */
+function alignHomework(text: string, homework: string[]): string {
+  const at = text.search(/^4️⃣/m);
+  if (!homework.length) return at < 0 ? text : text.slice(0, at).replace(/\n+$/, "");
+  return at < 0 ? `${text}\n\n4️⃣ 课后任务\n${homework.join("；")}` : text;
+}
+
+export function normalizeParentSummary(raw: string, ctx: SummaryContext): string {
+  const lines = plainText(raw).split("\n").filter((line) => !dropLine(line.trim()));
+  const start = lines.findIndex((line) => /^[1-9]️⃣|^【[^】\n]{1,12}】$/.test(line.trim()));
+  const body = alignHomework(
+    (start < 0 ? lines : lines.slice(start)).join("\n").replace(/^\n+|\n+$/g, "").replace(/\n{3,}/g, "\n\n"),
+    ctx.homework,
+  );
+  assertSections(body);
+  const header = [ctx.title, "", `📅 日期：${ctx.date}`, ...(ctx.timeRange ? [`🕐 时间：${ctx.timeRange}`] : []), ...(ctx.teacher ? [`👨‍🏫 授课老师：${ctx.teacher}`] : [])].join("\n");
+  const n = summaryCharCounts(body);
+  const [a, b, c, d] = ["1️⃣", "2️⃣", "3️⃣", "4️⃣"].map((k) => n[k] ?? 0);
+  console.log(`[parentSummary] 字数 1️⃣=${a} 2️⃣=${b} 3️⃣=${c} 4️⃣=${d} 标题=${ctx.title}`);
+  return `${header}\n\n${body}`;
+}
+
+/**
+ * A7：不出现没有依据的分数、正确率、百分比、等级和专注度。
+ * 「20 分钟」「第 15 题」「2 道真题」「1.5 小时」不算；「7/10」「85 分」只有在成绩、答题统计的语境里才算（数学里的 1/2、3/4、10 点 30 分放行）。
+ */
+const A7_WORD = /得分|满分|正确率|百分比|专注度|优秀|良好|中等|\d+(?:\.\d+)?%/;
+const A7_NUMBER = /\d+(?:\.\d+)?\s*\/\s*\d+(?:\.\d+)?|(?<!\d+\s*点\s*)(?<![\d.])\d+(?:\.\d+)?\s*分(?!钟|秒)/;
+const A7_CONTEXT = /得分|满分|成绩|测验|考试|测试|答题|评分|总分|考了|得了|拿到|获得|正确率|百分比|对了|做对|答对|答了|共\s*\d+\s*[道题]/;
+const isA7 = (sentence: string) => A7_WORD.test(sentence) || (A7_NUMBER.test(sentence) && A7_CONTEXT.test(sentence));
+/** A3：「在提示下」这一档的说法 */
+const HINTED = /在提示下|在引导下|跟随[^。；\n]{0,10}步骤|经老师提醒|在提醒下/;
+
+/** strict 拦不拦、strict:false 剥不剥，用的是同一套按句判断 */
+const A7_SENTENCE = /(?<=[。；])/;
+const hasA7 = (text: string) => text.split("\n").some((line) => line.split(A7_SENTENCE).some(isA7));
+/**
+ * A7 兜底：按句（。；换行）剥掉含分数、正确率、百分比、等级、专注度的句子，无依据的评价不能发给家长。
+ * 整句删：同一句里「十道题对了八道，正确率八成」只删后半句会把「八道」留下，也是没依据的数字。
+ */
+function stripA7(text: string): string {
+  return text.split("\n")
+    .map((line) => line.split(A7_SENTENCE).filter((sentence) => !isA7(sentence)).join(""))
+    .join("\n");
+}
+
+/** 1️⃣2️⃣3️⃣ 剥空即失败：不补模型没写的内容，也不能给家长一段只有标题的空段 */
+function assertSections(text: string): void {
+  const heads = [...text.matchAll(/^([1-4]️⃣)[^\n]*$/gm)];
+  heads.forEach((h, i) => {
+    if (!/^[1-3]️⃣/.test(h[1])) return;
+    const at = h.index! + h[0].length;
+    const body = text.slice(at, i + 1 < heads.length ? heads[i + 1].index : text.length);
+    if (!body.replace(/\s/g, "")) throw new Error(`parentSummary 的 ${h[1]} 正文为空，请重写这一段`);
+  });
+}
+
 /** 第二步 A 的输出；作业、下节课、章节不归模型写，由调用方按档案填 */
-export function parseSummary(raw: string, headings = promptHeadings(DEFAULT_PROMPTS)): { parentSummary: string; report: Omit<ClassReport, "homework" | "next"> } {
+export function parseSummary(raw: string, headings = promptHeadings(DEFAULT_PROMPTS), ctx?: SummaryContext, { strict = true } = {}): { parentSummary: string; report: Omit<ClassReport, "homework" | "next"> } {
   const data = jsonOf(raw);
-  const parentSummary = str(data.parentSummary, "parentSummary").replace(/\*\*/g, "").replace(/\r\n/g, "\n");
-  for (const heading of headings) {
-    if (!parentSummary.includes(heading)) throw new Error(`parentSummary 缺少 ${heading}`);
+  let parentSummary = str(data.parentSummary, "parentSummary").replace(/\*\*/g, "").replace(/\r\n/g, "\n");
+  if (ctx) {
+    // 抬头、4️⃣、markdown 由程序收拾；清不掉的和 A7 的分数等级让调用方重试一次
+    if (strict && /```/.test(parentSummary)) throw new Error("parentSummary 里还有 markdown 代码块，请只输出纯文字");
+    if (strict && hasA7(parentSummary)) throw new Error("parentSummary 里出现了分数、百分比、等级或专注度，这些没有依据，请删掉");
+    // 重试还带 A7：程序按句剥掉，剥空 1️⃣2️⃣3️⃣ 才算失败（A3 的「在提示下」只放行不剥内容）
+    if (!strict) parentSummary = stripA7(parentSummary);
+    parentSummary = normalizeParentSummary(parentSummary, ctx);
   }
+  const flat = parentSummary.replace(/\s+/g, "");
+  for (const heading of headings) {
+    if (!ctx?.homework.length && heading.startsWith("4️⃣")) continue; // 没作业就不要求 4️⃣，写了也会被删
+    if (!flat.includes(heading.replace(/\s+/g, ""))) throw new Error(`parentSummary 缺少 ${heading}`);
+  }
+  if (strict && ctx?.needsHint && !HINTED.test(parentSummary)) throw new Error("本课有老师提示、引导或纠正的环节，2️⃣ 里要写出学生「在提示下」「在引导下」做到的部分");
   const r = data.report;
   if (!r || typeof r !== "object") throw new Error("缺少 report");
   if (!Array.isArray(r.content) || !r.content.length) throw new Error("report.content 应为非空数组");
