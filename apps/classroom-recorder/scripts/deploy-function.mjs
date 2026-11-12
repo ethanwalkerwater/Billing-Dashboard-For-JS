@@ -1,6 +1,6 @@
 /**
  * 打包并部署 classroom-api：server.env（已 gitignore）+ cloudbaserc.json 合成 cloudbaserc.local.json 再部署，
- * 然后创建每分钟定时触发器（已存在时 tcb 会报错，忽略即可）。
+ * 定时器独立切换，部署函数时保留线上现有定时器。
  * --build-only：只打包和生成配置，不部署；没有 server.env 时也能跑（用于检查打包）。
  */
 import { execFileSync } from "node:child_process";
@@ -49,13 +49,8 @@ writeFileSync(resolve(outDir, "package.json"), `${JSON.stringify({ name: "classr
 if (buildOnly) process.exit(0);
 
 const config = JSON.parse(readFileSync(resolve(root, "cloudbaserc.json"), "utf8"));
-config.functions = config.functions.map((fn) => ({ ...fn, envVariables }));
+config.functions = config.functions.map(({ triggers, ...fn }) => ({ ...fn, envVariables }));
 const generated = resolve(root, "cloudbaserc.local.json");
 writeFileSync(generated, `${JSON.stringify(config, null, 2)}\n`);
 
 execFileSync("tcb", ["fn", "deploy", "classroom-api", "--force", "--config-file", generated], { cwd: root, stdio: "inherit" });
-try {
-  execFileSync("tcb", ["fn", "trigger", "create", "classroom-api", "--config-file", generated], { cwd: root, stdio: "inherit" });
-} catch {
-  console.log("定时触发器创建失败（多半是已存在），可用 tcb fn detail classroom-api 确认。");
-}
