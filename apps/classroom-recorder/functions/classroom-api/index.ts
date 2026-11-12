@@ -8,6 +8,16 @@
  *   {"action":"rebuild","lessonId":"rec…"}            按现在的流程重出报告，只返回不写库（scripts/rebuild-archive.ts 逐节调用）
  */
 import { createHash, randomBytes } from "node:crypto";
+import { once } from "node:events";
+import { createReadStream, createWriteStream } from "node:fs";
+import { mkdtemp, rm, stat } from "node:fs/promises";
+import type { IncomingMessage } from "node:http";
+import https from "node:https";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import type { ReadableStream as NodeReadableStream } from "node:stream/web";
 
 import { asr } from "tencentcloud-sdk-nodejs-asr";
 import { CommonClient } from "tencentcloud-sdk-nodejs-common/tencentcloud/common";
@@ -63,10 +73,53 @@ export async function putObject(name: string, bytes: Buffer, contentType = "audi
   if (!response.ok) throw new Error(`存储录音失败：${response.status} ${(await response.text()).slice(0, 200)}`);
   return name;
 }
-export async function getObject(name: string): Promise<Buffer> {
-  const response = await fetch(`${STORAGE()}/object/authenticated/${BUCKET}/${name}`, { headers: storageAuth() });
+async function readObject(name: string, signal?: AbortSignal) {
+  const response = await fetch(`${STORAGE()}/object/authenticated/${BUCKET}/${name}`, { headers: storageAuth(), signal });
   if (!response.ok) throw new Error(`下载分段失败：${name} ${response.status}`);
-  return Buffer.from(await response.arrayBuffer());
+  return response;
+}
+export async function getObject(name: string): Promise<Buffer> {
+  return Buffer.from(await (await readObject(name)).arrayBuffer());
+}
+
+async function* downloadParts(parts: string[]) {
+  for (let i = 0; i < parts.length; i += 10) {
+    const controller = new AbortController();
+    try {
+      const batch = await Promise.all(parts.slice(i, i + 10).map((name) => readObject(name, controller.signal)));
+      for (const part of batch) {
+        if (part.body) yield* Readable.fromWeb(part.body as NodeReadableStream);
+      }
+    } finally {
+      controller.abort(); // 下载或写盘失败时关闭该批剩下的连接
+    }
+  }
+}
+
+/** 按顺序流式写到临时文件，再按已知长度上传；下载和上传都保持背压。 */
+export async function concatObjects(name: string, parts: string[], contentType = "audio/mpeg"): Promise<number> {
+  const directory = await mkdtemp(join(tmpdir(), "classroom-audio-"));
+  const file = join(directory, "audio");
+  try {
+    await pipeline(downloadParts(parts), createWriteStream(file));
+    const { size } = await stat(file);
+    // Node 20 fetch 在大文件流式 PUT 时仍会积累大量外部内存。
+    const request = https.request(`${STORAGE()}/object/${BUCKET}/${name}`, {
+      method: "PUT", headers: { ...storageAuth(), "content-type": contentType, "content-length": String(size) },
+    });
+    const reply = once(request, "response");
+    const [, [incoming]] = await Promise.all([pipeline(createReadStream(file), request), reply]);
+    const response = incoming as IncomingMessage;
+    const status = response.statusCode ?? 0;
+    let message = "";
+    for await (const chunk of response.setEncoding("utf8")) {
+      if (message.length < 200) message += chunk.slice(0, 200 - message.length);
+    }
+    if (status < 200 || status >= 300) throw new Error(`存储录音失败：${status} ${message}`);
+    return size;
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 }
 /** 批量删除对象（接口每次最多 20 个），失败时由后续清理再试。 */
 async function removeObjects(names: string[]): Promise<boolean> {
@@ -472,7 +525,6 @@ async function getReport(token: string) {
 
 // ---------- 处理流水线 ----------
 
-const download = getObject;
 
 export async function chat(messages: Array<{ role: string; content: string }>, jsonMode = false, maxTokens = 4000): Promise<string> {
   const response = await fetch(`${requireEnv("AI_BASE_URL").replace(/\/$/, "")}/chat/completions`, {
@@ -663,13 +715,10 @@ async function runStep(doc: LessonDoc, step: L.Step): Promise<Partial<LessonDoc>
   }
   if (step.action === "merge") {
     if (!step.seqs.length) return { stage: "empty", audioSec: 0 }; // 一段都没收到：不算录制
-    const parts: Buffer[] = [];
-    for (let i = 0; i < step.seqs.length; i += 10) {
-      parts.push(...(await Promise.all(step.seqs.slice(i, i + 10).map((seq) => download(doc.segments[String(seq)].fileId)))));
-    }
     // MP3 帧可直接按字节拼接，不需要 ffmpeg
-    const fileID = await putObject(`${doc._id}/${L.AUDIO_FILE}`, Buffer.concat(parts));
-    const audioSec = Math.round(parts.reduce((sum, part) => sum + part.length, 0) / L.AUDIO_BYTES_PER_SEC);
+    const fileID = `${doc._id}/${L.AUDIO_FILE}`;
+    const bytes = await concatObjects(fileID, step.seqs.map((seq) => doc.segments[String(seq)].fileId));
+    const audioSec = Math.round(bytes / L.AUDIO_BYTES_PER_SEC);
     return { ...(await submitAsr(doc, fileID)), gapMinutes: step.gapMinutes, audioSec };
   }
   if (step.action === "poll") {
@@ -1123,12 +1172,10 @@ async function uploadPart(event: HttpEvent, uid: string, n: number) {
 async function finishUpload(event: HttpEvent, uid: string) {
   const parts = Number(jsonBody(event).parts);
   if (!Number.isInteger(parts) || parts < 1 || parts > 100) return fail(400, "BAD_BODY", "parts 应为 1–100");
-  const buffers: Buffer[] = [];
-  for (let i = 0; i < parts; i += 10) {
-    buffers.push(...(await Promise.all(Array.from({ length: Math.min(10, parts - i) }, (_, k) => getObject(`preview/${uid}/${i + k}`)))));
-  }
-  const name = await putObject(`preview/${uid}/audio`, Buffer.concat(buffers), "application/octet-stream");
-  await removeObjects(Array.from({ length: parts }, (_, i) => `preview/${uid}/${i}`));
+  const keys = Array.from({ length: parts }, (_, i) => `preview/${uid}/${i}`);
+  const name = `preview/${uid}/audio`;
+  await concatObjects(name, keys, "application/octet-stream");
+  await removeObjects(keys);
   const task = await asrApi().CreateRecTask({
     EngineModelType: process.env.ASR_ENGINE?.trim() || "16k_zh_en_2.0", ChannelNum: 1, SourceType: 0, Url: await signedUrl(name, 6 * 3600),
     SpeakerDiarization: 1, SpeakerNumber: 0, ResTextFormat: 2, ConvertNumMode: 1,
