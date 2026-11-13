@@ -16,5 +16,12 @@ export default defineConfig({
     port: 4176,
     allowedHosts: ["terminal.local", "localhost", "127.0.0.1"],
   },
-  build: { outDir: "dist", emptyOutDir: true },
+  build: {
+    outDir: "dist",
+    emptyOutDir: true,
+    rollupOptions: { input: {
+      workbench: fileURLToPath(new URL("./index.html", import.meta.url)),
+      student: fileURLToPath(new URL("./student.html", import.meta.url)),
+    } },
+  },
 });
