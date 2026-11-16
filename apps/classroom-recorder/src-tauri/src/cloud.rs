@@ -285,7 +285,7 @@ async fn upload_lesson(core: &Arc<Core>, dir: &Path, id: &str) -> Result<(), Api
     if direct && lf.audio.is_none() {
         let bytes = recorder::concat(dir, &lf).map_err(local)?;
         let audio = recorder::Audio { sha256: recorder::sha256_hex(&bytes), bytes: bytes.len() as u64 };
-        if !put_audio(core, id, "final", bytes).await? {
+        if !put_audio(core, dir, id, "final", bytes).await? {
             // 云端已经开始整理，按已有录音继续。
             recorder::update(dir, |lf| {
                 lf.finished = true;
@@ -351,15 +351,30 @@ async fn upload_lesson(core: &Arc<Core>, dir: &Path, id: &str) -> Result<(), Api
 }
 
 /// 课表课到计划下课时间还在录（多半在拖堂，或老师忘了点结束）：先把已录的部分直传一份（云端存 {id}/early.mp3），
-/// 老师直接合盖没点结束，云端过了最晚停止时间也能用它出报告。只传一次，拖堂照常接着录；随时录制没有计划下课时间，不传。
+/// 老师直接合盖没点结束，云端过了最晚停止时间也能用它出报告。随时录制没有计划下课时间，不传。
+/// 只试一次：上课时上行要留给视频课，失败了不重试（0.1.12 实测一节课重传 9 次、共 270 MB，每次签名还叫醒一次数据库）。
+/// 传的时候下课了就放弃，马上传整节：整节是它的超集，下课后网也快（实测 30 MB 半分钟）。
 async fn upload_early(core: &Arc<Core>, dir: &Path, id: &str, lf: &recorder::LessonFile) -> Result<(), ApiError> {
     let recording = core.lock().active.as_ref().is_some_and(|a| a.lesson.id == id);
     if !early_due(id, lf, recording, now_ms()) {
         return Ok(());
     }
     let bytes = recorder::concat(dir, lf).map_err(local)?;
-    put_audio(core, id, "early", bytes).await?;
-    recorder::update(dir, |lf| lf.early_at = Some(now_ms())).map_err(local)?;
+    let ended = async {
+        loop {
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            if recorder::read(dir).is_ok_and(|lf| lf.ended_at.is_some()) {
+                break;
+            }
+        }
+    };
+    tokio::select! {
+        r = put_audio(core, dir, id, "early", bytes) => match r {
+            Err(ApiError::Net | ApiError::Local(_)) => eprintln!("[upload] {id}: 保险录音没传上，下课后整节照传"),
+            r => { r?; }
+        },
+        _ = ended => eprintln!("[upload] {id}: 下课了，保险录音不传了，直接传整节"),
+    }
     Ok(())
 }
 
@@ -369,26 +384,64 @@ fn early_due(id: &str, lf: &recorder::LessonFile, recording: bool, now: i64) -> 
 
 /// 要一个签名上传地址，拿到马上直传（签名服务端固定 60 秒有效，失败下一轮重新签、整段重传）。
 /// Ok(false) = 云端已经不要这份录音了（已经在用别的录音出报告）。
-async fn put_audio(core: &Arc<Core>, id: &str, kind: &str, bytes: Vec<u8>) -> Result<bool, ApiError> {
-    let v: Value = core.call(Method::POST, &format!("/lessons/{id}/upload-url?kind={kind}"), |rb| rb).await?.json().await.map_err(|_| ApiError::Net)?;
+/// 上一次为什么没传上放在签名请求的查询参数里（fails=次数&last=原因），云端网关访问日志里直接能看到，不多发请求。
+async fn put_audio(core: &Arc<Core>, dir: &Path, id: &str, kind: &str, bytes: Vec<u8>) -> Result<bool, ApiError> {
+    let lf = recorder::read(dir).map_err(local)?;
+    let mut path = format!("/lessons/{id}/upload-url?kind={kind}");
+    if lf.upload_fails > 0 {
+        path += &format!("&fails={}&last={}", lf.upload_fails, lf.upload_error);
+    }
+    let v: Value = core.call(Method::POST, &path, |rb| rb).await?.json().await.map_err(|_| ApiError::Net)?;
     if v["done"].as_bool() == Some(true) {
         return Ok(false);
     }
     let url = v["url"].as_str().ok_or(ApiError::Net)?;
+    if kind == "early" {
+        recorder::update(dir, |lf| lf.early_at = Some(now_ms())).map_err(local)?; // 拿到地址开始传才算用掉保险那一次
+    }
+    let started = now_ms();
     // 一节 90 分钟约 21 MB；上行慢的网络也要传得完，不用客户端默认的 90 秒超时
-    let res = core.http.put(url).header(reqwest::header::CONTENT_TYPE, "audio/mpeg").header("x-upsert", "true").timeout(Duration::from_secs(30 * 60)).body(bytes).send().await;
-    match res {
-        Ok(r) if r.status().is_success() => Ok(true),
+    let put = |client: &reqwest::Client, bytes: Vec<u8>| {
+        client.put(url).header(reqwest::header::CONTENT_TYPE, "audio/mpeg").header("x-upsert", "true").timeout(Duration::from_secs(30 * 60)).body(bytes).send()
+    };
+    // 存储在上海，先直连（绕开老师的 VPN）；直连连不上（极少数网络只能走代理）再走系统代理
+    let (mut res, mut route) = (put(&core.http_direct, bytes.clone()).await, "direct");
+    if res.as_ref().is_err_and(|e| e.is_connect()) {
+        (res, route) = (put(&core.http, bytes).await, "proxy");
+    }
+    let secs = (now_ms() - started) / 1000;
+    let error = match &res {
+        Ok(r) if r.status().is_success() => None,
         // 存储的报错（签名过期等）一律按网络问题退避重试，不能当成云端拒收（403/404/409 在上面有别的含义）
-        Ok(r) => {
-            eprintln!("[upload] {id}: storage {kind} {}", r.status());
-            Err(ApiError::Net)
-        }
-        Err(_) => {
+        Ok(r) => Some(format!("{kind}-{route}-http{}-{secs}s", r.status().as_u16())),
+        Err(e) => {
             core.set_online(false);
+            Some(format!("{kind}-{route}-{}-{secs}s", upload_error_kind(e)))
+        }
+    };
+    recorder::update(dir, |lf| match &error {
+        Some(e) => (lf.upload_fails, lf.upload_error) = (lf.upload_fails + 1, e.clone()),
+        None => (lf.upload_fails, lf.upload_error) = (0, String::new()),
+    })
+    .map_err(local)?;
+    match error {
+        None => Ok(true),
+        Some(e) => {
+            eprintln!("[upload] {id}: {e}");
             Err(ApiError::Net)
         }
     }
+}
+
+/// reqwest 错误 → 查询参数里放得下的短词，带上最底层的原因（connection reset、timed out 之类）
+fn upload_error_kind(e: &reqwest::Error) -> String {
+    let kind = if e.is_timeout() { "timeout" } else if e.is_connect() { "connect" } else if e.is_body() { "body" } else { "net" };
+    let mut cause: &dyn std::error::Error = e;
+    while let Some(next) = cause.source() {
+        cause = next;
+    }
+    let cause: String = cause.to_string().chars().map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '_' }).take(40).collect();
+    format!("{kind}-{cause}")
 }
 
 // ---------- 合并反馈 ----------
