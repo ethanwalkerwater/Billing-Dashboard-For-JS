@@ -690,12 +690,19 @@ function withMeeting(row: PromptRow): PromptRow {
   return { ...row, meeting: row.meeting || L.DEFAULT_PROMPTS.meeting };
 }
 
-/** Storage 里的整段录音 → 腾讯云录音识别（6 小时签名链接），转完回调 /asr/callback 接着出总结 */
+/**
+ * 腾讯云的回调把整份转写放在请求体里（一节课 1～4 MB 的表单），CloudBase HTTP 访问服务只收 100 KB 以内的文本请求体，
+ * 直接回调 /asr/callback 会被网关拒掉（EXCEED_MAX_PAYLOAD_SIZE）。所以回调先到官网（菁仕官网仓库 src/app/api/asr-callback），
+ * 那边丢掉请求体、只把课程编号转到 /asr/callback。官网不通时由录课请求顺带推进和每日定时兜底。
+ */
+const ASR_CALLBACK_URL = "https://jsjy.asia/api/asr-callback";
+
+/** Storage 里的整段录音 → 腾讯云录音识别（6 小时签名链接），转完经官网中转回调 /asr/callback 接着出总结 */
 async function submitAsr(doc: LessonDoc, fileID: string) {
   const task = await asrApi().CreateRecTask({
     EngineModelType: process.env.ASR_ENGINE?.trim() || "16k_zh_en_2.0", ChannelNum: 1, SourceType: 0, Url: await signedUrl(fileID, 6 * 3600),
     SpeakerDiarization: 1, SpeakerNumber: 0, ResTextFormat: 2, ConvertNumMode: 1,
-    CallbackUrl: `${requireEnv("API_BASE_URL")}/asr/callback?lesson=${encodeURIComponent(doc._id)}`,
+    CallbackUrl: `${ASR_CALLBACK_URL}?lesson=${encodeURIComponent(doc._id)}`,
   });
   if (!task.Data?.TaskId) throw new Error("腾讯云录音识别任务提交失败");
   return { stage: "transcribing" as const, mergedFileId: fileID, asrTaskId: task.Data.TaskId };
@@ -808,7 +815,7 @@ async function processLesson(id: string, deadline: number) {
 }
 
 /**
- * 腾讯云录音识别转完的回调。不信回调里的内容，只按 URL 里的课程编号接着处理：processLesson 会自己调
+ * 腾讯云录音识别转完的回调（经官网中转，请求体已丢掉，见 ASR_CALLBACK_URL）。不信回调里的内容，只按 URL 里的课程编号接着处理：processLesson 会自己调
  * DescribeTaskStatus 确认真的转完了，伪造的请求最多让我们多查一次。必须回 code 0，否则腾讯云会重试；
  * 出总结要一两分钟，腾讯云等不及重试时，这节课已经不在 transcribing，直接回成功。
  * 回调丢失时由后续录课请求或每日定时任务补查。

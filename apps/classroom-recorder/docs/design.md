@@ -59,7 +59,7 @@ UI / UX 唯一依据：`docs/MVP.html`（老师端，含「随时录制」三步
 | 请求头 `x-view-as: <open_id>` | 超级管理员切到某位老师的视角：之后的请求按这位老师的权限（只看、只改他的课） |
 | `PUT /admin/lessons/:id/transcript` | 后台改转写（错字、划词全部替换、说话人改名）。body `{transcript, base}`，`base` 是打开编辑时转写的 sha256，对不上返回 409；第一次改时机器原文存进 `rawTranscript`；会议按新名字重算发言占比 |
 | `POST /admin/lessons/:id/retry` | 失败的课把 `attempts` 清零并立刻重跑 |
-| `POST /asr/callback?lesson=` | 腾讯云录音识别转完的回调（不鉴权，只按编号推进，实际状态以 DescribeTaskStatus 为准） |
+| `POST /asr/callback?lesson=` | 腾讯云录音识别转完的回调（不鉴权，只按编号推进，实际状态以 DescribeTaskStatus 为准）。腾讯云的回调带整份转写（1～4 MB），超过 HTTP 访问服务 100 KB 的文本请求体上限会被网关直接拒掉，所以 CallbackUrl 填官网 `https://jsjy.asia/api/asr-callback`（菁仕官网仓库），由它丢掉请求体再转到这里 |
 | `GET /admin/prompts` | 最近 30 个版本，第一个是线上 |
 | `POST /admin/prompts` | `{ prompts, base }`，`base` 不是当前线上版本号时 409 |
 | `POST /admin/preview` | `{ prompts, lessonId }` 或 `{ prompts, transcript }` → `{ parentSummary, reportData }`，不写库 |

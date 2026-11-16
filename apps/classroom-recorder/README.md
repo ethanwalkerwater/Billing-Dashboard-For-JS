@@ -44,7 +44,7 @@ classroom-api（CloudBase HTTP 云函数，/classroom-api）
   ├─ /schedule：后台启动 / 每天早晨只读飞书；/lessons：老师打开窗口或刷新时再取报告状态
   ├─ /lessons/:id/upload-url：签名 60 秒，App 直接 PUT 到 Storage 私有桶
   ├─ 旧版仍分段上传并在云端拼接
-  └─ finish 提交识别；腾讯云回调推进转写和总结；录课请求间隔检查其他待办
+  └─ finish 提交识别；腾讯云转完回调（经官网 jsjy.asia/api/asr-callback 中转）推进转写和总结；录课请求间隔检查其他待办
        03:00、22:45（北京时间）兜底重试、清理过期录音、处理没收到 finish 的课
        queued → 腾讯云录音文件识别（说话人分离，带 CallbackUrl）
        → transcribing → 大模型判断哪个说话人是老师，转写标成「老师 / 学生」，删掉分段与多余的保险录音
