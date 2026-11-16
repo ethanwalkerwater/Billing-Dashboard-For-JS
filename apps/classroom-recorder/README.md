@@ -72,6 +72,8 @@ classroom-api（CloudBase HTTP 云函数，/classroom-api）
 
 Storage 桶 `classroom`（私有）。新版完整录音是 `{lessonId}/merged.mp3`，保险录音是 `{lessonId}/early.mp3`，实际用于识别的一份在后台可回听。旧版分段 `{lessonId}/{seq}.mp3` 在转写入库后删除。课堂录音保留 30 天，转写和总结一直保留。后台测试上传的音频在 `preview/{随机 ID}/audio`，分块拼好即删，拼好的音频不自动清理。腾讯云识别用 6 小时签名链接下载。
 
+直传（0.1.13 起）：整段录音的 PUT 不走系统代理，直连上海的存储；直连连不上才走系统代理。原因：老师开着全局 VPN 时，30 MB 绕到国外再回来，0.1.12 实测一节课连传 5～9 次都断（网关访问日志里出口 IP 在国外），关掉 VPN 半分钟就传完。保险录音只试一次、下课了就放弃改传整节（上课时上行留给视频课，也不反复签名叫醒数据库）。上一次没传上的原因放在下一次签名请求的查询参数里（`upload-url?kind=final&fails=2&last=final-direct-timeout-…-61s`），在 `tcb logs search -q 'logType:accesslog AND "upload-url"'` 里直接能看到。
+
 处理失败会记 `stage = failed`、`failedStage`、`error`，由下一次录课请求或定时兜底继续，累计 3 次后通知老师和管理员。新版课表课在计划下课时传保险录音，签名后 20 分钟还没收到 finish 才具备收尾资格，有更新的完整上传时从那次签名起算。云端开始识别后，App 晚到的 finish 沿用旧版规则，已有报告继续出。旧版下课 2 小时后仍缺段时按已有分段出报告，并注明缺失分钟数。 档案上线时重出存量报告用 `scripts/rebuild-archive.ts`（先试跑出对比页，确认后把同一份结果写库；家长总结不动）。某节课要重跑：把 `stage` 改回 `queued`（或 `summarizing`）、`attempts` 改为 0，再 `tcb fn invoke classroom-api --params '{"action":"tick","lessonId":"rec…"}'`。
 
 ## 需要在后台配置的内容

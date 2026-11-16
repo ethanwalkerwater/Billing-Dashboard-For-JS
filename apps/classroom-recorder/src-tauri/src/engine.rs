@@ -339,6 +339,9 @@ pub struct Core {
     pub dir: PathBuf,
     pub api: String,
     pub http: reqwest::Client,
+    /// 不走系统代理的客户端，只给整段录音直传用：老师开着全局 VPN 时，30 MB 绕到国外再回上海的存储，
+    /// 实测一节课连传 5～9 次都断（出口 IP 在国外），关了 VPN 半分钟传完；30 秒一段的小请求过 VPN 没事
+    pub http_direct: reqwest::Client,
     pub inner: Mutex<Inner>,
     pub rec: Sender<Msg>,
     pub shared: Arc<Shared>,
@@ -417,7 +420,8 @@ impl Core {
         }
         let api = std::env::var("CLASSROOM_API").unwrap_or_else(|_| "https://app.jsjy.asia/classroom-api".into());
         let http = reqwest::Client::builder().connect_timeout(Duration::from_secs(10)).timeout(Duration::from_secs(90)).build()?;
-        let core = Arc::new(Core { app, dir, api, http, inner: Mutex::new(g), rec, shared, kick_fetch: Default::default(), fetch_lock: Default::default(), foreground_fetch: Default::default(), last_fetch: Default::default(), last_status_fetch: Default::default(), ui: Default::default() });
+        let http_direct = reqwest::Client::builder().no_proxy().connect_timeout(Duration::from_secs(10)).timeout(Duration::from_secs(90)).build()?;
+        let core = Arc::new(Core { app, dir, api, http, http_direct, inner: Mutex::new(g), rec, shared, kick_fetch: Default::default(), fetch_lock: Default::default(), foreground_fetch: Default::default(), last_fetch: Default::default(), last_status_fetch: Default::default(), ui: Default::default() });
         core.save_cfg(&core.lock().cfg);
         Ok(core)
     }
@@ -1332,6 +1336,8 @@ mod tests {
             paused_at: None,
             audio: None,
             early_at: None,
+            upload_fails: 0,
+            upload_error: String::new(),
         };
         assert_eq!(recorder::read(&dir).unwrap(), want);
         // 损坏的 lesson.json 不能被当成空记录覆盖

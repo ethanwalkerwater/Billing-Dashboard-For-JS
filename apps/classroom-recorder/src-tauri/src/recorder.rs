@@ -331,8 +331,11 @@ pub struct LessonFile {
     pub paused_at: Option<i64>,
     /// 0.1.12 起：停止后整节课拼成一个 MP3 直传成功、还没 finish；云端说没收全就清掉重传
     pub audio: Option<Audio>,
-    /// 课表课到计划下课时间那次保险上传成功的时间（只传一次）
+    /// 课表课到计划下课时间那次保险上传开始的时间（只试一次，成没成都不再传）
     pub early_at: Option<i64>,
+    /// 整段直传连着失败了几次、最后一次的原因（下次要签名时报给云端，方便查）
+    pub upload_fails: u32,
+    pub upload_error: String,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
