@@ -129,42 +129,6 @@ export function reviewForm(item, api, refresh, play) {
     );
 }
 
-export function noteForm(lesson, api, refresh) {
-  const requestId = crypto.randomUUID();
-  const tags = ["亮点", "建议", "问题"];
-  openForm(
-    "写听课记录",
-    '<p class="sm muted">' +
-      esc([lesson.teacherName, lesson.course].filter(Boolean).join(" · ")) +
-      "</p>",
-    '<fieldset><legend>标签</legend><div class="row wrap">' +
-      tags
-        .map(
-          (t) =>
-            '<label class="chk"><input type="checkbox" name="tags" value="' +
-            t +
-            '" ' +
-            (t === "建议" ? "checked" : "") +
-            ">" +
-            t +
-            "</label>",
-        )
-        .join("") +
-      '</div></fieldset><label class="field">听课记录<textarea required name="text" maxlength="4000" class="input"></textarea></label><label><input type="checkbox" name="count" checked> 计入听课节数</label>',
-    async (data) => {
-      const selected = data.getAll("tags");
-      await api("/notes", null, {
-        requestId,
-        lessonId: lesson.id,
-        tags: selected,
-        text: String(data.get("text")).trim(),
-        countAsListened: data.has("count"),
-      });
-      refresh("听课记录已保存。");
-    },
-  );
-}
-
 export function teacherForm(api, refresh) {
   let options = [],
     search = 0;

@@ -370,7 +370,6 @@ async function lesson(q: Query, now: number) {
     const who = aliasMap(identities).get(r[6]);
     return {
       ...planned(r, who ?? scheduleId(r[6]), now),
-      summary: "",
       segments: [],
       transcript: [],
       transcriptText: "",
@@ -381,7 +380,7 @@ async function lesson(q: Query, now: number) {
   const [doc] = await pg<LessonDoc>(
     "GET",
     "classroom_lessons",
-    `_id=${eq(id)}&startAt=gte.${PILOT}&or=(kind.is.null,kind.in.(lesson,adhoc))&select=transcript,archive,summary,editedSummary,started:finish->>startedAt,ended:finish->>endedAt`,
+    `_id=${eq(id)}&startAt=gte.${PILOT}&or=(kind.is.null,kind.in.(lesson,adhoc))&select=transcript,archive,started:finish->>startedAt,ended:finish->>endedAt`,
   );
   if (!doc) return fail(404, "课程已变更，请刷新");
   let transcript: ReturnType<typeof parseTranscript> = [];
@@ -393,7 +392,6 @@ async function lesson(q: Query, now: number) {
   const clocks = doc as typeof doc & { started?: string; ended?: string };
   return {
     ...courseRow(row, now),
-    summary: doc.editedSummary || doc.summary || "",
     segments: doc.archive?.segments ?? [],
     transcript,
     transcriptText: transcript.length ? "" : (doc.transcript ?? ""),
@@ -479,7 +477,7 @@ async function teacherDetail(q: Query, now: number) {
   const months = [...new Set([monthOf(from), monthOf(now)])];
   const aliases = aliasMap(directory.items);
   const scheduleNames = t.aliases.filter(name => (aliases.get(name) ?? scheduleId(name)) === t.id);
-  const [recorded, cal, issues, notes, [coverage]] = await Promise.all([
+  const [recorded, cal, issues, [coverage]] = await Promise.all([
     allRows<LessonRowDb>(
       "fupan_catalog_lessons",
       `teacherId=${eq(t.id)}&startAt=gte.${from}&startAt=lt.${to}&order=startAt.desc,id`,
@@ -490,7 +488,6 @@ async function teacherDetail(q: Query, now: number) {
       "fupan_issues",
       `teacherOpenId=${eq(t.id)}&startAt=gte.${termStart(now)}&select=lessonId,findingId,category,priority,title,state,result,startAt&order=startAt.desc,findingId&limit=100`,
     ),
-    pg("GET", "fupan_catalog_notes", `teacherId=${eq(t.id)}&startAt=gte.${termStart(now)}&order=at.desc&limit=100`),
     pg<{ recorded: number; total: number | null }>("POST", "rpc/fupan_teacher_coverage", "", {
       p_teacher: t.id, p_names: scheduleNames, p_start: termStart(now), p_now: now,
     }),
@@ -506,7 +503,6 @@ async function teacherDetail(q: Query, now: number) {
     coverage,
     recentLessons: [...recent.values()].sort((a, b) => b.startAt - a.startAt),
     issues,
-    notes,
     month: directory.month,
     scheduleAvailable: directory.scheduleAvailable,
   };
