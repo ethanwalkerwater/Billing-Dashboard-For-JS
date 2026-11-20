@@ -477,7 +477,9 @@ async function teacherDetail(q: Query, now: number) {
   const from = Math.max(PILOT, dateMs(dayOf(now)) - 13 * DAY),
     to = now + 1;
   const months = [...new Set([monthOf(from), monthOf(now)])];
-  const [recorded, cal, issues, notes] = await Promise.all([
+  const aliases = aliasMap(directory.items);
+  const scheduleNames = t.aliases.filter(name => (aliases.get(name) ?? scheduleId(name)) === t.id);
+  const [recorded, cal, issues, notes, [coverage]] = await Promise.all([
     allRows<LessonRowDb>(
       "fupan_catalog_lessons",
       `teacherId=${eq(t.id)}&startAt=gte.${from}&startAt=lt.${to}&order=startAt.desc,id`,
@@ -489,8 +491,10 @@ async function teacherDetail(q: Query, now: number) {
       `teacherOpenId=${eq(t.id)}&startAt=gte.${termStart(now)}&select=lessonId,findingId,category,priority,title,state,result,startAt&order=startAt.desc,findingId&limit=100`,
     ),
     pg("GET", "fupan_catalog_notes", `teacherId=${eq(t.id)}&startAt=gte.${termStart(now)}&order=at.desc&limit=100`),
+    pg<{ recorded: number; total: number | null }>("POST", "rpc/fupan_teacher_coverage", "", {
+      p_teacher: t.id, p_names: scheduleNames, p_start: termStart(now), p_now: now,
+    }),
   ]);
-  const aliases = aliasMap(directory.items);
   const recent = new Map<string, ReturnType<typeof courseRow>>();
   for (const r of cal.flatMap((c) => c.rows)) {
     const id = aliases.get(r[6]) ?? scheduleId(r[6]);
@@ -499,6 +503,7 @@ async function teacherDetail(q: Query, now: number) {
   for (const r of recorded) recent.set(r.id, courseRow(r, now));
   return {
     ...t,
+    coverage,
     recentLessons: [...recent.values()].sort((a, b) => b.startAt - a.startAt),
     issues,
     notes,

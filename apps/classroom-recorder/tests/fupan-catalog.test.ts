@@ -105,6 +105,7 @@ test("教学统计迁移、录音时间边界、课表和权限", { skip: hasPos
       "202611200003_fupan_workflow",
       "202611200004_fupan_catalog",
       "202611200005_fupan_rules",
+      "202611200007_fupan_teacher_coverage",
     ]) {
       execFileSync("psql", [...args, "-f", fileURLToPath(new URL("../migrations/" + name + ".sql", import.meta.url))], {
         env,
@@ -136,7 +137,17 @@ test("教学统计迁移、录音时间边界、课表和权限", { skip: hasPos
     );
     assert.equal(sql("select jsonb_array_length(rows) from fupan_schedule('2027-01',1799999999999,1800000000001)"), "1");
     assert.equal(sql("select \"row\"->>0 from fupan_scheduled_lesson('recPlan')"), "recPlan");
+    sql(`update classroom_lessons set kind='lesson' where "_id"='recTest';
+      update wb_cache set data='{"h":"hash","rows":[
+        ["recTest",1800000000000,1800000060000,[],"","数学","测试老师","","","",0],
+        ["recPlan",1800000000000,1800000060000,[],"","数学","测试老师","","","",0],
+        ["recCancel",1800000000000,1800000060000,[],"","数学","测试老师","","","是",0]
+      ]}' where key='m:2027-01'`);
+    const coverage = (start: number) => JSON.parse(sql(`select to_jsonb(c) from fupan_teacher_coverage('ou_test',array['测试老师'],${start},1800000001000) c`));
+    assert.deepEqual(coverage(1800000000000), {recorded:1,total:2});
+    assert.deepEqual(coverage(1797000000000), {recorded:1,total:null});
     for (const role of ["authenticated", "anon"]) {
+      assert.equal(sql("select has_function_privilege('" + role + "','fupan_teacher_coverage(text,text[],bigint,bigint)','execute')"), "f");
       assert.equal(sql("select has_table_privilege('" + role + "','fupan_catalog_lessons','select')"), "f");
       assert.equal(
         sql("select has_function_privilege('" + role + "','fupan_teacher_stats(bigint,bigint,bigint)','execute')"),

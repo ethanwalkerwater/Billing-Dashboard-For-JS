@@ -95,7 +95,11 @@ try {
     monthly: 1,
     pending: 1,
     confirmed: 0,
-    recentLessons: [course],
+    coverage: {recorded: 3, total: 4},
+    modes: {"讲授型": 2, "混合型": 1},
+    topMode: "讲授型",
+    medianTalkRatio: 0.68,
+    recentLessons: [{...course, metrics:{mode:"讲授型"}, miniSegments:[{start:0,end:30,kind:"讲解"}],firstIssue:issue}],
     issues: [issue],
     notes: [],
   };
@@ -358,7 +362,16 @@ try {
   await page.getByLabel("年级").fill("初二");
   await page.getByLabel("所教班级").fill("示例班");
   await page.getByRole("button", { name: "保存" }).click();
-  await page.getByRole("link", { name: /示例老师/ }).click();
+  await page.getByRole("row").filter({hasText:"示例老师"}).click({position:{x:250,y:14}});
+  await page.getByRole("heading", { name: teacher.name, exact:true }).waitFor();
+  assert.match(await page.locator(".teacher-stats").innerText(), /3\s*\/ 4 节/);
+  assert.equal(await page.locator(".teacher-columns .mbar").count(), 4);
+  assert.equal(await page.locator(".teacher-course-table .timeline").count(), 1);
+  const [courses, aside] = await Promise.all([".teacher-columns > section",".teacher-columns > aside"].map(s => page.locator(s).boundingBox()));
+  assert.ok(courses.x + courses.width <= aside.x && Math.abs(courses.y - aside.y) < 2);
+  await page.setViewportSize({width:390,height:844});
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+
   await page.getByRole("button", { name: "抽一节课" }).click();
   await page.getByRole("heading", { name: "时间档案" }).waitFor();
   await page.setViewportSize({ width: 390, height: 844 });
