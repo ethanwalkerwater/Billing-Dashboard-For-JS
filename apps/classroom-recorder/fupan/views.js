@@ -404,71 +404,52 @@ export function teachers(data, pendingOnly) {
     '" href="#/teachers?state=open">待复核 ' +
     pendingTeachers.length +
     "</a></div></div>" +
-    `<div class="tbl"><table><thead><tr><th>老师</th><th>学科</th><th>任教班级</th><th class="num">${data.scheduleAvailable ? "本月课程数" : "本月有录音课程数"}</th><th>主要教学模式</th><th>疑似问题</th><th class="num" title="仅计入人工确认的老师问题">确定问题数</th></tr></thead><tbody>
-    ${rows.map((t) => `<tr><td><a class="row" href="#/teacher/${encodeURIComponent(t.id)}"><span class="ava sm">${esc(t.name?.[0])}</span><strong>${esc(t.name)}</strong></a></td><td>${esc(t.subject) || "—"}</td><td>${esc([t.grade, ...(t.classes || [])].filter(Boolean).join(" · ")) || "—"}</td><td class="num">${esc(t.monthly ?? t.recordedMonthly)}</td><td>${esc(t.topMode) || "—"}</td><td>${t.pending ? badge("待复核 " + t.pending) : "—"}</td><td class="num">${Number(t.confirmed)}</td></tr>`).join("") || '<tr><td colspan="7">' + empty("没有符合条件的老师") + "</td></tr>"}</tbody></table></div>`
+    `<div class="tbl"><table><thead><tr><th>老师</th><th>学科</th><th>任教班级</th><th class="num">${data.scheduleAvailable ? "本月课程数" : "本月有录音课程数"}</th><th>主要教学模式</th><th>疑似问题</th><th class="num" title="仅计入人工确认的老师问题">确定问题数</th><th aria-label="查看详情"></th></tr></thead><tbody>
+    ${rows.map((t) => `<tr class="linked-row"><td><a class="row row-link" href="#/teacher/${encodeURIComponent(t.id)}"><span class="ava sm">${esc(t.name?.[0])}</span><strong>${esc(t.name)}</strong></a></td><td>${esc(t.subject) || "—"}</td><td>${esc([t.grade, ...(t.classes || [])].filter(Boolean).join(" · ")) || "—"}</td><td class="num">${esc(t.monthly ?? t.recordedMonthly)}</td><td>${esc(t.topMode) || "—"}</td><td>${t.pending ? badge("待复核 " + t.pending) : "—"}</td><td class="num">${Number(t.confirmed)}</td><td aria-hidden="true">${icon("chev")}</td></tr>`).join("") || '<tr><td colspan="8">' + empty("没有符合条件的老师") + "</td></tr>"}</tbody></table></div>`
   );
 }
+function teacherLessons(recent) {
+  if (!recent.length) return empty("近两周暂无课程");
+  const rows = recent.map(l => {
+    const issue = l.firstIssue;
+    const state = issue?.state === "open" ? "待复核" : issue?.state === "follow" ? "跟进中" : "已处理";
+    const status = issue ? badge(issue.priority) + " " + esc(issue.category) + " · " + state
+      : l.pending ? badge("待复核 " + l.pending) : !l.hasTranscript ? esc(l.recording) : "";
+    return `<tr class="linked-row"><td>${esc(when(l.startAt).slice(5))}</td>
+      <td><a class="row-link" href="${lessonLink(l.id)}">${esc(l.course || "查看课程")}</a>
+      <div class="sm muted">${esc(l.student)}</div></td>
+      <td>${segmentBar(l.miniSegments) || "—"}</td><td>${esc(l.metrics?.mode || "—")}</td><td>${status}</td></tr>`;
+  });
+  return `<div class="teacher-course-table" role="region" aria-label="近两周课程明细" tabindex="0"><table>
+    <thead><tr>${["开课时间","课程 / 学员","时间档案","教学模式","问题状态"].map(h => "<th scope=\"col\">" + h + "</th>").join("")}</tr></thead>
+    <tbody>${rows.join("")}</tbody></table></div>`;
+}
+
 export function teacher(t) {
-  const recent = t.recentLessons || [],
-    modeRows = Object.entries(t.modes || {});
-  return (
-    title(
-      t.name,
-      esc(
-        [t.subject, t.grade, ...(t.classes || [])].filter(Boolean).join(" · "),
-      ),
-      '<button class="btn" data-random ' + ">抽一节课</button>",
-    ) +
-    '<div class="stats auto">' +
-    [
-      [
-        t.monthly == null ? "本月有录音课程数" : "本月课程数",
-        t.monthly ?? t.recordedMonthly,
-      ],
-      ["主要教学模式", t.topMode],
-      ["老师讲话中位数", ratio(t.medianTalkRatio)],
-      ["待复核", t.pending],
-      ["确定问题数", t.confirmed],
-    ]
-      .map((x) => stat(...x))
-      .join("") +
-    "</div>" +
-    card(
-      "近两周课程",
-      recent.length ? lessonTable(recent) : empty("近两周暂无课程"),
-    ) +
-    card(
-      "教学模式分布",
-      modeRows.length
-        ? modeRows
-            .map(
-              ([k, v]) =>
-                '<div class="row"><span class="grow">' +
-                esc(k) +
-                "</span>" +
-                Number(v) +
-                " 节</div>",
-            )
-            .join("")
-        : '<span class="muted">暂无可用的教学模式数据。</span>',
-    ) +
-    card(
-      "问题记录",
-      (t.issues || [])
-        .map(
-          (it) =>
-            '<a class="rec" href="' +
-            lessonLink(it.lessonId) +
-            '">' +
-            badge(it.priority) +
-            " " +
-            esc(it.category) +
-            " · " +
-            esc(it.title) +
-            "</a>",
-        )
-        .join("") || '<span class="muted">暂无问题记录。</span>',
-    ) +
-    card("听课记录", notesView(t.notes || []))
-  );
+  const modes = ["讲授型", "混合型", "对话型", "练习型"];
+  const counts = modes.map(mode => Number(t.modes?.[mode] ?? 0));
+  const total = counts.reduce((sum, count) => sum + count, 0);
+  const modeBars = modes.map((mode, i) => `<div class="mbar"><span>${mode}</span>
+    <span class="mode-track" aria-hidden="true"><i style="width:${total ? 100 * counts[i] / total : 0}%"></i></span>
+    <span class="num">${counts[i]}</span></div>`).join("");
+  const issues = (t.issues || []).map(it => {
+    const state = it.state === "open" ? "待复核" : it.state === "follow" ? "跟进中" : "已关闭";
+    return `<a class="rec" href="${lessonLink(it.lessonId)}"><div class="row wrap">${badge(it.priority)}
+      <strong>${esc(it.category)}</strong><span class="badge sec">${esc([resultName(it.result), state].filter(Boolean).join(" · "))}</span></div>
+      <div class="spaced">${esc(it.title)}</div><small class="muted">${esc(when(it.startAt))}</small></a>`;
+  }).join("");
+  const meta = [t.subject,t.grade,...(t.classes || [])].filter(Boolean).join(" · ");
+  const coverage = t.coverage;
+  return `<div class="pgh teacher-heading"><span class="ava teacher-avatar" aria-hidden="true">${esc(t.name?.[0])}</span>
+    <div><h1>${esc(t.name)}</h1><div class="meta">${esc(meta)}</div></div><span class="grow"></span>
+    <button class="btn" data-random>${icon("shuffle")}抽一节课</button></div>
+    <div class="stats teacher-stats"><div><small>本学期有录音</small><b>${esc(coverage?.recorded ?? "—")}
+    <em>${coverage?.total != null ? "/ " + esc(coverage.total) + " 节" : "节"}</em></b>
+    ${coverage?.total == null ? '<small>学期课表未齐，总数待补</small>' : ""}</div>
+    ${stat("主要教学模式",t.topMode)}${stat("老师讲话中位数",ratio(t.medianTalkRatio))}
+    <div><small>疑似问题</small><b>待复核 ${Number(t.pending)} <em>· 已确认 ${Number(t.confirmed)}</em></b></div></div>
+    <div class="teacher-columns"><section class="card"><div class="card-h"><h3>近两周课程</h3></div>${teacherLessons(t.recentLessons || [])}</section>
+    <aside>${card("教学模式分布",modeBars + (total ? "" : '<small class="muted">暂无可分析的课程</small>'))}
+    ${card("问题记录",issues || '<span class="muted">暂无问题记录。</span>')}
+    ${card("听课记录",notesView(t.notes || []))}</aside></div>`;
 }

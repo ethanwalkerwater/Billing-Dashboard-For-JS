@@ -1310,3 +1310,25 @@ dialog fieldset {
   padding: 6px 8px;
   font-size: 13px;
 }
+
+/* 详情行保留原生链接，鼠标可点击整行，键盘按一个 Tab 即可进入。 */
+.linked-row { position: relative; }
+.linked-row .row-link::after { content: ""; position: absolute; inset: 0; }
+.linked-row:hover, .linked-row:focus-within { background: var(--muted); }
+.teacher-heading { align-items: center; }
+.teacher-avatar { width: 48px; height: 48px; border-radius: var(--r-md); font-size: 20px; }
+.teacher-columns { display: grid; grid-template-columns: minmax(0, 1.85fr) minmax(270px, 1fr); gap: 20px; align-items: start; }
+.teacher-columns > *, .teacher-columns aside { min-width: 0; }
+.teacher-course-table { overflow-x: auto; container-type: inline-size; }
+.teacher-course-table td:first-child { white-space: nowrap; }
+.teacher-course-table .timeline { width: 100%; min-width: 64px; height: 8px; margin: 0; }
+.teacher-course-table td:nth-child(3) { width: 20%; }
+.mode-track { height: 8px; border-radius: 10px; overflow: hidden; background: var(--muted); }
+.mode-track i { display: block; height: 100%; background: var(--primary); }
+.teacher-columns .rec { margin-inline: -16px; }
+@container (max-width: 540px) {
+  .teacher-course-table table { min-width: 540px; }
+}
+@media (max-width: 1090px) {
+  .teacher-columns { grid-template-columns: minmax(0, 1fr); }
+}
