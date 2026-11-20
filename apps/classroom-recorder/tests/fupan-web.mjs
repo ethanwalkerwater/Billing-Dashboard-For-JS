@@ -57,8 +57,7 @@ try {
     evidence: [{ speaker: "老师", start: 9, text: course.transcript[0].text }],
     history: [],
   };
-  let notes = [],
-    requests = [],
+  let requests = [],
     submitted,
     overrideStatus = 0;
   const archived = {
@@ -101,7 +100,6 @@ try {
     medianTalkRatio: 0.68,
     recentLessons: [{...course, metrics:{mode:"讲授型"}, miniSegments:[{start:0,end:30,kind:"讲解"}],firstIssue:issue}],
     issues: [issue],
-    notes: [],
   };
   await page.route(root + "/**", async (route) => {
     const request = route.request(),
@@ -180,16 +178,6 @@ try {
           items: [issue],
           previousItems: includeHistory ? [archived] : [],
         };
-        break;
-      case "/notes":
-        if (request.method() === "POST") {
-          notes.push({
-            ...request.postDataJSON(),
-            at: Date.now(),
-            by: "虚构主管",
-          });
-          data = { ok: true };
-        } else data = { items: notes };
         break;
       case "/lessons/search":
         assert.equal(request.method(), "POST");
@@ -349,11 +337,8 @@ try {
   assert.equal(submitted.sourceHash, archived.sourceHash);
   assert.equal(submitted.action, "close");
   assert.equal(requests.filter((p) => p === "/audio").length, 1);
-  await page.getByRole("button", { name: "写听课记录" }).click();
-  await page.getByLabel("听课记录", { exact: true }).fill("笔记测试");
-  await page.getByRole("button", { name: "保存", exact: true }).click();
-  await page.getByText("笔记测试", { exact: true }).waitFor();
-  assert.equal(notes.length, 1);
+  assert.equal(await page.getByText(/课程概要|听课记录|示例概要/).count(), 0);
+  assert.ok(!requests.includes("/notes"));
   await page.getByRole("link", { name: "老师", exact: true }).click();
   await page.getByRole("button", { name: "添加老师" }).click();
   await page.getByRole("textbox", { name: "老师姓名" }).fill("虚构");
@@ -364,6 +349,7 @@ try {
   await page.getByRole("button", { name: "保存" }).click();
   await page.getByRole("row").filter({hasText:"示例老师"}).click({position:{x:250,y:14}});
   await page.getByRole("heading", { name: teacher.name, exact:true }).waitFor();
+  assert.equal(await page.getByText(/听课记录/).count(), 0);
   assert.match(await page.locator(".teacher-stats").innerText(), /3\s*\/ 4 节/);
   assert.equal(await page.locator(".teacher-columns .mbar").count(), 4);
   assert.equal(await page.locator(".teacher-course-table .timeline").count(), 1);

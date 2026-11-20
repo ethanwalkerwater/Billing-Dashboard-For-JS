@@ -20,7 +20,6 @@ function matched(value: unknown, pattern: RegExp, label: string): string {
 }
 
 const lessonId = (v: unknown) => matched(v, /^[\w-]{1,128}$/, "课程编号无效");
-const noteTags = ["亮点", "建议", "问题"];
 
 async function write(name: string, args: Record<string, unknown>) {
   const response = await pg("POST", "rpc/" + name, "", args) as unknown as {ok?: boolean; error?: string};
@@ -60,21 +59,6 @@ export async function workflow(method: string, path: string, query: Record<strin
       p_note: text(b.note, 4000, "请填写不超过 4000 字的处理说明", action === "dismiss" || action === "close"),
       p_owner: text(b.owner, 80, "请填写不超过 80 字的跟进负责人", action === "refer"),
       p_actor: actor.openId, p_by: actor.name,
-    });
-  }
-  if (method === "GET" && path === "/notes") {
-    const queryString = "lessonId=" + eq(lessonId(query.lessonId)) + "&order=at.desc,requestId.asc";
-    return { items: await pg("GET", "fupan_lesson_notes", queryString) };
-  }
-  if (method === "POST" && path === "/notes") {
-    const b = object(raw);
-    if (!Array.isArray(b.tags) || b.tags.length > 3 || !b.tags.every(t => typeof t === "string" && noteTags.includes(t))) return invalid("听课标签无效");
-    if (b.countAsListened !== undefined && typeof b.countAsListened !== "boolean") return invalid("听课统计选项无效");
-    return write("fupan_add_note", {
-      p_lesson: lessonId(b.lessonId), p_actor: actor.openId, p_by: actor.name,
-      p_request: matched(b.requestId, /^[a-f\d]{8}-(?:[a-f\d]{4}-){3}[a-f\d]{12}$/i, "记录编号无效"),
-      p_tags: [...new Set(b.tags)].sort(), p_text: text(b.text, 4000, "请填写不超过 4000 字的听课记录", true),
-      p_listened: b.countAsListened ?? true,
     });
   }
   return invalid("接口不存在", 404);

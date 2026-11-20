@@ -249,38 +249,13 @@ export function lessons(data, filters, view) {
   );
 }
 
-function notesView(rows) {
-  return rows.length
-    ? rows
-        .map(
-          (n) =>
-            '<div class="note"><span>' +
-            (n.tags || []).map((t) => badge(t)).join(" ") +
-            '</span> <span class="muted sm">' +
-            (n.lessonId
-              ? '<a class="ulink" href="' +
-                lessonLink(n.lessonId) +
-                '">查看课程</a> · '
-              : "") +
-            esc(n.by) +
-            " · " +
-            when(n.at) +
-            '</span><div class="preserve">' +
-            esc(n.text) +
-            "</div></div>",
-        )
-        .join("")
-    : '<span class="muted">暂无听课记录。</span>';
-}
-export function lesson(l, issues, notes) {
+export function lesson(l, issues) {
   const metrics = l.metrics || {},
     segments = l.segments || [];
   const btns =
     '<button class="btn outline" data-transcript ' +
     (l.hasTranscript || l.hasAudio ? "" : "disabled") +
-    '>逐字稿与回听</button><button class="btn" data-note ' +
-    (l.reviewable === false ? "disabled" : "") +
-    ">写听课记录</button>";
+    '>逐字稿与回听</button>';
   const cells = [
     ["待复核", l.pending],
     ["教学模式", metrics.mode],
@@ -372,14 +347,7 @@ export function lesson(l, issues, notes) {
           Number(metrics.ch).toFixed(2) +
           "</p>"
         : "") + timeline,
-    ) +
-    '<div class="cols half spaced">' +
-    card(
-      "课程概要",
-      esc(l.summary) || '<span class="muted">暂无概要。</span>',
-    ) +
-    card("听课记录", notesView(notes)) +
-    "</div>"
+    )
   );
 }
 
@@ -450,6 +418,5 @@ export function teacher(t) {
     <div><small>疑似问题</small><b>待复核 ${Number(t.pending)} <em>· 已确认 ${Number(t.confirmed)}</em></b></div></div>
     <div class="teacher-columns"><section class="card"><div class="card-h"><h3>近两周课程</h3></div>${teacherLessons(t.recentLessons || [])}</section>
     <aside>${card("教学模式分布",modeBars + (total ? "" : '<small class="muted">暂无可分析的课程</small>'))}
-    ${card("问题记录",issues || '<span class="muted">暂无问题记录。</span>')}
-    ${card("听课记录",notesView(t.notes || []))}</aside></div>`;
+    ${card("问题记录",issues || '<span class="muted">暂无问题记录。</span>')}</aside></div>`;
 }

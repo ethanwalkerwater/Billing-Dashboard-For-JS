@@ -1031,7 +1031,7 @@ async function reviewRoute(method: string, path: string, event: HttpEvent, query
     if (method === "GET" && path === "/me") return json(200, {name: actor.name});
     const body = jsonBody(event);
     if (!body || typeof body !== "object" || Array.isArray(body)) return fail(400, "INVALID_BODY", "请求格式不正确");
-    const data = ["/inbox", "/issues", "/decision", "/notes"].includes(path)
+    const data = ["/inbox", "/issues", "/decision"].includes(path)
       ? await workflow(method, path, query, body, actor)
       : await catalog(method, path, query, body, actor, {signedUrl});
     // 网关日志不含登录人；审计只留主体与课程的不可逆索引，不记录请求正文或播放地址。

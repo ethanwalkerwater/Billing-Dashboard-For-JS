@@ -949,15 +949,6 @@ th.num {
   border-radius: 2px;
   display: inline-block;
 }
-.note {
-  display: block;
-  padding: 10px 0;
-  border-top: 1px solid var(--border);
-}
-.note:first-child {
-  border-top: 0;
-  padding-top: 0;
-}
 .rec {
   display: block;
   padding: 12px 20px;
@@ -966,8 +957,7 @@ th.num {
 .rec:first-child {
   border-top: 0;
 }
-.rec:hover,
-a.note:hover {
+.rec:hover {
   background: rgb(244 244 245/0.5);
 }
 .mbar {
@@ -1294,10 +1284,6 @@ dialog fieldset {
     max-width: 100%;
   }
 }
-.cols.half .card {
-  margin-top: 0;
-}
-.note a:hover,
 .tbl a:hover {
   text-decoration: underline;
 }

@@ -7,7 +7,7 @@ import {
   teacher,
   teachers,
 } from "./views.js";
-import { closeForm, noteForm, reviewForm, teacherForm } from "./forms.js";
+import { closeForm, reviewForm, teacherForm } from "./forms.js";
 import { openPlayer, stopPlayer } from "./player.js";
 
 const root = document.getElementById("root"),
@@ -218,13 +218,7 @@ async function render() {
       }
       case "lesson": {
         const data = await api("/lesson", { id });
-        const [issues, notes] =
-          data.reviewable === false
-            ? [{ items: [] }, { items: [] }]
-            : await Promise.all([
-                api("/issues", { lessonId: id }),
-                api("/notes", { lessonId: id }),
-              ]);
+        const issues = data.reviewable === false ? { items: [] } : await api("/issues", { lessonId: id });
         heading = "课程详情";
         ctx.lesson = data;
         const previous = (issues.previousItems || []).map((it) => ({
@@ -233,7 +227,7 @@ async function render() {
         }));
         ctx.issues = [...issues.items, ...previous];
         body =
-          lesson(data, issues.items, notes.items) +
+          lesson(data, issues.items) +
           (previous.length
             ? card("历史版本的复核记录", issueRows(previous, true, ctx.issues))
             : "");
@@ -352,8 +346,6 @@ root.addEventListener("click", async (e) => {
   if ("play" in attrs) play(attrs.play, Number(attrs.time));
   if ("transcript" in attrs && pageContext.lesson)
     play(pageContext.lesson.id, 0, false);
-  if ("note" in attrs && pageContext.lesson)
-    noteForm(pageContext.lesson, api, refresh);
   if ("add" in attrs) teacherForm(api, refresh);
   if ("random" in attrs) {
     const turn = epoch;
