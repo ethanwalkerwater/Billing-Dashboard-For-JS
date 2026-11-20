@@ -116,3 +116,18 @@ test("家长收集表：只收三块里词表的标签，和老师写的合在�
   assert.equal("沟通注意" in out, false);
   assert.equal("辅导经历" in out, false);
 });
+
+test("编辑资料只写修改项，按飞书建档年份换算年级", () => {
+  const now = sh("2026-01-01T00:01:00"), created = sh("2024-12-31T23:59:00");
+  assert.deepEqual(W.rosterEditFields({ grade: "9", contact: "", birth: "2013-02-28" }, created, now),
+    { "学生年级-初始记录": 7, "联系方式n": null, "出生日期": sh("2013-02-28T00:00:00") });
+  assert.deepEqual(W.rosterEditFields({ note: " 跟进阅读 " }, 0, now), { 备注: "跟进阅读" });
+  for (const changes of [{ stage: "结课" }, { channel: "例" }, { name: "" }, { birth: "2013-02-29" }, { grade: "10" }]) {
+    assert.throws(() => W.rosterEditFields(changes, 0, now));
+  }
+});
+
+test("画像输入框保留旧标签、说明和换行", () => {
+  assert.equal(W.personaNote(), "");
+  assert.equal(W.personaNote({tags:["举例", "先读题"], text:"先自己试。\n再讨论。", src:"教师"}), "举例\n先读题\n先自己试。\n再讨论。");
+});

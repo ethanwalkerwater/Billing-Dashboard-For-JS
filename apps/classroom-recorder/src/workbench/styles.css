@@ -678,7 +678,7 @@ tr.sel,tr.sel:hover{background:var(--muted)}
 .bar{padding-left:16px}
 @media (min-width:761px){
   /* 侧栏展开/收起不做列宽动画：动画期间内容会先溢出到主区再被挤回，看起来是文字闪一下 */
-  .side{overflow:hidden;min-width:0}
+  .app{transition:grid-template-columns .22s ease}
   .collapsed .app{grid-template-columns:0 minmax(0,1fr)}
   .collapsed .side{visibility:hidden;padding:0;overflow:hidden;border-right:0}
 }
@@ -787,3 +787,11 @@ th{background:transparent}
 .stage-in:hover{border-color:var(--border);background-color:var(--background)}
 .stage-in:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
 @media (max-width:760px){.app{grid-template-columns:minmax(0,1fr)}}
+
+.profile-notes{margin-top:24px}
+.profile-notes .card-h{flex-wrap:wrap}
+.note-text{white-space:pre-wrap;overflow-wrap:anywhere}
+.profile-form{gap:20px;padding-bottom:24px}
+.profile-form .field-hint{color:var(--muted-fg);font-size:13px;font-weight:400;line-height:1.5}
+.profile-form textarea{line-height:1.6}
+.profile-form .grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(190px,100%),1fr));gap:12px}

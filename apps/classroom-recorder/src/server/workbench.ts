@@ -145,7 +145,7 @@ export function parseRoster(record: { record_id: string; fields: Record<string, 
   return {
     id: record.record_id, name: str(f["学生姓名"]), school: str(f["所读学校"]), system,
     grade: !Number(g) ? "" : system.startsWith("13") ? `Year ${g}` : system.startsWith("12") ? `Grade ${g}` : `${g} 年级`,
-    birth: isoDate(ms(f["出生日期"])), contact: str(f["联系方式n"]), channel: str(f["渠道信息"]), owner: str(f["负责老师"]),
+    birth: f["出生日期"] == null || !Number.isFinite(Number(f["出生日期"])) || f["出生日期"] === "" ? "" : isoDate(Number(f["出生日期"])), contact: str(f["联系方式n"]), channel: str(f["渠道信息"]), owner: str(f["负责老师"]),
     ownerTeacher: str(f["归属老师(20%)"]), serviceTeacher: str(f["服务老师(7%)"]), remind: str(f["排课提醒"]), status: str(f["在读"]),
     note: str(f["备注"]), created: ms(f["创建日期"]) ?? 0,
   };
@@ -164,6 +164,38 @@ export function rosterFields(input: { name: string; school?: string; grade?: str
   if (input.channel) fields["渠道信息"] = input.channel;
   return fields;
 }
+
+/** 资料编辑只接收实际改过的字段。飞书当前年级 = 初始年级 + 今年 - 建档年份。 */
+export function rosterEditFields(changes: unknown, created: number, now: number) {
+  if (!changes || typeof changes !== "object" || Array.isArray(changes)) throw Error("资料格式不正确");
+  const fields: Record<string, unknown> = {};
+  const textFields = { name: ["学生姓名", 60], school: ["所读学校", 120], contact: ["联系方式n", 300], note: ["备注", 2000] } as const;
+  for (const [key, value] of Object.entries(changes)) {
+    if (typeof value !== "string") throw Error("资料必须是文字");
+    const v = value.trim();
+    if (Object.hasOwn(textFields, key)) {
+      const [field, max] = textFields[key as keyof typeof textFields];
+      if (v.length > max || (key === "name" && !v)) throw Error(`${field}填写不正确`);
+      fields[field] = v || null;
+    } else if (key === "birth") {
+      const t = Date.parse(v + "T00:00:00+08:00");
+      if (v && (!/^\d{4}-\d{2}-\d{2}$/.test(v) || !Number.isFinite(t) || isoDate(t) !== v || t > now)) throw Error("出生日期不正确");
+      fields["出生日期"] = v ? t : null;
+    } else if (key === "system") {
+      if (!["", "12 年制", "13 年制"].includes(v)) throw Error("请选择学制");
+      fields["学制"] = v || null;
+    } else if (key === "grade") {
+      if (!/^(?:[1-9]|1[0-3])$/.test(v)) throw Error("当前年级请填 1 至 13");
+      if (!created) throw Error("请先在飞书补充创建日期，再修改年级");
+      fields["学生年级-初始记录"] = Number(v) - Number(sh(now).slice(0, 4)) + Number(sh(created).slice(0, 4));
+    } else throw Error("包含不可编辑的资料字段");
+  }
+  if (!Object.keys(fields).length) throw Error("没有填写要修改的资料");
+  return fields;
+}
+
+export type PersonaBlock = { tags: string[]; text: string; src: string };
+export const personaNote = (block?: PersonaBlock) => [...(block?.tags ?? []), block?.text].filter(Boolean).join("\n");
 
 /** 飞书「排课提醒」混了阶段和排课进度，只取阶段那几项；工作台里改过的以工作台为准 */
 export function stageOf(roster: Pick<RosterStudent, "remind" | "status"> | undefined, saved: string | null | undefined, recent: boolean): string {
