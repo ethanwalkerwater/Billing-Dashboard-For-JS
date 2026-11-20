@@ -7,7 +7,7 @@
  *   tcb fn invoke {"action":"tick","lessonId":"rec…"} 只推进某节课
  *   {"action":"rebuild","lessonId":"rec…"}            按现在的流程重出报告，只返回不写库（scripts/rebuild-archive.ts 逐节调用）
  */
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { once } from "node:events";
 import { createReadStream, createWriteStream } from "node:fs";
 import { mkdtemp, rm, stat } from "node:fs/promises";
@@ -28,6 +28,8 @@ import * as L from "../../src/server/logic";
 import type { LessonDoc, Stage } from "../../src/server/logic";
 import { formRoute, workbenchRoute } from "./workbench";
 import { issueSession, readSession, SESSION_RENEW_MS, type Session } from "./session";
+
+import { processReview } from "./review/jobs.cjs";
 
 export function requireEnv(name: string): string {
   const value = process.env[name]?.trim();
@@ -175,7 +177,7 @@ const LEASE_MS = 6 * 60_000; // > 函数超时 300 s，进程被杀后 6 分钟�
 
 export interface HttpEvent {
   httpMethod?: string; path?: string; headers?: Record<string, string>; queryStringParameters?: Record<string, string>;
-  body?: string; isBase64Encoded?: boolean; Type?: string; TriggerName?: string; action?: string; lessonId?: string; lessonIds?: unknown; prompts?: L.Prompts;
+  body?: string; isBase64Encoded?: boolean; Type?: string; TriggerName?: string; action?: string; signature?: string; issuedAt?: number; lessonId?: string; lessonIds?: unknown; prompts?: L.Prompts;
 }
 
 
@@ -782,6 +784,7 @@ async function processLesson(id: string, deadline: number) {
       const patch = await runStep(doc, step);
       if (!patch) break;
       await updateLesson(id, patch);
+      if (patch.transcript && doc.kind !== "meeting" && doc.kind !== "merged") await sendReview(id);
       // 转写已入库：分段和计划下课时传的 early.mp3 只在重新合并时有用，删掉，云端只留转写用的那份（失败重试从 summarizing 起步，不再需要）
       if (patch.transcript !== undefined) {
         const early = `${id}/${L.EARLY_FILE}`;
@@ -880,6 +883,29 @@ function pendingLessons(now: number, limit: number, exclude?: string) {
     `attempts=lt.${L.MAX_ATTEMPTS}&lockedUntil=lt.${now}&or=(${direct},${legacy},${queued},stage.in.(summarizing,failed),and(stage.eq.transcribing,updatedAt.lte.${now - CALLBACK_GRACE_MS}))` +
       `&select=_id&order=updatedAt.asc&limit=${limit}${exclude ? `&_id=not.${eq(exclude)}` : ""}`,
     undefined, "return=representation", exclude ? AbortSignal.timeout(1200) : undefined);
+}
+
+function reviewSignature(id: string, issuedAt: number) {
+  return createHmac("sha256", requireEnv("CLOUDBASE_API_KEY")).update(`classroom-review/1/${issuedAt}/${id}`).digest("hex");
+}
+
+async function sendReview(id: string) {
+  try {
+    const issuedAt = Date.now();
+    const client = new CommonClient("scf.tencentcloudapi.com", "2018-04-16", {
+      region: "ap-shanghai", credential: { secretId: requireEnv("TENCENTCLOUD_SECRETID"), secretKey: requireEnv("TENCENTCLOUD_SECRETKEY"), token: requireEnv("TENCENTCLOUD_SESSIONTOKEN") }, profile: { httpProfile: { reqTimeout: 2 } },
+    });
+    await client.request("Invoke", { FunctionName: "classroom-api", Namespace: requireEnv("CLOUDBASE_ENV_ID"), InvocationType: "Event",
+      ClientContext: JSON.stringify({ action: "classroomReview", lessonId: id, issuedAt, signature: reviewSignature(id, issuedAt) }) });
+  } catch {
+    console.warn("复盘未投递，已保留待处理任务", id);
+  }
+}
+
+async function retryReviews() {
+  const due = await pg<{ lesson_id: string }>("GET", "classroom_content_reviews",
+    `version=eq.1&status=in.(pending,running,failed)&available_at=lte.${encodeURIComponent(new Date().toISOString())}&attempts=lt.4&select=lesson_id&order=available_at.asc&limit=8`);
+  await Promise.all(due.map(r => sendReview(r.lesson_id)));
 }
 
 /** 只在正在访问数据库的请求中检查；SCF 接受事件后即可返回，后续处理由另一实例执行。 */
@@ -1043,6 +1069,7 @@ async function saveTranscript(event: HttpEvent, id: string, admin: AdminSession)
   if (doc.rawTranscript == null) patch.rawTranscript = doc.transcript;
   if (doc.kind === "meeting" && doc.report && "speakers" in doc.report) patch.report = { ...doc.report, speakers: L.meetingSpeakers(transcript) };
   await updateLesson(id, patch);
+  if (doc.kind !== "meeting" && doc.kind !== "merged") await sendReview(id);
   return json(200, { ok: true });
 }
 
@@ -1241,6 +1268,14 @@ let hardStop = Date.now() + 280_000;
 export async function main(event: HttpEvent) {
   hardStop = Date.now() + 280_000;
   if (typeof event.httpMethod !== "string") {
+    if (event.action === "classroomReview") {
+      const { lessonId, issuedAt, signature } = event;
+      if (!lessonId || !RECORDING_ID.test(lessonId) || typeof issuedAt !== "number" || Math.abs(Date.now() - issuedAt) > 600_000 ||
+          typeof signature !== "string" || !/^[a-f0-9]{64}$/.test(signature) ||
+          !timingSafeEqual(Buffer.from(signature, "hex"), Buffer.from(reviewSignature(lessonId, issuedAt), "hex"))) return { ok: false, error: "UNAUTHORIZED" };
+      const result = await processReview(lessonId);
+      return { ok: true, status: result.status };
+    }
     if (event.action === "rebuild" && event.lessonId) return await rebuild(event.lessonId, readPrompts(event.prompts) ?? undefined);
     if (event.action === "ride" && Array.isArray(event.lessonIds)) {
       const ids = event.lessonIds.filter((id): id is string =>
@@ -1249,6 +1284,9 @@ export async function main(event: HttpEvent) {
       return { ok: true };
     }
     if (event.Type === "Timer" || event.TriggerName || event.action === "tick") {
+      if (!event.lessonId && (event.Type === "Timer" || event.TriggerName)) {
+        await retryReviews().catch(() => console.warn("复盘补投递稍后重试"));
+      }
       await runPipeline(event.lessonId);
       return { ok: true };
     }
