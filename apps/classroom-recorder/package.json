@@ -11,6 +11,9 @@
     "app:dev": "tauri dev",
     "app:build": "tauri build",
     "test": "tsx --test tests/*.test.ts",
+    "build:fupan": "vite build fupan --base=/fupan/ --outDir ../dist-fupan --emptyOutDir",
+    "check:fupan": "npm test && npm run build:fupan && FUPAN_BUILT=1 node tests/fupan-web.mjs",
+    "deploy:fupan": "npm run build:fupan && tcb hosting deploy dist-fupan /fupan -e jingshi-test-d5gp401i44a0fa7a7",
     "build:report": "vite build --config vite.report.config.ts",
     "deploy:functions": "node scripts/deploy-function.mjs",
     "deploy:web": "npm run build:report && mkdir -p dist-work && sed \"s#\\.\\./assets/#/classroom/assets/#g\" dist-report/workbench/index.html > dist-work/index.html && tcb hosting deploy dist-report /classroom -e jingshi-test-d5gp401i44a0fa7a7 && tcb hosting deploy dist-work /work -e jingshi-test-d5gp401i44a0fa7a7"

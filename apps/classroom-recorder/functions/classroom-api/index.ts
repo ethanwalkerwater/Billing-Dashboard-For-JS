@@ -29,6 +29,9 @@ import type { LessonDoc, Stage } from "../../src/server/logic";
 import { formRoute, workbenchRoute } from "./workbench";
 import { issueSession, readSession, SESSION_RENEW_MS, type Session } from "./session";
 
+import { issueReviewSession, readReviewSession } from "./review/access";
+import { workflow } from "./review/workflow";
+import { catalog } from "./review/catalog";
 import { processReview } from "./review/jobs.cjs";
 
 export function requireEnv(name: string): string {
@@ -249,8 +252,8 @@ async function authenticate(event: HttpEvent, scheduleOnly: boolean): Promise<{ 
 const redirectUri = () => `${requireEnv("API_BASE_URL").replace(/\/$/, "")}/auth/callback`;
 
 /** 老师 App（kind 为空）和后台网页（kind = admin）共用同一个飞书回调地址，靠 state 行区分 */
-async function authorizeUrl(kind?: "admin" | "workbench") {
-  const state = randomBytes(16).toString("base64url");
+async function authorizeUrl(kind?: "admin" | "workbench" | "fupan", nonce?: string) {
+  const state = randomBytes(16).toString("base64url") + (nonce ? "." + sha256(nonce) : "");
   await pg("POST", AUTH, "", [{ _id: state, status: "pending", expiresAt: Date.now() + 10 * 60_000, ...(kind ? { kind } : {}) }], "return=minimal");
   const url = new URL("https://accounts.feishu.cn/open-apis/authen/v1/authorize");
   url.searchParams.set("client_id", requireEnv("FEISHU_APP_ID"));
@@ -283,12 +286,13 @@ async function findTeacher(openId: string, name: string) {
   return match;
 }
 
-async function authCallback(query: Record<string, string>) {
+async function authCallback(query: Record<string, string>, event: HttpEvent) {
   const state = query.state ?? "";
   const auth = state ? await getRow<{ status: string; expiresAt: number; kind?: string }>(AUTH, state) : undefined;
   if (!auth || auth.expiresAt < Date.now() || auth.status !== "pending") return page(400, "登录链接已过期", "请回到菁仕课堂，重新点「飞书登录」。");
   if (!query.code) return page(400, "没有完成授权", "请回到菁仕课堂，重新点「飞书登录」并同意授权。");
   try {
+    if (auth.kind === "fupan") return await reviewCallback(state, query.code, event);
     if (auth.kind === "admin" || auth.kind === "workbench") return await adminCallback(state, query.code, auth.kind);
     const { openId, name } = await feishuUser(query.code);
     const match = await findTeacher(openId, name);
@@ -971,6 +975,78 @@ async function notifyAdmins(text: string) {
 }
 const redirect = (location: string) => ({ statusCode: 302, headers: { location, "cache-control": "no-store" }, body: "", isBase64Encoded: false });
 
+type ReviewGrant = { open_id: string; name: string; grant_id: string };
+const reviewGrant = async (openId: string) =>
+  (await pg<ReviewGrant>("GET", "fupan_supervisors", `open_id=${eq(openId)}&select=open_id,name,grant_id&limit=1`))[0];
+
+const reviewSessionCookie = "__Secure-fupan_session";
+const reviewLoginCookie = "__Secure-fupan_login";
+function readCookie(event: HttpEvent, name: string) {
+  const prefix = name + "=";
+  return header(event, "cookie").split(";").map(part => part.trim()).find(part => part.startsWith(prefix))?.slice(prefix.length) ?? "";
+}
+function cookieRedirect(location: string, cookie: string) {
+  const response = redirect(location);
+  return { ...response, headers: { ...response.headers, "set-cookie": cookie, "referrer-policy": "no-referrer" } };
+}
+const sessionCookie = (value: string, age: number) =>
+  `${reviewSessionCookie}=${value}; Max-Age=${age}; Path=/classroom-api/fupan; HttpOnly; Secure; SameSite=Strict`;
+
+async function reviewCallback(state: string, code: string, event: HttpEvent) {
+  const nonce = readCookie(event, reviewLoginCookie);
+  if (!/^[\w-]{43}$/.test(nonce) || state.split(".")[1] !== sha256(nonce))
+    return page(403, "请在原浏览器完成登录", "回到课堂复盘，再点一次「用飞书登录」。");
+  const claimed = await pg("DELETE", AUTH, `_id=${eq(state)}&status=eq.pending&kind=eq.fupan&expiresAt=gt.${Date.now()}`);
+  if (!claimed.length) return page(400, "登录链接已过期", "请回到课堂复盘重新登录。");
+  const user = await feishuUser(code);
+  const grant = await reviewGrant(user.openId);
+  const target = new URL("/fupan/", requireEnv("REPORT_BASE_URL")).href;
+  if (!grant) return cookieRedirect(target + "#denied", sessionCookie("", 0));
+  const token = issueReviewSession(user.openId, grant.grant_id, signedSessionKey());
+  return cookieRedirect(target, sessionCookie(token, 8 * 3600));
+}
+
+async function reviewRoute(method: string, path: string, event: HttpEvent, query: Record<string, string>) {
+  try {
+    if (method === "GET" && path === "/login") {
+      const nonce = randomBytes(32).toString("base64url");
+      const {url} = await authorizeUrl("fupan", nonce);
+      return cookieRedirect(url, `${reviewLoginCookie}=${nonce}; Max-Age=600; Path=/classroom-api/auth/callback; HttpOnly; Secure; SameSite=Lax`);
+    }
+    const cookie = readCookie(event, reviewSessionCookie);
+    if (!cookie) return fail(401, "UNAUTHORIZED", "请使用飞书登录课堂复盘");
+    const origin = header(event, "origin");
+    if (header(event, "x-fupan-request") !== "1" ||
+        ((origin || method === "POST") && origin !== new URL(requireEnv("REPORT_BASE_URL")).origin))
+      return fail(403, "FORBIDDEN", "请从课堂复盘页面操作");
+    if (method === "POST" && path === "/logout") {
+      const response = json(200, {ok:true});
+      return {...response, headers:{...response.headers, "set-cookie":sessionCookie("",0)}};
+    }
+    const identity = readReviewSession("Bearer " + cookie, signedSessionKey());
+    if (!identity) return fail(401, "UNAUTHORIZED", "登录已失效，请重新登录");
+    const grant = await reviewGrant(identity.openId);
+    if (!grant || grant.grant_id !== identity.grant) return fail(403, "FORBIDDEN", "此账号没有课堂复盘权限");
+    const actor = { openId: grant.open_id, name: grant.name };
+    if (method === "GET" && path === "/me") return json(200, {name: actor.name});
+    const body = jsonBody(event);
+    if (!body || typeof body !== "object" || Array.isArray(body)) return fail(400, "INVALID_BODY", "请求格式不正确");
+    const data = ["/inbox", "/issues", "/decision", "/notes"].includes(path)
+      ? await workflow(method, path, query, body, actor)
+      : await catalog(method, path, query, body, actor, {signedUrl});
+    // 网关日志不含登录人；审计只留主体与课程的不可逆索引，不记录请求正文或播放地址。
+    console.info("[fupan-access]", method, path, sha256(actor.openId), sha256(String(query.id || query.lessonId || body.lessonId || "")));
+    return json(200, data);
+  } catch (error) {
+    const status = (error as { status?: number })?.status;
+    if (typeof status === "number" && Number.isInteger(status) && status >= 400 && status < 500 && error instanceof Error)
+      return fail(status, "REVIEW_REQUEST", error.message);
+    // PostgREST 错误可能含片段和笔记，运行日志只记录路由与技术状态。
+    console.error("[fupan] request failed", method, path.slice(0, 60).replace(/[^a-z/-]/g, ""));
+    return fail(500, "INTERNAL", "课堂复盘暂时不可用，请稍后重试");
+  }
+}
+
 /** 后台和工作台：管理员、教务（wb_roles）不一定是老师；其他人要在老师档案里对得上。对上了记下课表名，工作台按它筛课表 */
 async function adminCallback(state: string, code: string, kind: string) {
   const claimed = await pg("DELETE", AUTH, `_id=${eq(state)}&status=eq.pending`);
@@ -1297,11 +1373,12 @@ export async function main(event: HttpEvent) {
     const path = (event.path ?? "").replace(/^\/classroom-api(?=\/|$)/, "").replace(/\/$/, "") || "/";
     const query = event.queryStringParameters ?? {};
     if (method === "GET" && path === "/auth/start") return await authStart();
-    if (method === "GET" && path === "/auth/callback") return await authCallback(query);
+    if (method === "GET" && path === "/auth/callback") return await authCallback(query, event);
     if (method === "GET" && path === "/auth/poll") return await authPoll(query.state ?? "", wantsSignedSession(event));
     if (method === "GET" && path === "/report") return await getReport(query.t ?? "");
     if (method === "POST" && path === "/asr/callback") return await asrCallback(query);
     if (method === "GET" && path === "/admin/login") return redirect((await authorizeUrl(query.to === "workbench" ? "workbench" : "admin")).url);
+    if (path.startsWith("/fupan/")) return await reviewRoute(method, path.slice("/fupan".length), event, query);
     if (path === "/wb-form") return await formRoute(method, event, query);
     if (path.startsWith("/wb/")) return await workbenchRoute(method, path, event, query);
     if (path.startsWith("/admin/")) {
