@@ -3,6 +3,7 @@
  * 加 &edit=1 是老师 / 超级管理员的编辑模式：用后台的登录（同域 localStorage），点文字原地改，支持简单 Markdown，版式不变。
  */
 import './styles.css';
+import { lessonReminder } from '../lesson-reminder';
 
 interface MeetingReport {
   title: string; lead: string;
@@ -25,7 +26,7 @@ interface ReportData {
   report: {
     topic: string; lead: string; content: string[];
     mastery: Array<{ name: string; status: string; evidence: string }>;
-    performance: string; issue: { title: string; fix: string }; homework: string; review: string; next: string;
+    performance: string; issue: { title: string; fix: string }; reminder?: string; homework: string; review: string; next: string;
     chapters?: Array<{ start: number; end: number; real: number; cat: string; title: string; point: string }>;
     questions?: Array<{ time: number | null; text: string; answer: string }>;
   };
@@ -34,7 +35,7 @@ interface ReportData {
 // 会议板块轮流用 .p0–.p6 七种颜色；课的章节类别顺序同 logic.ts CHAPTER_CATS，对应 .k0–.k5
 const PALETTE = 7;
 const CATS = ['新知讲解', '例题精讲', '错题讲评', '当堂练习', '方法总结', '学习规划'];
-const PLAN_POINT = '试卷分析与学习规划';
+const POINT_COLORS = ['#2d62cf', '#738fc7', '#6c50ab', '#ae91cd', '#b46d19', '#e0b14c', '#657284'];
 /** 录音里的秒 → 上海时间 HH:MM */
 const hm = (recStart: number, s: number) => new Date(recStart + s * 1000 + 8 * 3_600_000).toISOString().slice(11, 16);
 /** 合并反馈：秒数 s 在第几节（从 0 起） */
@@ -64,7 +65,7 @@ function md(src: string) {
 /** 可编辑的文字：path 是它在报告 JSON 里的位置，如 mastery.0.evidence */
 let editing: { token: string; rev: string; dirty: boolean } | null = null;
 const T = (path: string, value: string) =>
-  `<span class="md" data-path="${path}"${editing ? ' tabindex="0" role="button" title="点击修改"' : ''}>${value.trim() ? md(value) : '<span class="gone">（已清空，保存后删掉这一条）</span>'}</span>`;
+  `<span class="md" data-path="${path}"${editing ? ' tabindex="0" role="button" title="点击修改"' : ''}>${value.trim() ? md(value) : (path === 'reminder' ? '<span class="gone">点击填写，留空时家长不可见</span>' : '<span class="gone">（已清空，保存后删掉这一条）</span>')}</span>`;
 const root = document.getElementById('report')!;
 const download = document.getElementById('download') as HTMLButtonElement;
 
@@ -94,8 +95,19 @@ function chapterSection(c: NonNullable<ReportData['clock']>, chapters: NonNullab
 
 /** 知识点用时：每一章归到它主要讲的知识点，合计 = 上面的分钟数 */
 function pointTimeSection(c: NonNullable<ReportData['clock']>) {
-  const max = c.points[0]?.[1] || 1;
-  return `<p class="sub">合计 ${c.total} 分钟，与${c.full ? '课堂时长' : '上面的学习时间'}一致</p><div class="bars">${c.points.map(([name, n]) => `<div class="bar"><span>${h(name)}</span><div class="track"><i class="${name === PLAN_POINT ? 'k5' : ''}" style="width:${(n / max) * 100}%"></i></div><b>${n} 分钟 · ${pct(n, c.total)}</b></div>`).join('')}</div>`;
+  const stops: string[] = [];
+  let end = 0;
+  const rows = c.points.map(([name, n], i) => {
+    const color = POINT_COLORS[i % POINT_COLORS.length];
+    const start = end;
+    end += n / c.total * 100;
+    if (n > 0) {
+      const divider = Math.min(0.25, (end - start) / 8);
+      stops.push(`${color} ${start}% ${end - divider}%`, `white ${end - divider}% ${end}%`);
+    }
+    return `<li><i style="background:${color}"></i><span>${h(name)}</span><b>${n} 分</b><em>${Number((100 * n / c.total).toFixed(1))}%</em></li>`;
+  });
+  return `<figure class="time-figure"><div class="pie-body"><div class="pie-ring" aria-hidden="true" style="background:conic-gradient(${stops.join(',')})"><div><strong>${c.total}</strong><span>分钟</span></div></div><ul class="pie-legend">${rows.join('')}</ul></div><figcaption class="figure-note">按章节的主要知识点折算，${c.full ? '共' : '学习时间共'} ${c.total} 分钟。</figcaption></figure>`;
 }
 
 /** 会议纪要网页：版式见 docs/meeting-report.html */
@@ -135,17 +147,18 @@ function render(d: ReportData) {
   const questions = r.questions ?? [];
   const c = chapters.length ? d.clock : undefined;
   // 没有课堂时间档案的报告（档案上线前的、预览旧数据）不显示时间分布和知识点用时，编号顺延
+  const pointsSection: Array<[string, string]> = c && c.total > 0 && c.points.length ? [['知识点用时', pointTimeSection(c)]] : [];
   const top: Array<[string, string]> = [
     ['本课学习内容', `<ul>${r.content.map((line, i) => `<li>${T(`content.${i}`, line.replace(/^\d+\.\s*/, ''))}</li>`).join('')}</ul>`],
-    ...(c ? [['课堂时间分布', chapterSection(c, chapters, d.time.split('、'))], ['知识点用时', pointTimeSection(c)]] as Array<[string, string]> : []),
+    ...(c ? [['课堂时间分布', chapterSection(c, chapters, d.time.split('、'))], ...pointsSection] as Array<[string, string]> : []),
     ['知识点掌握情况', `<div class="table-wrap"><table><thead><tr><th scope="col">知识点</th><th scope="col">课堂表现</th><th scope="col">判断依据</th></tr></thead><tbody>${r.mastery.map((m, i) => `<tr><td>${T(`mastery.${i}.name`, m.name)}</td><td class="${m.status === '需要巩固' ? 'practice' : 'good'}">${h(m.status)}</td><td class="evidence">${T(`mastery.${i}.evidence`, m.evidence)}</td></tr>`).join('')}</tbody></table></div>`],
   ];
+  const reminder = lessonReminder(r);
   const bottom: Array<[string, string]> = [
     ...(questions.length ? [['主动提问', `<p class="meta">${h(d.student || '学生')}${c?.parts ? '这几节课' : '这节课'}主动提了 ${questions.length} 个问题：</p><div class="qs">${questions.map((q, i) => `<figure class="q">${q.time === null ? '' : `<span class="when">${c?.parts ? at(c, q.time) : clock(q.time)}</span>`}<blockquote>“${T(`questions.${i}.text`, q.text)}”</blockquote>${q.answer || editing ? `<figcaption>${T(`questions.${i}.answer`, q.answer)}</figcaption>` : ''}</figure>`).join('')}</div>`] as [string, string]] : []),
     ['学生课堂表现', `<p class="insight">${T('performance', r.performance)}</p>`],
     ['易错点与改进方法', `<div class="issue"><b>${T('issue.title', r.issue.title)}</b><p>${T('issue.fix', r.issue.fix)}</p></div>`],
-    ['课后巩固计划', `<div class="plan"><div><h3>作业与练习</h3><p>${T('homework', r.homework)}</p></div><div><h3>复习方法</h3><p>${T('review', r.review)}</p></div></div>`],
-    ['下节课衔接', `<p>${T('next', r.next)}</p>`],
+    ...(reminder || editing ? [['课后提醒', `<p>${T('reminder', reminder)}</p>`] as [string, string]] : []),
   ];
   const section = ([title, body]: [string, string], i: number) => `<section><h2><small>${String(i + 1).padStart(2, '0')}</small>${title}</h2>${body}</section>`;
   const teacher = /^[一-龥]+$/.test(d.teacher) ? `${d.teacher}老师` : d.teacher;
@@ -175,7 +188,7 @@ let data: ReportData | null = null;
 const bar = document.querySelector('.toolbar-inner')!;
 /** 清空就删掉这一条的字段；其余必填字段清空则恢复原文 */
 const REMOVABLE = /^(content\.\d+|mastery\.\d+\.name|questions\.\d+\.text|decisions\.\d+\.text|todos\.\d+\.task|followups\.\d+)$/;
-const OPTIONAL = /^(questions\.\d+\.answer|todos\.\d+\.(owner|due))$/;
+const OPTIONAL = /^(reminder|questions\.\d+\.answer|todos\.\d+\.(owner|due))$/;
 
 function getAt(obj: any, path: string): string {
   return path.split('.').reduce((o, k) => o?.[k], obj) ?? '';
@@ -233,6 +246,7 @@ async function startEditing(token: string) {
   if (!res.ok) return notice('只能编辑你自己的课程和会议');
   const { rev, report } = await res.json() as { rev: string; report: ReportData['report'] };
   editing = { token, rev, dirty: false };
+  if (data!.kind !== 'meeting' && report.reminder === undefined) report.reminder = lessonReminder(report);
   data!.report = report; // 用库里的原文（未经显示处理）编辑
   document.body.classList.add('editing');
   editBar();

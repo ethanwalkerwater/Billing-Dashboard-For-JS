@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { lessonReminder } from "../src/lesson-reminder";
 import * as L from "../src/server/logic";
 import type { LessonDoc } from "../src/server/logic";
 
@@ -627,4 +628,24 @@ test("B2/S45：分钟、分步、分布、分式和钟点两种 strict 都保留
     const summary = L.parseSummary(raw, undefined, ctx, { strict }).parentSummary;
     for (const sentence of [content, performance, advice]) assert.ok(summary.includes(sentence), sentence);
   }
+});
+
+test("课后提醒支持明确约定、空报告、旧报告及老师主动清空", () => {
+  const archive = L.parseArchive(JSON.stringify(archiveJson()));
+  const note = "老师会发本课笔记，可以对照笔记检查梯子题的第一行方程。";
+  archive.facts.push({ type: "课后约定", time: archive.stats.last, text: "老师会发本课笔记" });
+  const meta = { student: "A", course: "数学", teacher: "B", monthDay: "10月15日" };
+  const [, user] = L.reportMessages(meta, archive, { ...L.DEFAULT_PROMPTS, report: "自定义报告" });
+  assert.match(user.content, /自定义报告/);
+  assert.match(user.content, /课后约定：老师会发本课笔记/);
+  assert.match(user.content, /写空字符串/);
+  const input = validJson();
+  const parse = (reminder: unknown) => L.parseSummary(JSON.stringify({ ...input, report: { ...input.report, reminder } })).report;
+  const original = L.assembleReport(parse(note), archive, "");
+  assert.equal(lessonReminder(original), note);
+  assert.equal(lessonReminder(L.applyReportEdits("lesson", original, { reminder: "" }) as L.ClassReport), "");
+  assert.equal(lessonReminder(L.assembleReport(parse(null), archive, "")), "第 3 题再做一遍");
+  assert.equal(lessonReminder(L.assembleReport(parse("本课数据不足。"), { ...archive, facts: [] }, "")), "");
+  assert.equal(lessonReminder({ homework: "课上没有明确布置作业", next: "下次讲二次不等式" }), "");
+  assert.equal(lessonReminder({ homework: "具体检查第三题", next: "下节课带上试卷" }), "具体检查第三题\n下节课带上试卷");
 });

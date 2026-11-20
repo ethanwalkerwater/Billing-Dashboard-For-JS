@@ -1,3 +1,4 @@
+import { reminderText } from "../lesson-reminder";
 /**
  * 菁仕课堂云端的纯逻辑（不碰飞书 / 数据库 / 腾讯云），云函数 classroom-api 负责 IO。
  * 课表字段名与 jingshi-vocal、取消课程模块一致；「老师课程ID」公式 = [请假前缀｜]HH:MM-HH:MM｜学生｜课程类型｜授课类型。
@@ -102,6 +103,7 @@ export interface ClassReport {
   mastery: Array<{ name: string; status: (typeof MASTERY_STATUSES)[number]; evidence: string }>;
   performance: string;
   issue: { title: string; fix: string };
+  reminder?: string;
   homework: string;
   review: string;
   next: string;
@@ -678,7 +680,7 @@ const SKELETON = `{
   "report": {
     "topic": "", "lead": "", "content": [""],
     "mastery": [{"name": "知识点", "status": "${MASTERY_STATUSES.join(" / ")} 四选一", "evidence": ""}],
-    "performance": "", "issue": {"title": "", "fix": ""}, "review": "",
+    "performance": "", "issue": {"title": "", "fix": ""}, "review": "", "reminder": "",
     "questions": [{"time": "mm:ss", "text": "学生原话", "answer": ""}]
   }
 }`;
@@ -720,9 +722,9 @@ kind 从这几类选一个：课前（第一句正式上课之前）/ 讲解（�
 只输出 JSON：
 {"segments":[{"start":"mm:ss","end":"mm:ss","kind":"","title":"12 字以内","detail":"一句具体说明：哪道题、什么方法、学生怎么答的，60 字以内"}],
 "moments":[{"time":"mm:ss","type":"答对 / 答错 / 提问 / 老师纠正","text":"尽量保留学生原话"}],
-"facts":[{"time":"mm:ss","type":"作业 / 下节课 / 考试成绩 / 选课规划","text":""}]}
+"facts":[{"time":"mm:ss","type":"作业 / 下节课 / 课后约定 / 考试成绩 / 选课规划","text":""}]}
 moments 里「提问」只算学生自己主动提出的问题（不是回答老师，也不是「听不清」「什么意思」），text 写学生原话。
-facts 里「作业」指老师让学生课后做的任何事（包括「回去再做一遍」「把过程写一遍」）；「下节课」只算明确说下次上课讲什么，「下半堂课」不算。没有的写空列表。start / end / time 照抄转写里的时间。
+facts 里「作业」指老师让学生课后做的任何事（包括「回去再做一遍」「把过程写一遍」）；「下节课」只算明确说下次上课讲什么，「下半堂课」不算。「课后约定」记明确约定的资料发送或准备事项，即使在临下课时提到也保留，写清谁做什么；不要把老师要做的事记作学生作业。没有的写空列表。start / end / time 照抄转写里的时间。
 
 ${transcript}`;
 }
@@ -859,6 +861,7 @@ export function assembleReport(report: Omit<ClassReport, "homework" | "next">, a
   const { homework, next } = archiveFacts(archive);
   return {
     ...report,
+    reminder: report.reminder || homework.map(reminderText).find(Boolean) || "",
     homework: homework.join("；") || "课上没有明确布置作业",
     next: next.join("；") || "具体内容待老师安排",
     chapters: buildChapters(chapterRaw, archive, report.mastery.map((m) => m.name)),
@@ -885,6 +888,9 @@ ${SKELETON}
 
 report 各字段要求：
 ${fill(prompts.report, meta)}
+- reminder（课后提醒）是可选项。给学生写最值得带走的一件事，1–2 句。优先从下方“作业”“课后约定”或“下节课”提取明确要做或准备的事，保留谁负责，写清材料和动作。题号、数量、截止时间只有原文明确时才写。
+  没有明确任务时，只有课堂记录里出现了具体卡点或未完成的步骤，且能给出一个学生自己能检查结果的小动作，才用“可以……”提出建议。不要把建议写成老师布置的作业。
+  只有下节课讲什么、泛泛的复习建议、或只能重复 issue.fix 时，写空字符串 ""。不要输出“暂无”“本课数据不足”。
 
 ${fill(prompts.parent, meta)}
 
@@ -896,6 +902,7 @@ ${learn.map((s, i) => partHead(archive, learn, i) + segLine(s, i)).join("\n") ||
 课堂瞬间：
 ${archive.moments.filter((m) => inLearn(m.time)).map((m) => `${mmss(m.time * 1000)} ${m.type}：${m.text}`).join("\n") || "无"}
 
+课后约定：${archive.facts.filter(f => f.type === "课后约定").map(f => f.text).join("；") || "无"}
 作业：${homework.join("；") || "无"}
 下节课：${next.join("；") || "无"}`;
   return [
@@ -1274,6 +1281,7 @@ export function parseSummary(raw: string, headings = promptHeadings(DEFAULT_PROM
       performance: str(r.performance, "report.performance"),
       issue: { title: str(r.issue?.title, "report.issue.title"), fix: str(r.issue?.fix, "report.issue.fix") },
       review: str(r.review, "report.review"),
+      reminder: reminderText(r.reminder),
       questions: parseQuestions(r.questions),
     },
   };
@@ -1330,6 +1338,7 @@ export function applyReportEdits(kind: LessonKind | undefined, old: ClassReport 
     issue: { title: keep(e.issue?.title, o.issue.title), fix: keep(e.issue?.fix, o.issue.fix) },
     homework: keep(e.homework, o.homework),
     review: keep(e.review, o.review),
+    reminder: clean(e.reminder) ?? o.reminder,
     next: keep(e.next, o.next),
     ...(o.chapters && {
       chapters: o.chapters.map((c, i) => ({ ...c, title: keep(at(e.chapters, i).title, c.title), point: renamed.get(c.point) || c.point })),
