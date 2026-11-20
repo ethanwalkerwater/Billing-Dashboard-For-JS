@@ -85,10 +85,10 @@ async function syncOne(key: string, staleMs: number, now: number): Promise<boole
         .sort((a, b) => a[1] - b[1] || a[0].localeCompare(b[0]));
     }
     const h = hashOf(rows);
-    if (h !== won.h) await pg("PATCH", CACHE, `key=${eq(key)}`, { data: { h, rows } }, "return=minimal");
+    if (h !== won.h) await pg("PATCH", CACHE, `key=${eq(key)}&syncedAt=${eq(now)}`, { data: { h, rows } }, "return=minimal");
     return h !== won.h;
   } catch (error) {
-    await pg("PATCH", CACHE, `key=${eq(key)}`, { syncedAt: won.before }, "return=minimal"); // 拉失败：下次打开再试
+    await pg("PATCH", CACHE, `key=${eq(key)}&syncedAt=${eq(now)}`, { syncedAt: won.before }, "return=minimal"); // 拉失败：下次打开再试
     throw error;
   }
 }
@@ -160,7 +160,7 @@ function studentOut(ctx: Ctx, id: string, saved?: { stage?: string | null; perso
   const r = ctx.roster.get(id);
   const recent = ctx.rows.some((row) => row[3].includes(id) && row[2] >= ctx.now - RECENT_MS && !row[9]);
   // 老师只看得到自己学员的资料；同一节班课里的其他学生只给名字
-  if (r && !canSeeStudent(ctx, id)) return { id, name: r.name, stage: W.stageOf(r, saved?.stage, recent) };
+  if (!canSeeStudent(ctx, id)) return { id, name: r?.name ?? id.replace(/^n:/, ""), stage: W.stageOf(r, saved?.stage, recent) };
   const base = r ? (ctx.user.role === "teacher" ? W.forTeacher(r) : r) : { id, name: id.startsWith("n:") ? id.slice(2) : "" };
   return { ...base, stage: W.stageOf(r, saved?.stage, recent), persona: saved?.persona ?? {}, goals: saved?.goals ?? { aim: "", rows: [] }, handover: saved?.handover ?? {} };
 }
@@ -248,22 +248,19 @@ async function studentReports(ctx: Ctx, id: string) {
 async function profile(user: WbUser, id: string) {
   const ctx = await context(user, W.windowMonths(Date.now()));
   if (!canSeeStudent(ctx, id)) return fail(404, "NOT_FOUND", "没有找到这个学生，或者他不是你的学员");
-  const [{ rows, docs }, monthly, miles, sugg, saved, marks] = await Promise.all([
+  const [{ rows, docs }, monthly, miles, marks] = await Promise.all([
     studentReports(ctx, id),
     pg("GET", "wb_monthly", `student=${eq(id)}&select=course,month,rep,basis,editedBy,updatedAt`),
     pg("GET", "wb_milestones", `student=${eq(id)}&select=*&order=date.desc`),
-    pg("GET", "wb_suggestions", `student=${eq(id)}&status=eq.open&select=_id,key,tag,why,createdAt`),
-    pg<{ suggestBasis: string | null }>("GET", "wb_students", `_id=${eq(id)}&select=suggestBasis`),
     ctx.user.role === "teacher" ? [] : pg<{ month: string; course: string; field: string; value: string }>("GET", "wb_marks", `student=${eq(id)}&select=month,course,field,value`),
   ]);
   const states = await lessonStates(rows);
   const reps = Object.fromEntries([...docs].map(([lessonId, d]) => [lessonId, { ...W.repOf(d.report), sum: d.text, url: d.url }]));
-  const reportIds = [...docs.keys()];
   return json(200, {
-    reps, monthly, miles, sugg, marks,
+    reps, monthly, miles, sugg: [], marks,
     lessons: W.encodeLessons(rows, states),
     students: Object.fromEntries([...new Set(rows.flatMap((r) => r[3]))].map((s) => [s, studentOut(ctx, s)])),
-    needSuggest: reportIds.length >= 2 && W.suggestBasis(reportIds) !== (saved[0]?.suggestBasis ?? ""),
+    needSuggest: false,
   });
 }
 
@@ -291,9 +288,48 @@ function readGoals(value: unknown) {
   return { aim: cleanText(v.aim, 80), rows };
 }
 
+async function editRoster(user: WbUser, id: string, changes: unknown) {
+  if (!/^rec\w+$/.test(id)) return fail(400, "BAD_BODY", "请先在课表中关联飞书学员档案");
+  const target = { ...rosterTable(), recordId: id };
+  const current = await feishu().getRecord(target);
+  if (!current) return fail(404, "NOT_FOUND", "没有找到飞书学员档案");
+  let fields;
+  try { fields = W.rosterEditFields(changes, W.parseRoster(current).created, Date.now()); }
+  catch (e) { return fail(400, "BAD_BODY", (e as Error).message); }
+  await feishu().updateRecord({ ...target, fields });
+  await pg("PATCH", CACHE, `key=${eq(ROSTER_KEY)}`, { syncedAt: 0 }, "return=minimal");
+  const updated = await feishu().getRecord(target);
+  if (!updated) return fail(404, "NOT_FOUND", "飞书学员档案已移除");
+  const student = W.parseRoster(updated);
+  return json(200, { student: user.role === "teacher" ? W.forTeacher(student) : student });
+}
+
+async function editNotes(user: WbUser, id: string, changes: unknown) {
+  if (!changes || typeof changes !== "object" || Array.isArray(changes) || !Object.keys(changes).length) return fail(400, "BAD_BODY", "画像格式不正确");
+  const [row] = await pg<{ persona: Record<string, W.PersonaBlock>; updatedAt: number }>("GET", "wb_students", `_id=${eq(id)}&select=persona,updatedAt`);
+  const persona = { ...row?.persona };
+  const conflict = () => fail(409, "CONFLICT", "画像有新修改，请复制本次填写的内容，刷新后再保存");
+  const now = Date.now();
+  for (const [key, edit] of Object.entries(changes)) {
+    if (!(W.PKEYS as readonly string[]).includes(key) || typeof edit?.text !== "string" || edit.text.length > 2000 || typeof edit.before !== "string") return fail(400, "BAD_BODY", "每项画像请填写 2000 字以内");
+    const text = edit.text.trim();
+    if (W.personaNote(persona[key]) === text) continue;
+    if (W.personaNote(persona[key]) !== edit.before) return conflict();
+    if (text) persona[key] = { tags: [], text, src: `${user.name} ${W.md(now)}` };
+    else delete persona[key];
+  }
+  const patch = { persona, updatedAt: Math.max(now, Number(row?.updatedAt ?? 0) + 1), updatedBy: user.name };
+  const saved = row
+    ? await pg("PATCH", "wb_students", `_id=${eq(id)}&updatedAt=${eq(row.updatedAt)}&select=_id`, patch)
+    : await pg("POST", "wb_students", "on_conflict=_id&select=_id", [{ _id: id, ...patch }], "resolution=ignore-duplicates,return=representation");
+  return saved.length ? json(200, { persona }) : conflict();
+}
+
 async function saveStudent(user: WbUser, id: string, event: HttpEvent) {
   const body = jsonBody(event);
   if (!(await allowed(user, id))) return fail(404, "NOT_FOUND", "没有找到这个学生");
+  if (body.roster !== undefined) return editRoster(user, id, body.roster);
+  if (body.notes !== undefined) return editNotes(user, id, body.notes);
   const patch: Record<string, unknown> = { _id: id, updatedAt: Date.now(), updatedBy: user.name };
   if (body.stage !== undefined) {
     if (user.role === "teacher") return fail(403, "FORBIDDEN", "阶段由教务改");
@@ -523,7 +559,7 @@ async function formLink(user: WbUser, id: string) {
 export async function formRoute(method: string, event: HttpEvent, query: Record<string, string>) {
   const token = query.t ?? "";
   if (!/^[\w-]{24}$/.test(token)) return fail(404, "NOT_FOUND", "链接不对，请向老师要一个新的");
-  const [saved] = await pg<{ _id: string; persona: Record<string, any> }>("GET", "wb_students", `formToken=${eq(token)}&select=_id,persona`);
+  const [saved] = await pg<{ _id: string; persona: Record<string, any>; updatedAt: number }>("GET", "wb_students", `formToken=${eq(token)}&select=_id,persona,updatedAt`);
   if (!saved) return fail(404, "NOT_FOUND", "链接不对，请向老师要一个新的");
   const roster = (await readCache<RosterStudent>([ROSTER_KEY])).get(ROSTER_KEY)?.data.rows.find((s) => s.id === saved._id);
   if (method === "GET") {
@@ -533,7 +569,8 @@ export async function formRoute(method: string, event: HttpEvent, query: Record<
   const body = jsonBody(event);
   const who = cleanText(body.who, 10) || "家长";
   const persona = W.mergeForm(saved.persona ?? {}, body.blocks, `${who}填的收集表 ${W.md(Date.now())}`);
-  await pg("PATCH", "wb_students", `_id=${eq(saved._id)}`, { persona, updatedAt: Date.now(), updatedBy: `${who}（收集表）` }, "return=minimal");
+  const rows = await pg("PATCH", "wb_students", `_id=${eq(saved._id)}&updatedAt=${eq(saved.updatedAt)}&select=_id`, { persona, updatedAt: Math.max(Date.now(), Number(saved.updatedAt) + 1), updatedBy: `${who}（收集表）` });
+  if (!rows.length) return fail(409, "CONFLICT", "老师刚更新了画像，请再提交一次");
   return json(200, { ok: true });
 }
 

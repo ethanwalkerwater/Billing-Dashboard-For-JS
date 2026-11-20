@@ -4,7 +4,7 @@
  * 打开时一次拉齐（/wb/boot），课表快照过期了再同步一次；不加定时器。
  */
 import './styles.css';
-import { PKEYS, PRESET, STAGES } from '../server/workbench';
+import { PKEYS, personaNote, STAGES } from '../server/workbench';
 
 const API = '/classroom-api';
 const TOKEN_KEY = 'classroom-admin-token';
@@ -517,7 +517,6 @@ async function loadStudent(sid) {
   addLessons(d.lessons, d.students);
   for (const m of d.marks) ((VALS[m.month] ||= {})[ck(sid, m.course)] ||= {})[m.field] = m.value;
   DETAIL[sid] = d;
-  if (d.needSuggest) send('/wb/suggest', 'POST', {student:sid}).then(r => { d.sugg = r.items; d.needSuggest = false; if (st.page === 'profile' && st.sid === sid) render(); }).catch(() => {});
   return d;
 }
 function profile() {
@@ -539,12 +538,11 @@ function profile() {
   ${DETAIL[st.sid] || st.tab === 'info' || st.tab === 'todo' ? ({overview, lessons, months, grades, info, todo})[st.tab](s) : '<div class="loading">正在加载…</div>'}`;
 }
 function overview(s) {
-  const id = st.sid, g = goalsOf(id), P = s.persona || {}, sugg = DETAIL[id]?.sugg || [];
+  const id = st.sid, g = goalsOf(id);
   // 学习进度只放还在上的课：最近 60 天上过或已经排了；都停了就放最后上的那门
   const all = linesOf(id), active = all.filter(l => lesOf(id, l.c).some(x => x.at >= NOWMS - 60 * DAYMS));
   const hos = handoversOf(id);
   const lines = active.length ? active : all.slice().sort((a, b) => lesOf(id, b.c).at(-1).at - lesOf(id, a.c).at(-1).at).slice(0, 1);
-  const missing = PKEYS.filter(k => !P[k]).length;
   const cards = lines.map(l => {
     const d = stat(id, l.c, NOW) || {n:0, cx:0}, xs = lesOf(id, l.c).filter(past), last = [...xs].reverse().find(x => REP[x.id]), nx = nextOf(id, l.c);
     const mv = valOf(ck(id, l.c), NOW)[markField()?.id];
@@ -552,7 +550,7 @@ function overview(s) {
     <div class="card">
       <div class="card-h"><div class="grow"><h3>${esc(l.c)}</h3><p class="card-d">${esc(l.t)}</p></div>${sb('试听', 'info')}</div>
       <div class="card-b"><dl class="dl2"><dt>试听</dt><dd>${nx || (xs.length ? `${md(xs.at(-1).d)} 已上` : '还没排')}</dd></dl></div>
-      <div class="card-f"><button class="btn outline sm" data-edit>填写试听反馈</button></div>
+      <div class="card-f"><button class="btn outline sm" data-persona>填写试听观察</button></div>
     </div>`;
     const stuck = last && REP[last.id].issue;
     return `
@@ -569,8 +567,8 @@ function overview(s) {
   }).join('');
   return `
   <div class="card">
-    <div class="card-h"><div class="grow"><h3>目标与达成</h3>${g.aim ? `<p class="card-d">${esc(g.aim)}</p>` : ''}</div>${g.rows.length ? '<button class="btn outline sm" data-edit>编辑</button>' : ''}</div>
-    <div class="card-b">${!g.rows.length ? '<p class="muted" style="margin:0 0 12px">还没有目标</p><button class="btn outline sm" data-edit>添加目标</button>' : `<div class="table-wrap"><table>
+    <div class="card-h"><div class="grow"><h3>目标与达成</h3>${g.aim ? `<p class="card-d">${esc(g.aim)}</p>` : ''}</div>${g.rows.length ? '<button class="btn outline sm" data-goals>编辑</button>' : ''}</div>
+    <div class="card-b">${!g.rows.length ? '<p class="muted" style="margin:0 0 12px">还没有目标</p><button class="btn outline sm" data-goals>添加目标</button>' : `<div class="table-wrap"><table>
       <thead><tr><th>科目</th><th>目标</th><th>最近成绩</th><th>差距</th><th>下次考试</th><th>历次成绩</th></tr></thead>
       <tbody>${g.rows.map(r => { const x = gapOf(r); return `<tr>
         <td class="strong">${esc(r.sub)}</td>
@@ -584,16 +582,23 @@ function overview(s) {
   </div>
   <h3 class="sec-title">学习进度</h3>
   ${cards ? `<div class="prog-grid">${cards}</div>` : '<div class="card"><div class="card-b muted">还没有排课，在飞书课表排上课后自动出现。</div></div>'}
-  <div class="card" style="margin-top:24px">
-    <div class="card-h"><div class="grow"><h3>学生画像</h3>${missing ? `<p class="card-d">缺 ${missing} 项</p>` : ''}</div>
-      ${missing ? `<button class="btn outline sm" data-sendform="${esc(id)}">发收集表给家长</button>` : ''}<button class="btn ${missing ? '' : 'outline'} sm" data-edit>${missing ? '填写' : '编辑'}</button></div>
-    <div class="card-b flush"><div class="persona">${PKEYS.map(k => { const v = P[k], sg = sugg.filter(x => x.key === k); return `<div>
-      <h4 title="${v?.src ? esc(v.src) : ''}">${k}</h4>
-      ${v ? `${v.tags.length ? `<div class="tags">${v.tags.map(t => badge(t, 'sec')).join('')}</div>` : ''}${v.text ? `<p>${esc(v.text)}</p>` : ''}` : `<p class="muted" title="${PRESET[k].ask}">待补充</p>`}
-      ${sg.map(x => `<div class="sugg">${ic('spark',16)}<span class="grow"><b>AI 建议加「${esc(x.tag)}」</b><span class="muted">${esc(x.why)}</span></span><button class="btn outline xs" data-acc="${x._id}">采纳</button><button class="btn ghost xs" data-ign="${x._id}">忽略</button></div>`).join('')}
-    </div>`; }).join('')}</div></div>
-  </div>`;
+  ${personaCard(s)}`;
 }
+const noteHints = {
+  学习偏好: '可以写哪种讲法、练习或反馈对这位学生最有效。',
+  沟通注意: '可以写学生遇到困难时的反应，以及你会怎样回应。',
+  辅导经历: '可以写以前学过什么、哪些方法有帮助、为什么调整。',
+  家长沟通: '可以写平时和谁联系、合适的时间，以及家长关心什么。',
+};
+function personaCard(s) {
+  const P = s.persona || {}, filled = PKEYS.filter(k => personaNote(P[k]));
+  return `<div class="card profile-notes"><div class="card-h"><div class="grow"><h3>学生画像</h3></div>
+    ${filled.length < PKEYS.length ? `<button class="btn ghost sm" data-sendform="${esc(s.id)}">发收集表给家长</button>` : ''}
+    <button class="btn outline sm" data-persona>${filled.length ? '编辑画像' : '填写画像'}</button></div>
+    ${filled.length ? `<div class="card-b flush"><div class="persona">${filled.map(k => `<div><h4>${k}</h4><p class="note-text">${esc(personaNote(P[k]))}</p></div>`).join('')}</div></div>`
+      : '<div class="card-b muted">可以从学习偏好、沟通注意、辅导经历或家长沟通写起。</div>'}</div>`;
+}
+
 function lessons() {
   const id = st.sid, lines = linesOf(id);
   const xs = LES.filter(x => x.stu.includes(id) && x.d.startsWith(st.cm) && (st.course === '全部' || x.c === st.course));
@@ -683,30 +688,26 @@ function openRepEdit(ek) {
   </div>
   <div class="sheet-foot"><button class="btn ghost sm" data-close>取消</button><button class="btn sm" data-saverep="${esc(ek)}">保存</button></div></div>`);
 }
-// 建档：新建学员和编辑档案共用一张表。基本信息写进飞书学员表，目标和画像存工作台，画像用固定词表
+// 建档写飞书，已有学生的目标单独保存在工作台。
 function goalRow(r = {}) {
   return `<div class="grow-g"><input class="input" data-g="sub" value="${esc(r.sub)}" list="subs" placeholder="科目，如 IG化学" aria-label="科目"><input class="input" data-g="target" value="${esc(r.target)}" placeholder="目标" aria-label="目标成绩"><input class="input" data-g="exam" value="${esc(r.exam)}" placeholder="考试" aria-label="考试"><input class="input" data-g="date" value="${esc(r.date)}" placeholder="2026-11-18" aria-label="考试日期"></div>`;
 }
 function openNew(sid) {
-  const s = sid ? S[sid] : {}, P = s.persona || {}, g = sid ? s.goals || {aim:'', rows:[]} : {aim:'', rows:[]};
+  const s = sid ? S[sid] : {}, g = sid ? s.goals || {aim:'', rows:[]} : {aim:'', rows:[]};
   const sel = (id, opts) => `<select class="input" id="${id}">${opts.map(o => `<option>${o}</option>`).join('')}</select>`;
   showSheet(`
-  <div class="sheet-h"><div class="grow"><h3>${sid ? esc(s.name) : '新建学员'}</h3></div><button class="btn ghost sm" data-close aria-label="关闭">${ic('x')}</button></div>
+  <div class="sheet-h"><div class="grow"><h3>${sid ? '编辑目标 · ' + esc(s.name) : '新建学员'}</h3></div><button class="btn ghost sm" data-close aria-label="关闭">${ic('x')}</button></div>
   <div class="sheet-b"><div class="form">
     ${sid ? '' : `<fieldset><legend>基本信息</legend><div class="grid3">
       <label>姓名<input class="input" id="nName"></label><label>学校<input class="input" id="nSchool"></label><label>年级<input class="input" id="nGrade" placeholder="10"></label>
       <label>学制${sel('nSys', ['', '13 年制', '12 年制'])}</label><label>家长<input class="input" id="nParent" placeholder="妈妈 138…"></label><label>渠道<input class="input" id="nSrc" placeholder="老学员转介绍"></label>
       <label>阶段${sel('nStage', ['咨询','试听'])}</label></div></fieldset>`}
-    <fieldset><legend>目标</legend>
+    ${sid ? `<fieldset><legend>目标</legend>
       <label>方向<input class="input" id="nAim" value="${esc(g.aim)}" placeholder="UCL 工程，2027 年入学"></label>
       <div class="grow-g ghead"><span>科目</span><span>目标成绩</span><span>考试</span><span>日期</span></div>
       <div id="nGoals" style="display:grid;gap:6px">${(g.rows.length ? g.rows : [{}]).map(goalRow).join('')}</div>
       <datalist id="subs">${(sid ? linesOf(sid) : []).map(l => `<option>${esc(l.c)}</option>`).join('')}</datalist>
-      <button class="btn ghost xs" style="margin-top:6px" data-goalrow>${ic('plus',12)}加一科</button></fieldset>
-    <fieldset><legend>学生画像</legend>
-    ${PKEYS.map(k => { const v = P[k] || {tags:[]}; return `<div class="pblk"><div class="lbl">${k}</div>
-      <div class="chips">${[...new Set([...PRESET[k].tags, ...v.tags])].map(t => `<button class="chip ${v.tags.includes(t) ? 'on' : ''}" data-chip="${k}">${esc(t)}</button>`).join('')}</div>
-      <input class="input" data-ptext="${k}" value="${esc(v.text)}" placeholder="${PRESET[k].ask}" aria-label="${k}说明"></div>`; }).join('')}</fieldset>
+      <button class="btn ghost xs" style="margin-top:6px" data-goalrow>${ic('plus',12)}加一科</button></fieldset>` : ''}
   </div>
   <div class="sheet-foot"><button class="btn ghost sm" data-close>取消</button>${sid ? '' : '<button class="btn outline sm" data-savenew="" data-send>保存并发收集表</button>'}<button class="btn sm" data-savenew="${esc(sid || '')}">保存</button></div>
   </div>`, true);
@@ -714,27 +715,29 @@ function openNew(sid) {
 }
 async function saveNew(sid, btn, sendForm) {
   const isNew = !sid;
-  const old = sid ? S[sid].persona || {} : {}, src = `${who()} ${md(TODAY)}`, persona = {};
-  for (const k of PKEYS) {
-    const tags = [...document.querySelectorAll(`[data-chip="${k}"].on`)].map(b => b.textContent), text = $(`[data-ptext="${k}"]`).value.trim();
-    if (!tags.length && !text) continue;
-    persona[k] = old[k] && old[k].text === text && old[k].tags.join() === tags.join() ? old[k] : {tags, text, src};
-  }
-  const goals = {aim:$('#nAim').value.trim(), rows:[...document.querySelectorAll('#nGoals .grow-g')].map(r => Object.fromEntries([...r.querySelectorAll('[data-g]')].map(i => [i.dataset.g, i.value.trim()]))).filter(v => v.sub && v.target)};
+  const goals = isNew ? {aim:'', rows:[]} : {aim:$('#nAim').value.trim(), rows:[...document.querySelectorAll('#nGoals .grow-g')].map(r => Object.fromEntries([...r.querySelectorAll('[data-g]')].map(i => [i.dataset.g, i.value.trim()]))).filter(v => v.sub && v.target)};
   btn.disabled = true;
   try {
     if (isNew) {
       const name = $('#nName').value.trim(); if (!name) { btn.disabled = false; return $('#nName').focus(); }
-      const r = await send('/wb/students', 'POST', {name, school:$('#nSchool').value.trim(), grade:$('#nGrade').value.trim(), system:$('#nSys').value, parent:$('#nParent').value.trim(), channel:$('#nSrc').value.trim(), stage:$('#nStage').value, persona, goals});
-      sid = r.id; S[sid] = {...r.student, persona, goals}; ORDER.unshift(sid);
+      const r = await send('/wb/students', 'POST', {name, school:$('#nSchool').value.trim(), grade:$('#nGrade').value.trim(), system:$('#nSys').value, parent:$('#nParent').value.trim(), channel:$('#nSrc').value.trim(), stage:$('#nStage').value, goals});
+      sid = r.id; S[sid] = r.student; ORDER.unshift(sid);
     } else {
-      await send(`/wb/students/${encodeURIComponent(sid)}`, 'PUT', {persona, goals});
-      Object.assign(S[sid], {persona, goals});
+      await send(`/wb/students/${encodeURIComponent(sid)}`, 'PUT', {goals});
+      S[sid].goals = goals;
     }
   } catch (e) { btn.disabled = false; return fail(e); }
   closeSheet(); go({page:'profile', sid, tab:'overview'});
-  if (sendForm) return document.querySelector(`[data-sendform="${CSS.escape(sid)}"]`)?.click();
+  if (sendForm) return copyParentForm(sid);
   toast(isNew ? '已建档，已写进飞书学员信息表' : '已保存');
+}
+
+async function copyParentForm(sid) {
+  try {
+    const r = await send(`/wb/students/${encodeURIComponent(sid)}/form`, 'POST', {});
+    await navigator.clipboard.writeText(`${nm(sid)}的家长您好，麻烦花两分钟填一下孩子的学习情况，方便老师上课：${r.url}`);
+    toast('收集表链接已复制，发给家长，填完自动补进画像');
+  } catch (err) { fail(err); }
 }
 
 /* ---------- 附件 ---------- */
@@ -859,15 +862,59 @@ function handoverBlk(id, h) {
     </dl>
     ${staff() || MEN() === h.to ? `<button class="btn sm" style="margin-top:12px" data-handover="${esc(id)}|${esc(h.c)}|${esc(h.to)}">${staff() && MEN() !== h.to ? `替 ${esc(h.to)} 确认看过` : '我看过了'}</button>` : ''}</div>`;
 }
+function openProfileEditor(s, notes) {
+  const P = s.persona || {};
+  const original = notes ? Object.fromEntries(PKEYS.map(k => [k, personaNote(P[k])])) : {
+    name: s.name, birth: s.birth || '', school: s.school || '', system: s.system || '',
+    grade: s.grade?.match(/\d+/)?.[0] || '', contact: s.contact || '', note: s.note || '',
+  };
+  const input = (key, label, attrs) => `<label>${label}<input class="input" name="${key}" value="${esc(original[key])}" ${attrs}></label>`;
+  const title = notes ? '学生画像' : '学生资料';
+  showSheet(`<div class="sheet-h"><div class="grow"><h3>${title}</h3><p class="card-d">${esc(s.name)}</p></div>
+    <button class="btn ghost sm" data-close aria-label="关闭">${ic('x')}</button></div>
+    <form class="sheet-b" id="profileEditor"><div class="form profile-form">
+    ${notes ? PKEYS.map(k => `<label>${k}<span class="field-hint">${noteHints[k]}</span>
+      <textarea class="input" rows="3" maxlength="2000" name="${k}">${esc(original[k])}</textarea></label>`).join('') : `
+      <fieldset><legend>基本信息</legend><div class="grid2">
+      ${input('name', '姓名', 'required maxlength="60"')}${input('birth', '出生日期', `type="date" max="${TODAY}"`)}
+      ${input('school', '学校', 'maxlength="120"')}<label>学制<select class="input" name="system">${['','12 年制','13 年制'].map(v => `<option value="${v}" ${v === original.system ? 'selected' : ''}>${v || '未填写'}</option>`).join('')}</select></label>
+      ${input('grade', '当前年级', `type="number" min="1" max="13" ${s.created ? (original.grade ? 'required' : '') : 'disabled'}`)}
+      </div></fieldset>
+      <fieldset><legend>联系</legend>${input('contact', '家长联系方式', 'maxlength="300"')}
+      <label>备注<textarea class="input" name="note" rows="3" maxlength="2000">${esc(original.note)}</textarea></label></fieldset>`}
+    </div><div class="sheet-foot"><button type="button" class="btn ghost sm" data-close>取消</button>
+    <button class="btn sm" type="submit">保存${notes ? '画像' : '资料'}</button></div></form>`, !notes);
+  const form = $('#profileEditor');
+  form.querySelector('input, textarea')?.focus();
+  form.onsubmit = async event => {
+    event.preventDefault();
+    const changes = {};
+    for (const [key, raw] of new FormData(form)) {
+      const value = raw.trim();
+      if (value !== original[key]) changes[key] = notes ? {before:original[key], text:value} : value;
+    }
+    if (!Object.keys(changes).length) return closeSheet();
+    const button = form.querySelector('[type=submit]');
+    if (button.disabled) return;
+    button.disabled = true;
+    try {
+      const saved = await send(`/wb/students/${encodeURIComponent(s.id)}`, 'PUT', notes ? {notes:changes} : {roster:changes});
+      if (notes) S[s.id].persona = saved.persona;
+      else Object.assign(S[s.id], saved.student);
+      if (form === $('#profileEditor')) closeSheet();
+      render(); toast(`${title}已保存`);
+    } catch (err) { button.disabled = false; fail(err); }
+  };
+}
 function info(s) {
   const g = (t, rows, cls = '') => `<div class="card ${cls}"><div class="card-h"><div class="grow"><h3>${t}</h3></div></div><div class="card-b"><dl class="fields">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v ? esc(v) : '<span class="muted">—</span>'}</dd>`).join('')}</dl></div></div>`;
   return `
-  <div class="toolbar"><span class="grow"></span>${staff() ? `<a class="btn outline sm" href="${FEISHU_ROSTER}" target="_blank" rel="noopener">在飞书中编辑${ic('ext',14)}</a>` : ''}</div>
+  <div class="toolbar"><span class="grow"></span>${s.id.startsWith('rec') && (staff() || ORDER.includes(s.id)) ? '<button class="btn outline sm" data-roster>编辑资料</button>' : '<span class="muted">关联飞书学员档案后可编辑资料</span>'}${staff() ? `<a class="btn outline sm" href="${FEISHU_ROSTER}" target="_blank" rel="noopener">在飞书中编辑${ic('ext',14)}</a>` : ''}</div>
   <div class="info-grid">
   ${g('学生', [['姓名', s.name], ['出生日期', s.birth], ['学校', s.school], ['学制和年级', [s.system, s.grade].filter(Boolean).join(' · ')], ['阶段', s.stage]])}
   ${g('联系', [['家长', s.contact], ['备注', s.note]])}
   ${staff() ? g('归属', [['负责教务', s.owner], ['归属老师', s.ownerTeacher], ['服务老师', s.serviceTeacher], ['渠道', s.channel]]) : ''}
-  </div>`;
+  </div>${(staff() || ORDER.includes(s.id)) ? personaCard(s) : ''}`;
 }
 /* ---------- 跟进 ---------- */
 function todoItem(t, withStudent) {
@@ -1069,14 +1116,7 @@ document.addEventListener('click', async e => {
     try { const r = await send(`/wb/students/${encodeURIComponent(id)}/handover`, 'POST', {course:c, teacher}); S[id].handover = r.handover; } catch (err) { return fail(err); }
     t.closest('.blk')?.remove(); toast('交接卡已确认'); return render();
   }
-  if (d.sendform !== undefined) {
-    try {
-      const r = await send(`/wb/students/${encodeURIComponent(d.sendform)}/form`, 'POST', {});
-      await navigator.clipboard?.writeText(`${nm(d.sendform)}的家长您好，麻烦花两分钟填一下孩子的学习情况，方便老师上课：${r.url}`).catch(() => {});
-      toast('收集表链接已复制，发给家长，填完自动补进画像');
-    } catch (err) { fail(err); }
-    return;
-  }
+  if (d.sendform !== undefined) return copyParentForm(d.sendform);
   if (d.showho) { const [id, c] = d.showho.split('|'), h = handoversOf(id).find(x => x.c === c); return h && showSheet(`<div class="sheet-h"><div class="grow"><h3>${esc(nm(id))}</h3></div><button class="btn ghost sm" data-close aria-label="关闭">${ic('x')}</button></div><div class="sheet-b">${handoverBlk(id, h)}</div>`); }
   if ('close' in d) return closeSheet();
   if ('sync' in d) {
@@ -1085,17 +1125,11 @@ document.addEventListener('click', async e => {
     t.disabled = false; return;
   }
   if ('new' in d) return openNew();
-  if ('edit' in d) return openNew(st.sid);
+  if ('goals' in d) return openNew(st.sid);
+  if ('persona' in d) return openProfileEditor(S[st.sid], true);
+  if ('roster' in d) return openProfileEditor(S[st.sid], false);
   if ('goalrow' in d) return $('#nGoals').insertAdjacentHTML('beforeend', goalRow());
-  if (d.chip) return t.classList.toggle('on');
   if ('savenew' in d) return saveNew(d.savenew, t, 'send' in d);
-  if (d.acc || d.ign) {
-    const id = d.acc || d.ign, det = DETAIL[st.sid], x = det.sugg.find(y => y._id === id);
-    try { await send(`/wb/sugg/${id}`, 'PATCH', {action:d.acc ? 'accept' : 'ignore'}); } catch (err) { return fail(err); }
-    det.sugg = det.sugg.filter(y => y !== x);
-    if (d.acc) { const P = S[st.sid].persona ||= {}, v = P[x.key] ||= {tags:[], text:''}; v.tags = [...new Set([...v.tags, x.tag])]; v.src = `AI 建议，${ME.name}确认 ${md(TODAY)}`; }
-    return render();
-  }
   if (d.todo) { const x = TODOS.find(y => y.id === d.todo); if (x.done) { x.done = false; x.result = ''; send(`/wb/todos/${x.id}`, 'PATCH', {done:false}).catch(fail); } else x.asking = true; return render(); }
   if (d.res) {
     const x = TODOS.find(y => y.id === d.res), result = $('#res' + x.id).value.trim() || '已完成';
