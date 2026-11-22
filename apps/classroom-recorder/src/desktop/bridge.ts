@@ -19,7 +19,11 @@ export interface Lesson {
   /** 本机已录完、录音还没交给云端（断网时恢复后自动上传） */
   pendingUpload?: boolean;
   uploadFailed?: boolean;
+  /** 录制中和没传完的课：云端已收到 / 本机一共录了多少秒（上课时每 5 分钟传一块） */
+  cloudSec?: number; audioSec?: number;
 }
+/** 还差几分钟没传到云端（向上取整） */
+export const leftMin = (l?: Lesson) => Math.ceil(Math.max(0, (l?.audioSec ?? 0) - (l?.cloudSec ?? 0)) / 60);
 export const isMeeting = (l?: Lesson) => l?.kind === 'meeting';
 export type RecMode = 'idle' | 'pre' | 'recording' | 'paused' | 'confirm' | 'warn' | 'quiet' | 'ending' | 'processing' | 'naming' | 'gone';
 export interface AppState {
@@ -30,7 +34,7 @@ export interface AppState {
     mode: RecMode; lessonId: string | null; sec: number; endLeft: number; autoStopAt: string; autoStartAt: string;
     /** 暂停着（「结束？」确认时 mode 是 confirm，靠它知道底下是不是暂停）；pausedSec = 这次暂停了多久；nudge = 胶囊上的暂停提醒 */
     paused: boolean; pausedSec: number; nudge: '' | 'long' | 'voice';
-    /** 上课时只存本机、下课后一次上传；uploading = 刚结束的那节还在上传 */
+    /** 上课时每 5 分钟传一块、下课后补传最后一块；uploading = 刚结束的那节还在上传 */
     savedSegments: number; uploading: boolean; online: boolean;
   };
   mics: string[]; mic: string;

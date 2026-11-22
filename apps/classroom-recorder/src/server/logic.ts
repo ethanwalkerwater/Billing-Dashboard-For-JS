@@ -23,6 +23,12 @@ export const ADHOC_QUIET_MS = 30 * 60_000;
 export const DIRECT_QUIET_MS = 20 * 60_000;
 export const AUDIO_FILE = "merged.mp3";
 export const EARLY_FILE = "early.mp3";
+/**
+ * 0.1.14 起 App 上课时每 5 分钟（10 个 30 秒分段）直传一块录音到 `{id}/p-{老师和电脑}/{序号}.mp3`，云端整节到齐才拼起来转写。
+ * 下课（课表课按计划下课时间，随时录制按最后一块）2 小时后还没到齐，就用已到的块出报告并通知管理员。
+ */
+export const PART_SECONDS = 300;
+export const PARTS_GRACE_MS = 2 * HOUR;
 /** 还能收整节课录音的课：没开始处理的，或者收尾时什么录音都没找到（empty 且没有转写）的 */
 export const acceptsAudio = (doc: { stage: Stage; transcript?: string | null }) =>
   doc.stage === "recording" || (doc.stage === "empty" && doc.transcript == null);
@@ -145,6 +151,7 @@ export interface ScheduleLesson {
 }
 
 export interface FinishSegment { seq: number; sha256: string; bytes: number }
+export interface FinishPart { n: number; bytes: number }
 
 /** classroom_lessons 文档，_id = 飞书课表 record_id */
 export interface LessonDoc {
@@ -166,8 +173,13 @@ export interface LessonDoc {
   segments: Record<string, { sha256: string; bytes: number; fileId: string }>;
   earlyAt?: number | null;
   finalUploadAt?: number | null;
-  /** pauses 是录制中暂停的时段；audio 是整段直传的清单，此时 segments 为空。 */
-  finish?: { startedAt: string; endedAt: string; segments: FinishSegment[]; pauses?: Array<{ start: string; end: string }>; audio?: { sha256: string; bytes: number } };
+  /** 0.1.14 起：App 第一次申请分块上传地址的时间（之后的块不查库） */
+  partsAt?: number | null;
+  /**
+   * pauses 是录制中暂停的时段；audio 是整段直传的清单，此时 segments 为空。
+   * parts 是分块清单：有它就按块拼（audio 这时是整节的校验值，拼完核对）；没有就是整段直传。
+   */
+  finish?: { startedAt: string; endedAt: string; segments: FinishSegment[]; pauses?: Array<{ start: string; end: string }>; audio?: { sha256: string; bytes: number }; parts?: FinishPart[] };
   mergedFileId?: string;
   asrTaskId?: number | null;
   transcript?: string;
@@ -451,7 +463,33 @@ export type Step =
   | { action: "retry"; stage: Stage }
   | { action: "merge"; seqs: number[]; gapMinutes: number }
   /** 直传的整段录音：按顺序找第一个存在的对象（{id}/文件名），直接提交转写，不下载不重传 */
-  | { action: "direct"; files: string[] };
+  | { action: "direct"; files: string[] }
+  /** 分块上传的课：列出云端的块，到齐（或过了 2 小时）就拼起来转写，见 planParts */
+  | { action: "parts" };
+
+/**
+ * 分块上传的课能不能拼、用哪几块。manifest = App 下课时报的清单；没有（App 没回来）就用云端现有的全部块。
+ * 缺块时等到 graceFrom + 2 小时；到点后用已到的块，按缺的字节（没有清单时按中间的空洞）估算缺了几分钟。
+ */
+export function planParts(manifest: FinishPart[] | undefined, stored: Map<number, number>, now: number, graceFrom: number) {
+  const have = [...stored.keys()].sort((a, b) => a - b);
+  const missing = manifest
+    ? manifest.filter((p) => stored.get(p.n) !== p.bytes).map((p) => p.n)
+    : Array.from({ length: (have.at(-1) ?? -1) + 1 }, (_, n) => n).filter((n) => !stored.has(n));
+  const use = manifest ? manifest.map((p) => p.n).filter((n) => !missing.includes(n)).sort((a, b) => a - b) : have;
+  const missingSec = manifest
+    ? manifest.filter((p) => missing.includes(p.n)).reduce((sum, p) => sum + p.bytes / AUDIO_BYTES_PER_SEC, 0)
+    : missing.length * PART_SECONDS;
+  return {
+    ready: !missing.length || now >= graceFrom + PARTS_GRACE_MS,
+    use, missing,
+    gapMinutes: missing.length ? Math.max(1, Math.round(missingSec / 60)) : 0,
+  };
+}
+
+/** App 没回来的分块课：课表课从计划下课算 2 小时，随时录制从第一块算（再看最后一块，见 classroom-api） */
+export const partsOrphanFrom = (doc: Pick<LessonDoc, "kind" | "endAt" | "partsAt">) =>
+  doc.kind === "adhoc" || doc.kind === "meeting" ? (doc.partsAt ?? 0) : doc.endAt;
 
 /** 转写里实际说了多少字（去掉 [说话人 时间] 标签、标点和空白） */
 export const spokenChars = (transcript: string) => transcript.replace(/\[[^\]]*\]/g, "").replace(/[\s\p{P}]/gu, "").length;
@@ -465,12 +503,15 @@ export function orphanEnded(doc: Pick<LessonDoc, "kind" | "endAt" | "updatedAt" 
   return now >= doc.endAt && now >= doc.updatedAt + ORPHAN_QUIET_MS;
 }
 
-export function nextStep(doc: Pick<LessonDoc, "stage" | "failedStage" | "attempts" | "finish" | "segments" | "kind" | "endAt" | "updatedAt" | "earlyAt" | "finalUploadAt">, now: number): Step {
+export function nextStep(doc: Pick<LessonDoc, "stage" | "failedStage" | "attempts" | "finish" | "segments" | "kind" | "endAt" | "updatedAt" | "earlyAt" | "finalUploadAt" | "partsAt">, now: number): Step {
   if (doc.stage === "failed") {
     return doc.attempts < MAX_ATTEMPTS && doc.failedStage ? { action: "retry", stage: doc.failedStage } : { action: "none" };
   }
   if (doc.stage === "transcribing") return { action: "poll" };
   if (doc.stage === "summarizing") return { action: "summarize" };
+  if (doc.stage === "recording" && !doc.finish && doc.partsAt) {
+    return now >= partsOrphanFrom(doc) + PARTS_GRACE_MS ? { action: "parts" } : { action: "none" };
+  }
   if (doc.stage === "recording" && !doc.finish && orphanEnded(doc, now)) {
     const seqs = Object.keys(doc.segments).map(Number).sort((a, b) => a - b);
     if (doc.earlyAt || doc.finalUploadAt) {
@@ -479,6 +520,7 @@ export function nextStep(doc: Pick<LessonDoc, "stage" | "failedStage" | "attempt
     return { action: "merge", seqs, gapMinutes: 0 };
   }
   if (doc.stage !== "queued" || !doc.finish) return { action: "none" };
+  if (doc.finish.parts) return { action: "parts" };
   if (doc.finish.audio) return { action: "direct", files: [AUDIO_FILE] };
   const missing = missingSeqs(doc.finish.segments, doc.segments);
   const endedAt = Date.parse(doc.finish.endedAt);

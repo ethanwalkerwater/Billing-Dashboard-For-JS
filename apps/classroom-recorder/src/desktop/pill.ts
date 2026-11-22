@@ -1,5 +1,5 @@
 import './styles.css';
-import { call, onLevel, startDragging, subscribe, type AppState } from './bridge';
+import { call, leftMin, onLevel, startDragging, subscribe, type AppState } from './bridge';
 import { esc, hms, holdToEnd, tick } from './format';
 
 const pill = document.querySelector<HTMLDivElement>('#pill')!;
@@ -36,12 +36,12 @@ function render() {
     .map(m => `<option value="${esc(m)}"${m === S!.mic ? ' selected' : ''}>${m === S!.mic ? '' : '切换到 '}${esc(m)}</option>`).join('')}</select>`;
   else if (rec.mode === 'quiet') h = '<span class="dot"></span><span class="col"><span class="t1">好像下课了，要结束录制吗？</span><span class="t2 num" data-end></span></span><button class="btn" data-act="keep">继续录</button><button class="btn red" data-act="end">结束</button>';
   else if (rec.mode === 'ending') h = '<span class="dot"></span><span class="col"><span class="t1 num" data-end></span><span class="t2 num">已到下课后 30 分钟 · 已录 <span data-sec></span></span></span><button class="btn red" data-act="end">现在停止</button>';
-  else if (rec.mode === 'processing' && rec.uploading) h = '<span class="spin"></span><span class="col"><span class="t1">已结束，正在上传录音…</span><span class="t2">传完前请先别合上电脑</span></span>';
-  else if (rec.mode === 'processing') h = `<span class="col"><span class="t1">录音已上传，可以合上电脑了</span><span class="t2">${adhoc ? '整理' : '课堂总结'}好了会通知你</span></span>`;
+  else if (rec.mode === 'processing' && rec.uploading) h = `<span class="spin"></span><span class="col"><span class="t1">${leftMin(l) ? `已结束，正在上传最后 ${leftMin(l)} 分钟…` : '已结束，正在确认录音…'}</span><span class="t2">现在合上电脑也可以，下次打开会接着传</span></span>`;
+  else if (rec.mode === 'processing') h = `<span class="col"><span class="t1">录音已完整到云端，可以合上电脑了</span><span class="t2">${adhoc ? '整理' : '课堂总结'}好了会飞书通知你</span></span>`;
   else if (rec.mode === 'naming') h = `<form data-name="${esc(rec.lessonId)}"><span class="t1">这段录音是关于什么？</span>
     <input name="topic" maxlength="30" placeholder="例如：教研周会、雅思口语试讲" autocomplete="off" aria-label="主题">
     <span class="seg" role="radiogroup" aria-label="类型"><button type="button" data-kind="adhoc" class="on">课程</button><button type="button" data-kind="meeting">会议</button></span>
-    <span class="foot"><span class="t2 num">${rec.sec ? `已录 ${hms(rec.sec)} · ` : ''}录音已在上传</span><button class="btn red" type="submit">完成</button></span></form>`;
+    <span class="foot"><span class="t2 num">${rec.sec ? `已录 ${hms(rec.sec)} · ` : ''}录音在后台上传</span><button class="btn red" type="submit">完成</button></span></form>`;
   if (h !== html) {
     html = h;
     pill.innerHTML = h;

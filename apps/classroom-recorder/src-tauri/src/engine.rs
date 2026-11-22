@@ -70,6 +70,15 @@ pub struct Lesson {
     pub pending_upload: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub upload_failed: bool,
+    /// 云端已收到 / 本机一共录了多少秒（只出现在本机快照里，录制中和没传完的课才有）
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub cloud_sec: i64,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub audio_sec: i64,
+}
+
+fn is_zero(v: &i64) -> bool {
+    *v == 0
 }
 
 /// 随时录制：编号由 App 生成，不在课表里，不参与自动开录
@@ -242,6 +251,8 @@ pub struct Inner {
     /// 本机已录完、云端还没确认收到（finish 没成功）的课
     pub unsent: HashSet<String>,
     pub upload_failures: HashSet<String>,
+    /// 上传进度：课程 → (云端已有字节, 本机一共字节)，上传循环每轮更新
+    pub progress: HashMap<String, (u64, u64)>,
     /// 本机的随时录制（课表里没有）；云端列表还没有它或还没整理完时，用这份显示
     pub adhoc: HashMap<String, Lesson>,
     /// 刚结束、等老师填主题的随时录制：(编号, 结束时间)
@@ -286,6 +297,10 @@ impl Inner {
             l.needs_name = self.naming.as_ref().is_some_and(|(id, _)| *id == l.id);
             l.pending_upload = self.unsent.contains(&l.id);
             l.upload_failed = self.upload_failures.contains(&l.id);
+            let live = l.pending_upload || self.active.as_ref().is_some_and(|a| a.lesson.id == l.id);
+            if let Some(&(up, total)) = self.progress.get(&l.id).filter(|_| live) {
+                (l.cloud_sec, l.audio_sec) = ((up / 4000) as i64, (total / 4000) as i64); // 32 kbps：4000 字节 = 1 秒
+            }
             if self.active.as_ref().is_some_and(|a| a.lesson.id == l.id) {
                 l.status = "recording".into();
             } else if self.ended.contains(&l.id) && matches!(l.status.as_str(), "upcoming" | "recording") {
@@ -1085,6 +1100,25 @@ impl Core {
         self.publish();
     }
 
+    pub fn set_progress(self: &Arc<Self>, id: &str, bytes: (u64, u64)) {
+        let changed = self.lock().progress.insert(id.to_string(), bytes) != Some(bytes);
+        if changed {
+            self.publish();
+        }
+    }
+
+    /// 还有录音没传到云端（正在录的也算）：退出前要问一下。返回 (正在录, 没传完的分钟数)
+    pub fn unsent_minutes(&self) -> Option<(bool, i64)> {
+        let g = self.lock();
+        let recording = g.active.is_some();
+        let ids: Vec<&String> = g.unsent.iter().chain(g.active.as_ref().map(|a| &a.lesson.id)).collect();
+        if ids.is_empty() {
+            return None;
+        }
+        let left: u64 = ids.iter().filter_map(|id| g.progress.get(*id)).map(|(up, total)| total.saturating_sub(*up)).sum();
+        Some((recording, ((left / 4000) as i64 + 59) / 60))
+    }
+
     pub fn set_online(self: &Arc<Self>, online: bool) {
         let changed = {
             let mut g = self.lock();
@@ -1338,6 +1372,9 @@ mod tests {
             early_at: None,
             upload_fails: 0,
             upload_error: String::new(),
+            parts: vec![],
+            parts_registered: false,
+            part_trouble: false,
         };
         assert_eq!(recorder::read(&dir).unwrap(), want);
         // 损坏的 lesson.json 不能被当成空记录覆盖

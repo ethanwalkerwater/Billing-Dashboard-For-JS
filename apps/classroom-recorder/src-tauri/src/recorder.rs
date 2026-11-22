@@ -331,11 +331,65 @@ pub struct LessonFile {
     pub paused_at: Option<i64>,
     /// 0.1.12 起：停止后整节课拼成一个 MP3 直传成功、还没 finish；云端说没收全就清掉重传
     pub audio: Option<Audio>,
-    /// 课表课到计划下课时间那次保险上传开始的时间（只试一次，成没成都不再传）
+    /// 0.1.13 的保险上传时间；0.1.14 起改成分块上传，不再用，只为读旧文件保留
     pub early_at: Option<i64>,
-    /// 整段直传连着失败了几次、最后一次的原因（下次要签名时报给云端，方便查）
+    /// 上传连着失败了几次、最后一次的原因（下次要签名时报给云端，方便查）
     pub upload_fails: u32,
     pub upload_error: String,
+    /// 0.1.14 起上课时每 5 分钟传一块：云端已收到的块。字节数和本机这一块的分段加起来对不上（续录后最后一块变长）就重传
+    pub parts: Vec<Part>,
+    /// 第一块签名成功 = 云端已建档，之后的块签名不查库
+    pub parts_registered: bool,
+    /// 有块没能一次传上 = 网不好：下课后不再整段直传，直接让云端用块拼
+    pub part_trouble: bool,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct Part {
+    pub n: u32,
+    pub bytes: u64,
+}
+
+/// 一块 = 10 个 30 秒分段（5 分钟，32 kbps 约 1.2 MB）；第 n 块是分段 n*10+1 … n*10+10
+pub const PART_SEGS: u32 = 10;
+
+pub fn part_of(seq: u32) -> u32 {
+    seq.saturating_sub(1) / PART_SEGS
+}
+
+/// 本机这一块的分段加起来多少字节（不读文件）
+pub fn part_bytes(lf: &LessonFile, n: u32) -> u64 {
+    lf.segments.iter().filter(|s| part_of(s.seq) == n).map(|s| s.bytes).sum()
+}
+
+/// 能传的块：录完的课全部；还在录的只要满 10 段的（最后一块还在长）
+pub fn ready_parts(lf: &LessonFile) -> Vec<u32> {
+    let Some(max) = lf.segments.iter().map(|s| s.seq).max() else { return vec![] };
+    let mut ns: Vec<u32> = lf.segments.iter().map(|s| part_of(s.seq)).collect();
+    ns.sort_unstable();
+    ns.dedup();
+    ns.retain(|&n| lf.ended_at.is_some() || max >= (n + 1) * PART_SEGS);
+    ns
+}
+
+/// 还没传、或内容变了的块
+pub fn pending_parts(lf: &LessonFile) -> Vec<u32> {
+    ready_parts(lf).into_iter().filter(|&n| !lf.parts.iter().any(|p| p.n == n && p.bytes == part_bytes(lf, n))).collect()
+}
+
+/// (云端已有的字节, 本机一共的字节)：整段直传成功了就算全有
+pub fn cloud_bytes(lf: &LessonFile) -> (u64, u64) {
+    let total = lf.segments.iter().map(|s| s.bytes).sum();
+    if lf.audio.is_some() || lf.finished {
+        return (total, total);
+    }
+    let up = lf.parts.iter().filter(|p| p.bytes == part_bytes(lf, p.n)).map(|p| p.bytes).sum::<u64>();
+    (up.min(total), total)
+}
+
+/// 第 n 块的内容：这一块的分段按序号拼接，和整节拼接一样校验
+pub fn part_audio(dir: &Path, lf: &LessonFile, n: u32) -> std::io::Result<Vec<u8>> {
+    concat_segs(dir, lf.segments.iter().filter(|s| part_of(s.seq) == n))
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -395,7 +449,11 @@ pub fn update<R>(dir: &Path, f: impl FnOnce(&mut LessonFile) -> R) -> std::io::R
 
 /// 已录的分段按序号直接拼成一个 MP3（帧可直接拼接，云端原来也是这么合并的）
 pub fn concat(dir: &Path, lf: &LessonFile) -> std::io::Result<Vec<u8>> {
-    let mut segs: Vec<&Segment> = lf.segments.iter().collect();
+    concat_segs(dir, lf.segments.iter())
+}
+
+fn concat_segs<'a>(dir: &Path, segs: impl Iterator<Item = &'a Segment>) -> std::io::Result<Vec<u8>> {
+    let mut segs: Vec<&Segment> = segs.collect();
     segs.sort_by_key(|s| s.seq);
     let mut out = Vec::with_capacity(segs.iter().map(|s| s.bytes as usize).sum());
     for s in segs {
