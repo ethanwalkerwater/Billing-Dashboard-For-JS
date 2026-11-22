@@ -65,7 +65,7 @@ function startRec(lessonId: string, sec = 0, mode: AppState['rec']['mode'] = 're
 }
 function endRec() {
   const id = s.rec.lessonId!;
-  patch({ rec: { ...rec('processing'), uploading: true }, lessons: setLesson(id, { status: 'processing', pendingUpload: true }) });
+  patch({ rec: { ...rec('processing'), uploading: true }, lessons: setLesson(id, { status: 'processing', pendingUpload: true, audioSec: 3600, cloudSec: 3420 }) });
   later(() => patch({ rec: { ...s.rec, uploading: false }, lessons: setLesson(id, { pendingUpload: false }) }), 1400);
   later(() => patch({ rec: { ...s.rec, mode: 'gone' } }), 3200);
   later(() => {

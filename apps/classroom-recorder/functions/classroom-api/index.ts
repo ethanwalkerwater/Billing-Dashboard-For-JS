@@ -102,12 +102,18 @@ async function* downloadParts(parts: string[]) {
 }
 
 /** 按顺序流式写到临时文件，再按已知长度上传；下载和上传都保持背压。 */
-export async function concatObjects(name: string, parts: string[], contentType = "audio/mpeg"): Promise<number> {
+export async function concatObjects(name: string, parts: string[], contentType = "audio/mpeg", expectSha256?: string): Promise<number> {
   const directory = await mkdtemp(join(tmpdir(), "classroom-audio-"));
   const file = join(directory, "audio");
   try {
     await pipeline(downloadParts(parts), createWriteStream(file));
     const { size } = await stat(file);
+    // 分块拼出来的必须和老师电脑上的整节一模一样，否则不交给转写
+    if (expectSha256) {
+      const hash = createHash("sha256");
+      for await (const chunk of createReadStream(file)) hash.update(chunk as Buffer);
+      if (hash.digest("hex") !== expectSha256) throw new Error("拼好的录音和老师电脑上的校验值不一致");
+    }
     // Node 20 fetch 在大文件流式 PUT 时仍会积累大量外部内存。
     const request = https.request(`${STORAGE()}/object/${BUCKET}/${name}`, {
       method: "PUT", headers: { ...storageAuth(), "content-type": contentType, "content-length": String(size) },
@@ -149,6 +155,33 @@ async function uploadUrl(name: string): Promise<string> {
   const body = (await response.json().catch(() => ({}))) as { fullUrl?: string };
   if (!response.ok || !body.fullUrl) throw new Error(`获取上传地址失败：${response.status}`);
   return body.fullUrl;
+}
+/**
+ * 分块上传（0.1.14 起）：每位老师每台电脑一个目录 `{id}/p-{key}/`。签名不查库，所以按目录隔开：
+ * 别人签不到你的目录，云端拼的时候只读这节课主人那台电脑的目录。
+ */
+const partDir = (id: string, openId: string, device = "") => `${id}/p-${sha256(`${openId}|${device || "-"}`).slice(0, 16)}`;
+const partName = (dir: string, n: number) => `${dir}/${String(n).padStart(3, "0")}.mp3`;
+/** 这节课云端所有的块（转写入库后删掉；网好时 App 另外整段直传过，块也一样删） */
+async function partFiles(doc: Pick<LessonDoc, "_id" | "teacherOpenId" | "device" | "partsAt">): Promise<string[]> {
+  if (!doc.partsAt) return [];
+  const dir = partDir(doc._id, doc.teacherOpenId, doc.device ?? "");
+  // 列不出来就先不删（清理失败不能把出报告搞失败），30 天过期清理时再列一次
+  return [...(await listParts(dir).catch(() => new Map())).keys()].map((n) => partName(dir, n));
+}
+/** 云端已有的块：序号 → { 大小, 上传时间 } */
+async function listParts(dir: string): Promise<Map<number, { size: number; at: number }>> {
+  const response = await fetch(`${STORAGE()}/object/list/${BUCKET}`, {
+    method: "POST", headers: { ...storageAuth(), "content-type": "application/json" }, body: JSON.stringify({ prefix: `${dir}/`, limit: 1000 }),
+  });
+  if (!response.ok) throw new Error(`列出录音块失败：${response.status}`);
+  const body = (await response.json()) as { objects?: Array<{ name: string; updated_at?: string; metadata?: { size?: number } }> };
+  const parts = new Map<number, { size: number; at: number }>();
+  for (const o of body.objects ?? []) {
+    const m = o.name.match(/\/(\d{3,})\.mp3$/);
+    if (m && o.name.startsWith(`${dir}/`)) parts.set(Number(m[1]), { size: Number(o.metadata?.size) || 0, at: Date.parse(o.updated_at ?? "") || 0 });
+  }
+  return parts;
 }
 export async function signedUrl(name: string, expiresIn: number): Promise<string> {
   const response = await fetch(`${STORAGE()}/object/sign/${BUCKET}/${name}`, { method: "POST", headers: { ...storageAuth(), "content-type": "application/json" }, body: JSON.stringify({ expiresIn }) });
@@ -221,7 +254,7 @@ export const getRow = async <T>(table: string, id: string): Promise<T | undefine
 async function getLesson(id: string, withSegments = true): Promise<LessonDoc | undefined> {
   const row = await getRow<Omit<LessonDoc, "segments">>(LESSONS, id);
   if (!row) return undefined;
-  if (!withSegments || row.earlyAt || row.finalUploadAt) return { ...row, segments: {} };
+  if (!withSegments || row.earlyAt || row.finalUploadAt || row.partsAt) return { ...row, segments: {} };
   const segments = await pg<{ seq: number; sha256: string; bytes: number; fileId: string }>("GET", SEGMENTS, `lessonId=${eq(id)}&select=seq,sha256,bytes,fileId`);
   return { ...row, segments: Object.fromEntries(segments.map(({ seq, ...rest }) => [String(seq), rest])) };
 }
@@ -419,15 +452,50 @@ async function signUpload(event: HttpEvent, session: Session, id: string, kind: 
   return json(200, { url: await uploadUrl(`${id}/${kind === "final" ? L.AUDIO_FILE : L.EARLY_FILE}`) });
 }
 
+/**
+ * 分块上传地址（0.1.14 起，上课时每 5 分钟一块）。第一块（first=1）查库：认课、认电脑、记 partsAt，App 没回来时云端靠它收尾；
+ * 之后的块只验签名令牌、不碰数据库（数据库按「有访问的 5 分钟」计费，每块都查会让它整节课都在计费）。
+ * 上一次没传上的原因放在查询参数里（fails、last），访问日志里能查到。
+ */
+async function signPart(event: HttpEvent, session: Session, id: string, n: number, first: boolean) {
+  if (!Number.isInteger(n) || n < 0 || n > 999) return fail(400, "BAD_PART", "块序号无效");
+  const device = header(event, "x-device");
+  if (first) {
+    const lesson = await ownLesson(id, session, device, false);
+    if (typeof lesson === "string") return ownFail(lesson);
+    if (!L.acceptsAudio(lesson) || lesson.finish) return json(200, { done: true });
+    if (!lesson.partsAt) await pg("PATCH", LESSONS, `_id=${eq(id)}&partsAt=is.null`, { partsAt: Date.now() }, "return=minimal");
+  }
+  return json(200, { url: await uploadUrl(partName(partDir(id, session.openId, device), n)) });
+}
+
+/** 分块课的 finish：核对云端每一块的大小，缺的让 App 补传；齐了马上拼起来转写，缺块的等 2 小时（见 L.planParts） */
+async function finishParts(id: string, lesson: LessonDoc, finish: NonNullable<LessonDoc["finish"]>, adhoc: Record<string, unknown>) {
+  if (!L.acceptsAudio(lesson) && lesson.stage !== "queued") return json(200, { missing: [] });
+  const stored = await listParts(partDir(id, lesson.teacherOpenId, lesson.device ?? ""));
+  const missing = L.planParts(finish.parts, new Map([...stored].map(([n, p]) => [n, p.size])), Date.now(), Date.now()).missing;
+  const updated = await pg("PATCH", LESSONS, `_id=${eq(id)}&stage=in.(recording,queued,empty)&transcript=is.null&lockedUntil=lt.${Date.now()}&select=_id`,
+    { finish, stage: "queued", partsAt: lesson.partsAt ?? Date.now(), ...adhoc, updatedAt: Date.now() });
+  if (!updated.length) return fail(503, "UPLOAD_BUSY", "正在确认录音，请稍后重试");
+  if (!missing.length) await processLesson(id, Date.now() + 40_000);
+  return json(200, { missing });
+}
+
 async function finishLesson(event: HttpEvent, session: Session, id: string) {
   const body = jsonBody(event);
   const audio = body.audio;
   const validAudio = audio && /^[0-9a-f]{64}$/.test(String(audio.sha256)) && Number.isSafeInteger(audio.bytes) && audio.bytes > 0;
   const segments = validAudio && body.segments === undefined ? [] : audio === undefined && Array.isArray(body.segments) ? body.segments : null;
+  // 分块清单（0.1.14 起）：audio 这时是整节的校验值
+  const parts = body.parts === undefined ? undefined
+    : Array.isArray(body.parts) && body.parts.length <= 1000 && validAudio &&
+      body.parts.every((p: any) => Number.isInteger(p?.n) && p.n >= 0 && p.n <= 999 && Number.isSafeInteger(p?.bytes) && p.bytes > 0) &&
+      new Set(body.parts.map((p: any) => p.n)).size === body.parts.length
+      ? (body.parts as L.FinishPart[]).map((p) => ({ n: p.n, bytes: p.bytes })).sort((a, b) => a.n - b.n) : null;
   const valid =
     segments?.every((s: any) => Number.isInteger(s?.seq) && s.seq >= 0 && /^[0-9a-f]{64}$/.test(String(s.sha256))) &&
     Number.isFinite(Date.parse(body.startedAt)) && Number.isFinite(Date.parse(body.endedAt));
-  if (!segments || !valid) return fail(400, "BAD_BODY", "需要 startedAt、endedAt 和 segments[{seq, sha256, bytes}] 或 audio{sha256, bytes}");
+  if (!segments || !valid || parts === null) return fail(400, "BAD_BODY", "需要 startedAt、endedAt 和 segments[{seq, sha256, bytes}] 或 audio{sha256, bytes}（分块时另带 parts[{n, bytes}]）");
   const lesson = await ownLesson(id, session, header(event, "x-device"), !audio);
   if (typeof lesson === "string") return ownFail(lesson);
   // 老师点暂停的时段（0.1.9 起的 App 才有），出档案时标成「暂停」
@@ -440,11 +508,13 @@ async function finishLesson(event: HttpEvent, session: Session, id: string) {
     segments: segments.map((s: any) => ({ seq: s.seq, sha256: String(s.sha256), bytes: Number(s.bytes) || 0 })),
     ...(pauses.length ? { pauses } : {}),
     ...(audio ? { audio: { sha256: String(audio.sha256), bytes: audio.bytes } } : {}),
+    ...(parts ? { parts } : {}),
   };
   // 随时录制：老师结束时填的主题和类型，起止时间以 App 实际录制为准
   const adhoc = L.isAdhocId(id)
     ? { course: String(body.topic ?? "").trim().slice(0, 30) || "随时录制", kind: body.kind === "meeting" ? "meeting" : "adhoc", startAt: Date.parse(finish.startedAt), endAt: Date.parse(finish.endedAt) }
     : {};
+  if (parts) return await finishParts(id, lesson, finish, adhoc);
   if (audio) {
     if (!L.acceptsAudio(lesson) || lesson.finish) return json(200, { missing: [] });
     if (!lesson.finalUploadAt || (await objectSize(`${id}/${L.AUDIO_FILE}`)) !== audio.bytes) {
@@ -726,6 +796,32 @@ async function runStep(doc: LessonDoc, step: L.Step): Promise<Partial<LessonDoc>
     if (doc.finish) throw new Error("没有找到上传的录音");
     return { stage: "empty", audioSec: 0 }; // App 没回来、也没传上任何录音：先算没录到；之后 App 传上整段还会接着处理（L.acceptsAudio）
   }
+  if (step.action === "parts") {
+    const stored = await listParts(partDir(doc._id, doc.teacherOpenId, doc.device ?? ""));
+    const now = Date.now();
+    if (!doc.finish) {
+      // App 没回来：最后一块传上来还不到 2 小时的（随时录制可能还在录、还在补传），接着等
+      const newest = Math.max(0, ...[...stored.values()].map((p) => p.at));
+      if (now < Math.max(L.partsOrphanFrom(doc), newest) + L.PARTS_GRACE_MS) return null;
+    }
+    const sizes = new Map([...stored].map(([n, p]) => [n, p.size]));
+    const plan = L.planParts(doc.finish?.parts, sizes, now, doc.finish ? Date.parse(doc.finish.endedAt) : 0);
+    if (!plan.ready) return null;
+    if (!plan.use.length) return { stage: "empty", audioSec: 0 }; // 一块都没收到：不算录制；App 之后再传上来还会接着处理
+    const complete = !!doc.finish && !plan.missing.length;
+    const fileID = `${doc._id}/${L.AUDIO_FILE}`;
+    const dir = partDir(doc._id, doc.teacherOpenId, doc.device ?? "");
+    const bytes = await concatObjects(fileID, plan.use.map((n) => partName(dir, n)), "audio/mpeg", complete ? doc.finish?.audio?.sha256 : undefined);
+    const audioSec = Math.round(bytes / L.AUDIO_BYTES_PER_SEC);
+    const asrFields = await submitAsr(doc, fileID);
+    if (!complete) {
+      const name = `${[doc.course, doc.student].filter(Boolean).join(" · ")}（${L.shMonthDay(doc.startAt)}）`;
+      const total = doc.finish?.parts ? Math.round(doc.finish.parts.reduce((s, p) => s + p.bytes, 0) / L.AUDIO_BYTES_PER_SEC / 60) : 0;
+      await notifyAdmins(`${doc.teacherName} 的 ${name}下课 2 小时录音还没传完，已用云端收到的 ${Math.round(audioSec / 60)}${total ? `/${total}` : ""} 分钟先出报告` +
+        `${doc.finish ? "" : "（App 一直没回来，不知道整节多长）"}。\n课程编号 ${doc._id}，上传失败原因：tcb logs search -q 'logType:accesslog AND "${doc._id}"'`);
+    }
+    return { ...asrFields, gapMinutes: plan.gapMinutes, audioSec };
+  }
   if (step.action === "merge") {
     if (!step.seqs.length) return { stage: "empty", audioSec: 0 }; // 一段都没收到：不算录制
     // MP3 帧可直接按字节拼接，不需要 ffmpeg
@@ -793,10 +889,10 @@ async function processLesson(id: string, deadline: number) {
       if (patch.transcript !== undefined) {
         const early = `${id}/${L.EARLY_FILE}`;
         const unusedEarly = doc.earlyAt && doc.mergedFileId !== early ? [early] : [];
-        await removeObjects([...Object.values(doc.segments).map((s) => s.fileId), ...unusedEarly]);
+        await removeObjects([...Object.values(doc.segments).map((s) => s.fileId), ...unusedEarly, ...(await partFiles(doc))]);
       }
       doc = { ...doc, ...patch };
-      if (step.action === "direct" && doc.stage === "transcribing") break; // 回调到达时再查转写结果
+      if ((step.action === "direct" || step.action === "parts") && doc.stage === "transcribing") break; // 回调到达时再查转写结果
       if (doc.stage === "done") {
         if (doc.kind === "merged") break; // 老师自己在 App 里点的合并，App 里直接看到，不再私信
         const title = doc.kind === "meeting" ? `${doc.course}的会议纪要好了` : doc.student ? `${doc.student}今天的课堂总结好了` : `${doc.course}的课堂总结好了`;
@@ -846,10 +942,10 @@ async function asrCallback(query: Record<string, string>) {
 
 /** 录音保留 30 天：删分段和 merged.mp3，转写、总结、报告保留。每分钟最多处理 20 节，远大于每天新增的课数 */
 async function expireAudio() {
-  const rows = await pg<Pick<LessonDoc, "_id" | "mergedFileId" | "earlyAt" | "finalUploadAt">>("GET", LESSONS,
-    `audioDeletedAt=is.null&startAt=lt.${Date.now() - L.AUDIO_KEEP_MS}&stage=neq.recording&select=_id,mergedFileId,earlyAt,finalUploadAt&order=startAt.asc&limit=20`);
+  const rows = await pg<Pick<LessonDoc, "_id" | "mergedFileId" | "earlyAt" | "finalUploadAt" | "partsAt" | "teacherOpenId" | "device">>("GET", LESSONS,
+    `audioDeletedAt=is.null&startAt=lt.${Date.now() - L.AUDIO_KEEP_MS}&stage=neq.recording&select=_id,mergedFileId,earlyAt,finalUploadAt,partsAt,teacherOpenId,device&order=startAt.asc&limit=20`);
   for (const row of rows) {
-    const names = new Set(row.mergedFileId ? [row.mergedFileId] : []);
+    const names = new Set([...(row.mergedFileId ? [row.mergedFileId] : []), ...(await partFiles(row))]);
     if (row.earlyAt) names.add(`${row._id}/${L.EARLY_FILE}`);
     if (row.finalUploadAt) names.add(`${row._id}/${L.AUDIO_FILE}`);
     const segments = await pg<{ fileId: string }>("GET", SEGMENTS, `lessonId=${eq(row._id)}&select=fileId`);
@@ -879,12 +975,15 @@ let nextPiggybackAt = 0;
 function pendingLessons(now: number, limit: number, exclude?: string) {
   const quiet = now - L.DIRECT_QUIET_MS;
   const direct = `and(stage.eq.recording,or(earlyAt.not.is.null,finalUploadAt.not.is.null),or(earlyAt.is.null,earlyAt.lte.${quiet}),or(finalUploadAt.is.null,finalUploadAt.lte.${quiet}))`;
-  const legacy = `and(stage.eq.recording,earlyAt.is.null,finalUploadAt.is.null,or(and(kind.eq.lesson,endAt.lte.${now},updatedAt.lte.${now - L.ORPHAN_QUIET_MS}),and(kind.in.(adhoc,meeting),updatedAt.lte.${now - L.ADHOC_QUIET_MS})))`;
+  const legacy = `and(stage.eq.recording,earlyAt.is.null,finalUploadAt.is.null,partsAt.is.null,or(and(kind.eq.lesson,endAt.lte.${now},updatedAt.lte.${now - L.ORPHAN_QUIET_MS}),and(kind.in.(adhoc,meeting),updatedAt.lte.${now - L.ADHOC_QUIET_MS})))`;
+  // 分块上传、App 没回来的课：过了 L.partsOrphanFrom 2 小时（随时录制在 runStep 里再看最后一块）
+  const grace = now - L.PARTS_GRACE_MS;
+  const parts = `and(stage.eq.recording,partsAt.not.is.null,or(and(kind.eq.lesson,endAt.lte.${grace}),and(kind.in.(adhoc,meeting),partsAt.lte.${grace})))`;
   const queued = exclude
     ? `and(stage.eq.queued,or(finalUploadAt.not.is.null,updatedAt.lte.${now - L.MISSING_GRACE_MS}))`
     : "stage.eq.queued";
   return pg<{ _id: string }>("GET", LESSONS,
-    `attempts=lt.${L.MAX_ATTEMPTS}&lockedUntil=lt.${now}&or=(${direct},${legacy},${queued},stage.in.(summarizing,failed),and(stage.eq.transcribing,updatedAt.lte.${now - CALLBACK_GRACE_MS}))` +
+    `attempts=lt.${L.MAX_ATTEMPTS}&lockedUntil=lt.${now}&or=(${direct},${legacy},${parts},${queued},stage.in.(summarizing,failed),and(stage.eq.transcribing,updatedAt.lte.${now - CALLBACK_GRACE_MS}))` +
       `&select=_id&order=updatedAt.asc&limit=${limit}${exclude ? `&_id=not.${eq(exclude)}` : ""}`,
     undefined, "return=representation", exclude ? AbortSignal.timeout(1200) : undefined);
 }
@@ -1387,7 +1486,9 @@ export async function main(event: HttpEvent) {
       return await adminRoute(method, path, event, query, admin);
     }
 
-    const auth = await authenticate(event, method === "GET" && path === "/schedule");
+    // 课表和分块上传地址（第一块除外）只验签名令牌、不查库
+    const stateless = (method === "GET" && path === "/schedule") || (method === "POST" && /^\/lessons\/[^/]+\/part-url$/.test(path) && query.first !== "1");
+    const auth = await authenticate(event, stateless);
     if (!auth) return fail(401, "UNAUTHORIZED", "登录已失效，请重新使用飞书登录");
     const response = await desktopRoute(method, path, event, query, auth.session);
     if (response.statusCode < 400 && auth.renewal) {
@@ -1407,11 +1508,17 @@ async function desktopRoute(method: string, path: string, event: HttpEvent, quer
   const merge = path.match(/^\/merges\/(merged-[0-9a-f]{16})$/);
   if (merge && method === "POST") return await saveMerge(event, session, merge[1]);
 
-  const match = path.match(/^\/lessons\/(rec[A-Za-z0-9]+|adhoc-[0-9a-f]{16}|merged-[0-9a-f]{16})\/(segments\/(\d{1,5})|finish|upload-url|summary|copied|discard)$/);
+  const match = path.match(/^\/lessons\/(rec[A-Za-z0-9]+|adhoc-[0-9a-f]{16}|merged-[0-9a-f]{16})\/(segments\/(\d{1,5})|finish|upload-url|part-url|summary|copied|discard)$/);
   if (match) {
     const [, id, action, seq] = match;
-    if (L.isMergedId(id) && (seq !== undefined || action === "finish" || action === "upload-url")) return fail(404, "NOT_FOUND", "接口不存在"); // 合并反馈没有录音
+    if (L.isMergedId(id) && (seq !== undefined || action === "finish" || action === "upload-url" || action === "part-url")) return fail(404, "NOT_FOUND", "接口不存在"); // 合并反馈没有录音
     if (method === "POST" && seq !== undefined) return await uploadSegment(event, session, id, Number(seq));
+    if (method === "POST" && action === "part-url") {
+      const first = query.first === "1";
+      const response = await signPart(event, session, id, Number(query.n), first);
+      if (first && response.statusCode === 200) await piggyback(id); // 只在本来就查了库的第一块顺带推进待办
+      return response;
+    }
     if (method === "POST" && (action === "upload-url" || action === "finish")) {
       const response = action === "upload-url" ? await signUpload(event, session, id, query.kind ?? "") : await finishLesson(event, session, id);
       if (response.statusCode === 200) await piggyback(id);

@@ -12,6 +12,7 @@ use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, RunEvent, WebviewWindow, WindowEvent};
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 use tauri_plugin_clipboard_manager::ClipboardExt;
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tauri_plugin_opener::OpenerExt;
 
 type St<'a> = tauri::State<'a, Arc<Core>>;
@@ -288,12 +289,42 @@ fn on_menu(app: AppHandle, id: String) {
             show_main(&app);
             let _ = app.emit("open-settings", ());
         }
-        "quit" => {
+        "quit" => confirm_quit(&app),
+        _ => {}
+    }
+}
+
+/// 老师点了「退出」并确认过（或没有要传的）：ExitRequested 里不再拦
+static QUITTING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// 退出前：正在录或还有录音没传到云端，弹窗问一下，点「仍然退出」才退。录音都在本机，下次打开接着传。
+fn confirm_quit(app: &AppHandle) {
+    let core = app.state::<Arc<Core>>().inner().clone();
+    let quit = {
+        let (app, core) = (app.clone(), core.clone());
+        move || {
+            QUITTING.store(true, std::sync::atomic::Ordering::Relaxed);
             core.shutdown(); // 先把最后一段写盘、记 endedAt
             app.exit(0);
         }
-        _ => {}
-    }
+    };
+    let Some((recording, minutes)) = core.unsent_minutes() else { return quit() };
+    let left = if minutes > 0 { format!("还有约 {minutes} 分钟录音没传到云端") } else { "还有录音没传到云端".into() };
+    let text = if recording {
+        format!("正在录制这节课，退出会结束录制。{left}，录音保存在这台电脑上，下次打开菁仕课堂会接着上传，传完才出报告。")
+    } else {
+        format!("{left}。录音保存在这台电脑上，下次打开菁仕课堂会接着上传，传完才出报告。")
+    };
+    app.dialog()
+        .message(text)
+        .title(if recording { "正在录制" } else { "录音还没传完" })
+        .kind(MessageDialogKind::Warning)
+        .buttons(MessageDialogButtons::OkCancelCustom("仍然退出".into(), "先不退出".into()))
+        .show(move |ok| {
+            if ok {
+                quit();
+            }
+        });
 }
 
 fn main() {
@@ -301,6 +332,7 @@ fn main() {
         .plugin(tauri_plugin_single_instance::init(|app, _, _| show_main(app)))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec!["--autostart"])))
         .invoke_handler(tauri::generate_handler![
@@ -400,8 +432,13 @@ fn main() {
         .build(tauri::generate_context!())
         .expect("error while building 菁仕课堂")
         .run(|app, e| match e {
-            RunEvent::ExitRequested { .. } => {
-                if let Some(core) = app.try_state::<Arc<Core>>() {
+            RunEvent::ExitRequested { api, code, .. } => {
+                // Cmd+Q、Dock 退出也先问：还有录音没传完时拦下来弹窗
+                let pending = app.try_state::<Arc<Core>>().is_some_and(|core| core.unsent_minutes().is_some());
+                if code.is_none() && pending && !QUITTING.load(std::sync::atomic::Ordering::Relaxed) {
+                    api.prevent_exit();
+                    confirm_quit(app);
+                } else if let Some(core) = app.try_state::<Arc<Core>>() {
                     core.shutdown();
                 }
             }
