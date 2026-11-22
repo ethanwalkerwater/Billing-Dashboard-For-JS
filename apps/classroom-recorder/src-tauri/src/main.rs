@@ -294,8 +294,23 @@ fn on_menu(app: AppHandle, id: String) {
     }
 }
 
+/// macOS 菜单栏「菁仕课堂 → 退出」（Cmd+Q）：系统自带的退出项直接结束进程、拦不住，换成自己的，同样先问
+#[cfg(target_os = "macos")]
+fn app_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
+    use tauri::menu::{Menu, MenuItem, MenuItemKind};
+    let menu = Menu::default(app)?;
+    if let Some(MenuItemKind::Submenu(first)) = menu.items()?.into_iter().next() {
+        let n = first.items()?.len();
+        first.remove_at(n.saturating_sub(1))?; // 默认菜单里最后一项是「退出」
+        first.append(&MenuItem::with_id(app, "app-quit", "退出菁仕课堂", true, Some("CmdOrCtrl+Q"))?)?;
+    }
+    Ok(menu)
+}
+
 /// 老师点了「退出」并确认过（或没有要传的）：ExitRequested 里不再拦
 static QUITTING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// 弹窗已经开着：再按 Cmd+Q 不叠第二个
+static ASKING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// 退出前：正在录或还有录音没传到云端，弹窗问一下，点「仍然退出」才退。录音都在本机，下次打开接着传。
 fn confirm_quit(app: &AppHandle) {
@@ -309,6 +324,9 @@ fn confirm_quit(app: &AppHandle) {
         }
     };
     let Some((recording, minutes)) = core.unsent_minutes() else { return quit() };
+    if ASKING.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
     let left = if minutes > 0 { format!("还有约 {minutes} 分钟录音没传到云端") } else { "还有录音没传到云端".into() };
     let text = if recording {
         format!("正在录制这节课，退出会结束录制。{left}，录音保存在这台电脑上，下次打开菁仕课堂会接着上传，传完才出报告。")
@@ -321,6 +339,7 @@ fn confirm_quit(app: &AppHandle) {
         .kind(MessageDialogKind::Warning)
         .buttons(MessageDialogButtons::OkCancelCustom("仍然退出".into(), "先不退出".into()))
         .show(move |ok| {
+            ASKING.store(false, std::sync::atomic::Ordering::Relaxed);
             if ok {
                 quit();
             }
@@ -328,11 +347,19 @@ fn confirm_quit(app: &AppHandle) {
 }
 
 fn main() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(target_os = "macos")]
+    let builder = builder.menu(app_menu);
+    builder
         .plugin(tauri_plugin_single_instance::init(|app, _, _| show_main(app)))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
+        .on_menu_event(|app, e| {
+            if e.id().as_ref() == "app-quit" {
+                confirm_quit(app);
+            }
+        })
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec!["--autostart"])))
         .invoke_handler(tauri::generate_handler![
