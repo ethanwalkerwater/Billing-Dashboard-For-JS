@@ -216,10 +216,10 @@ function renderDetail(l: Lesson | undefined) {
   } else if (l.status === 'processing' && l.uploadFailed) {
     body = '<div class="hero"><div class="sub lead">录音上传未完成</div><div class="sub">录音仍在这台电脑上，请联系教务处理</div></div>';
   } else if (l.status === 'processing' && l.pendingUpload) {
-    const left = leftMin(l), total = Math.round((l.audioSec ?? 0) / 60);
+    const left = leftMin(l), total = Math.ceil((l.audioSec ?? 0) / 60), got = Math.min(total, Math.floor((l.cloudSec ?? 0) / 60));
     body = s.rec.online
       ? `<div class="hero"><div class="sub lead"><span class="spin dark" style="display:inline-block;vertical-align:-2px;margin-right:8px"></span>${left ? `正在上传最后 ${left} 分钟…` : '正在确认录音…'}</div><div class="sub">传完就开始整理；现在合上电脑也可以，下次打开会接着传</div></div>`
-      : `<div class="hero"><div class="sub lead">录音完整保存在这台电脑上，不会丢</div><div class="sub">${total ? `云端已收到 ${total - left}/${total} 分钟，` : ''}剩下的联网后自动补传，传完才开始整理。现在合上电脑也可以，下次打开菁仕课堂会接着传</div><div class="sub">开着 VPN 会传得很慢，关掉能更快传完</div></div>`;
+      : `<div class="hero"><div class="sub lead">录音完整保存在这台电脑上，不会丢</div><div class="sub">${total ? `云端已收到 ${got}/${total} 分钟，` : ''}剩下的联网后自动补传，传完才开始整理。现在合上电脑也可以，下次打开菁仕课堂会接着传</div><div class="sub">开着 VPN 会传得很慢，关掉能更快传完</div></div>`;
   } else if (l.status === 'processing') {
     body = '<div class="hero"><div class="sub lead">录音已完整到云端，可以合上电脑了</div><div class="sub">报告好了会发到你的飞书，一般 5 分钟内；回到这里点右上角刷新也能看到</div></div>';
   } else if (l.status === 'cancelled') {

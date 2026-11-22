@@ -974,7 +974,7 @@ let nextPiggybackAt = 0;
 
 function pendingLessons(now: number, limit: number, exclude?: string) {
   const quiet = now - L.DIRECT_QUIET_MS;
-  const direct = `and(stage.eq.recording,or(earlyAt.not.is.null,finalUploadAt.not.is.null),or(earlyAt.is.null,earlyAt.lte.${quiet}),or(finalUploadAt.is.null,finalUploadAt.lte.${quiet}))`;
+  const direct = `and(stage.eq.recording,partsAt.is.null,or(earlyAt.not.is.null,finalUploadAt.not.is.null),or(earlyAt.is.null,earlyAt.lte.${quiet}),or(finalUploadAt.is.null,finalUploadAt.lte.${quiet}))`;
   const legacy = `and(stage.eq.recording,earlyAt.is.null,finalUploadAt.is.null,partsAt.is.null,or(and(kind.eq.lesson,endAt.lte.${now},updatedAt.lte.${now - L.ORPHAN_QUIET_MS}),and(kind.in.(adhoc,meeting),updatedAt.lte.${now - L.ADHOC_QUIET_MS})))`;
   // 分块上传、App 没回来的课：过了 L.partsOrphanFrom 2 小时（随时录制在 runStep 里再看最后一块）
   const grace = now - L.PARTS_GRACE_MS;
