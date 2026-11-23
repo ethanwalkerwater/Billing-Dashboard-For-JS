@@ -84,7 +84,11 @@ try {
     result: "refer",
     evidence: [],
     check: "核对当时的排课快照",
+    relatedLessons: [{lessonId:course.id,startAt:course.startAt}],
   };
+  const subject = {...issue, sourceHash:"d".repeat(64), category:"知识讲解与纠错", title:"学科样例",
+    check:"分级依据：订正受影响。\n待核实：请对照原题。"};
+  let includeSubject = false;
   let includeHistory = false;
   const teacher = {
     id: course.teacherId,
@@ -136,7 +140,7 @@ try {
         data = { name: "虚构主管" };
         break;
       case "/inbox": {
-        const all = includeHistory ? [issue, archived, missing] : [issue];
+        const all = [issue, ...(includeSubject ? [subject] : []), ...(includeHistory ? [archived, missing] : [])];
         const state = url.searchParams.get("state");
         const items = all.filter((item) => item.state === state);
         data = {
@@ -154,13 +158,13 @@ try {
       }
       case "/decision": {
         submitted = request.postDataJSON();
-        const target = [issue, archived, missing].find(
+        const target = [issue, subject, archived, missing].find(
           (it) => it.sourceHash === submitted.sourceHash,
         );
         assert.ok(target);
-        target.state = submitted.action === "close" ? "closed" : "follow";
+        target.state = ["close","resolve_confirm","resolve_dismiss"].includes(submitted.action) ? "closed" : "follow";
         if (submitted.action !== "close") {
-          target.result = "confirm";
+          target.result = {refer:"refer",resolve_dismiss:"dismiss"}[submitted.action] || "confirm";
           target.owner = submitted.owner;
         }
         target.note = submitted.note;
@@ -285,6 +289,26 @@ try {
   await page.getByRole("button", { name: "关闭事项" }).click();
   await page.getByText("暂无跟进中事项").waitFor();
   assert.equal(submitted.expectedState, "follow");
+  includeSubject = true;
+  await page.getByRole("link", { name: /待复核/ }).click();
+  await page.getByRole("button", { name: "复核", exact:true }).click();
+  const subjectForm = page.getByRole("dialog", {name:"复核"});
+  await subjectForm.getByText(/分级依据：订正受影响。/).waitFor();
+  assert.equal(await subjectForm.getByLabel("确认，记录在案").count(), 0);
+  await subjectForm.getByLabel("交学科老师核对").check();
+  await subjectForm.getByLabel("跟进负责人").fill("虚构学科负责人");
+  await subjectForm.getByRole("button", { name:"提交复核" }).click();
+  await page.getByText("暂无待复核事项").waitFor();
+  assert.equal(submitted.action,"refer");
+  await page.getByRole("link", {name:/跟进中/}).click();
+  await page.getByRole("button", {name:"记录结果"}).click();
+  const outcome = page.getByRole("dialog", {name:"记录跟进结果"});
+  await outcome.getByLabel("学科核对后排除").check();
+  await outcome.getByLabel("跟进结果").fill("对照原题后排除");
+  await outcome.getByRole("button",{name:"关闭事项"}).click();
+  await page.getByText("暂无跟进中事项").waitFor();
+  assert.equal(submitted.action,"resolve_dismiss");
+
   includeHistory = true;
   await page.reload();
   const oldRow = page.locator("article").filter({ hasText: archived.title });
@@ -299,6 +323,8 @@ try {
       .getAttribute("href"),
     "#/lessons?date=2026-11-12",
   );
+  await missingRow.locator("summary").filter({hasText:"关联课程"}).click();
+  assert.equal(await missingRow.getByRole("link", {name:/课程 1 ·/}).getAttribute("href"),"#/lesson/"+course.id);
   await missingRow.getByRole("button", { name: "记录结果" }).click();
   const dlg = page.getByRole("dialog", { name: "记录跟进结果" });
   await dlg.getByText("历史版本", { exact: true }).waitFor();

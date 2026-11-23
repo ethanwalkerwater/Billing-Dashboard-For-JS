@@ -32,7 +32,7 @@ import { issueSession, readSession, SESSION_RENEW_MS, type Session } from "./ses
 import { issueReviewSession, readReviewSession } from "./review/access";
 import { workflow } from "./review/workflow";
 import { catalog } from "./review/catalog";
-import { processReview } from "./review/jobs.cjs";
+import { processReview, VERSION as REVIEW_VERSION } from "./review/jobs.cjs";
 
 export function requireEnv(name: string): string {
   const value = process.env[name]?.trim();
@@ -1007,7 +1007,7 @@ async function sendReview(id: string) {
 
 async function retryReviews() {
   const due = await pg<{ lesson_id: string }>("GET", "classroom_content_reviews",
-    `version=eq.1&status=in.(pending,running,failed)&available_at=lte.${encodeURIComponent(new Date().toISOString())}&attempts=lt.4&select=lesson_id&order=available_at.asc&limit=8`);
+    `version=eq.${REVIEW_VERSION}&status=in.(pending,running,failed)&available_at=lte.${encodeURIComponent(new Date().toISOString())}&attempts=lt.4&select=lesson_id&order=available_at.asc&limit=8`);
   await Promise.all(due.map(r => sendReview(r.lesson_id)));
 }
 
