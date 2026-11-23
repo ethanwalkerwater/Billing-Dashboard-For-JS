@@ -72,7 +72,7 @@ export function badge(label) {
   );
 }
 export const resultName = (value) =>
-  ({ confirm: "已确认", refer: "已转办", dismiss: "已排除", close: "已关闭" })[
+  ({ confirm: "已确认", refer: "已转办", dismiss: "已排除", close: "已关闭", resolve_confirm: "学科核对确认", resolve_dismiss: "学科核对排除" })[
     value
   ] || "";
 export const empty = (message) =>
@@ -101,6 +101,14 @@ export const stat = (label, value) =>
   "</small><b>" +
   esc(value ?? "—") +
   "</b></div>";
+
+export function relatedCourses(item) {
+  const rows = item.relatedLessons || [];
+  if (item.findingId !== "rule-missing" || !rows.length) return "";
+  return '<details><summary>关联课程（' + rows.length + ' 节）</summary><ul class="history">' +
+    rows.map((row, i) => '<li><a class="ulink" href="' + lessonLink(row.lessonId) + '">课程 ' +
+      (i + 1) + ' · ' + esc(when(row.startAt)) + '</a></li>').join("") + '</ul></details>';
+}
 
 export function historicalEvidence(item) {
   return (item.evidence || [])

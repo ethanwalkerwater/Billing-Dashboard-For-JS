@@ -88,6 +88,20 @@ test("私有复核的版本、状态竞争、统计、听课重试及撤权", {s
     assert.equal(asService("select count(*) from fupan_previous_issues"),"0");
     assert.deepEqual(inbox().counts,{open:0,follow:0,closed:0});
     assert.deepEqual(JSON.parse(asService(addNote("虚构记录"))), {error:"missing"});
+    apply("202611220003_fupan_signal_rules");
+    apply("202611220004_fupan_subject_flow");
+    execFileSync("psql",[...psql,"-f",fileURLToPath(new URL("./fupan-subject-flow.sql",import.meta.url))],{env,stdio:"pipe"});
+    sql(`insert into classroom_lessons("_id","teacherOpenId","teacherName",course,"startAt","endAt",stage,"createdAt","updatedAt",transcript)
+      values ('recQueueV2','fixture','测试','数学',1800000000000,1800000600000,'done',0,0,'待处理')`);
+    apply("202611220005_fupan_review_version");
+    const queue = (id: string) => sql("select version||':'||status from fupan_current_reviews where lesson_id='" + id + "'");
+    assert.equal(queue("recQueueV2"), "2:pending");
+    sql("update classroom_content_reviews set status='done',findings='[]' where lesson_id='recQueueV2' and version=1");
+    assert.equal(queue("recQueueV2"), "1:done");
+    sql("update classroom_content_reviews set status='done',findings='[]' where lesson_id='recQueueV2' and version=2");
+    assert.equal(queue("recQueueV2"), "2:done");
+    sql("update classroom_lessons set transcript='新转写' where \"_id\"='recQueueV2'");
+    assert.equal(queue("recQueueV2"), "2:pending");
     sql("delete from fupan_supervisors");
     assert.deepEqual(JSON.parse(asService(command(1,"close","follow","已撤权"))), {error:"forbidden"});
     assert.deepEqual(JSON.parse(asService(addNote("虚构记录"))), {error:"forbidden"});
@@ -107,6 +121,8 @@ test("接口只接受有效状态和输入，处理人来自已鉴权身份", as
   await assert.rejects(submit({...body,note:" "}),bad);
   await assert.rejects(submit({...body,action:"refer",owner:""}),bad);
   await assert.rejects(submit({...body,action:"confirm",expectedState:"follow"}),bad);
+  await assert.rejects(submit({...body,action:"resolve_confirm",expectedState:"open"}),bad);
+  await assert.rejects(submit({...body,action:"resolve_dismiss",expectedState:"follow",note:" "}),bad);
   await assert.rejects(submit({...body,version:0}),bad);
   await assert.rejects(workflow("GET","/inbox",{page:"1e8"},null,actor),bad);
   await assert.rejects(workflow("GET","/issues",{lessonId:"x&limit=1"},null,actor),bad);
@@ -120,6 +136,10 @@ test("接口只接受有效状态和输入，处理人来自已鉴权身份", as
     return new Response(JSON.stringify(reply), {status:200});
   });
   try {
+    for (const findingId of ["rule-transcript-missing", "rule-audio-offset"]) {
+      await submit({...body, findingId, action:"refer",owner:"设备负责人"});
+      assert.equal(payload.p_finding, findingId);
+    }
     await submit(body);
     assert.equal(payload.p_actor,actor.openId);
     assert.equal(payload.p_by,actor.name);

@@ -12,6 +12,7 @@ import {
   card,
   addDays,
   resultName,
+  relatedCourses,
   historicalEvidence,
   historicalStatus,
 } from "./ui.js";
@@ -52,8 +53,9 @@ export function issueRows(items, detail = false, all = items) {
       <div class="grow"><div class="t">${esc(it.title)}${it.historical ? ' <span class="badge sec pill">历史版本</span>' : ""}${times.length > 1 ? '<span class="badge sec pill">同一节课 ' + times.length + " 处</span>" : ""}</div>
       ${it.historical ? historicalEvidence(it) : detail ? '<div class="quotes spaced">' + times.map((e) => '<div class="qline">' + timeButton(e) + "<small>" + esc(e.speaker) + "</small><span>" + esc(e.text) + "</span></div>").join("") + "</div>" : times.length ? '<blockquote class="q">「' + esc(times[0].text) + "」</blockquote>" : ""}
       <div class="d">${esc([it.teacherName, it.course, when(it.startAt)].filter(Boolean).join(" · "))} ${detail || it.historical ? "" : times.map(timeButton).join(" ")}</div>
-      ${(detail || it.historical) && it.check ? '<p class="sm">待核实 · ' + esc(it.check) + "</p>" : ""}
+      ${(detail || it.historical) && it.check ? '<p class="sm preserve">' + esc(it.check) + "</p>" : ""}
       ${it.state !== "open" ? '<div class="d">' + (it.historical ? historicalStatus(it) : esc([resultName(it.result), it.owner, it.note].filter(Boolean).join(" · "))) + "</div>" : ""}
+      ${relatedCourses(it)}
       ${history ? '<details><summary>处理历史</summary><ul class="history">' + history + "</ul></details>" : ""}</div>
       <div class="acts">${it.state === "closed" || (it.historical && it.state !== "follow") ? "" : '<button class="btn sm" data-review="' + index + '">' + (it.state === "follow" ? "记录结果" : "复核") + "</button>"}
       ${detail ? (times.length && !it.historical ? '<button class="btn sm outline" data-play="' + esc(it.lessonId) + '" data-time="' + Math.max(0, Number(times[0].start) - 10) + '">从前 10 秒回听</button>' : "") : '<a class="btn sm outline" href="' + (missing ? "#/lessons?date=" + missing[1] : lessonLink(it.lessonId)) + '">' + (missing ? "查看当天课程" : "查看课程") + "</a>"}</div></article>`;
