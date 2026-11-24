@@ -1,9 +1,11 @@
-import { monthOfShanghai, nameMatchKey } from "../../domain";
+import { monthOfShanghai, nameMatchKey, responseCollectionMonth } from "../../domain";
 import type { FeishuClient } from "../feishu/client";
 import type { FeishuConfig } from "../feishu/config";
 import { FeishuSchemaError } from "../feishu/errors";
+import { buildFeedbackCsvWithCount } from "../export/csv";
 import { parseFeedbackResponse } from "../feishu/parsers";
 import type { FeedbackResponseRecord } from "../feishu/parsers";
+import type { FeishuRecord } from "../feishu/types";
 import type { FeedbackTaskRepository } from "../tasks/repository";
 import type {
   ManualBinding,
@@ -23,7 +25,14 @@ export interface ReconcileResponsesResult {
   exception: number;
   /** 绑定成功的答卷覆盖了多少个不同任务 */
   tasksCovered: number;
+  /** 飞书里已删除、本次从库里清掉的答卷数 */
+  removed: number;
   outcomes: ResponseOutcome[];
+}
+
+/** 答卷属于哪一轮，规则见 responseCollectionMonth。 */
+export function collectionMonthOf(response: Pick<FeedbackResponseRecord, "courseMonth" | "submittedAt">): string {
+  return responseCollectionMonth(response.courseMonth, monthOfShanghai(response.submittedAt));
 }
 
 /** 问卷「身份」字段 → 学生/家长位置。空值和未知写法按学生处理。 */
@@ -80,7 +89,7 @@ export function matchResponsesToTasks(input: {
     const base = {
       responseRecordId: response.recordId,
       submittedAt: response.submittedAt,
-      collectionMonth: monthOfShanghai(response.submittedAt),
+      collectionMonth: collectionMonthOf(response),
       studentName,
       teacherName,
       identity,
@@ -123,28 +132,59 @@ export function matchResponsesToTasks(input: {
   return outcomes;
 }
 
+/**
+ * 飞书里删掉的答卷要从任务上腾出位置：清掉学生/家长位置，两个位置都空了的「已填写」退回「已发未填」。
+ * 返回更新后的全部任务，以及真正变了、需要写回的那些。
+ */
+export function releaseDeletedResponses(
+  tasks: readonly StoredFeedbackTask[],
+  deletedIds: ReadonlySet<string>,
+): { tasks: StoredFeedbackTask[]; changed: StoredFeedbackTask[] } {
+  const changed: StoredFeedbackTask[] = [];
+  const next = tasks.map((task) => {
+    const dropStudent = Boolean(task.studentResponseId && deletedIds.has(task.studentResponseId));
+    const dropParent = Boolean(task.parentResponseId && deletedIds.has(task.parentResponseId));
+    if (!dropStudent && !dropParent) return task;
+    const updated: StoredFeedbackTask = {
+      ...task,
+      studentResponseId: dropStudent ? undefined : task.studentResponseId,
+      parentResponseId: dropParent ? undefined : task.parentResponseId,
+    };
+    if (!updated.studentResponseId && !updated.parentResponseId) {
+      if (updated.status === "completed") updated.status = "sent";
+      updated.submittedAt = undefined;
+      updated.boundBy = undefined;
+    }
+    changed.push(updated);
+    return updated;
+  });
+  return { tasks: next, changed };
+}
+
+/** 整张答卷表。几轮一起对账时读一次、传给每一轮，不重复读。 */
+export function listResponseRecords(client: FeishuClient, config: FeishuConfig): Promise<FeishuRecord[]> {
+  return client.listAllRecords({ appToken: config.feedbackAppToken, tableId: config.responseTableId });
+}
+
 export async function reconcileResponses(input: {
   client: FeishuClient;
   config: FeishuConfig;
   repository: FeedbackTaskRepository;
   collectionMonth: string;
-  /** 只处理这些答卷记录（Webhook 场景）。 */
-  onlyRecordIds?: string[];
+  /** 已经读好的整张答卷表；不传就现读。 */
+  records?: FeishuRecord[];
 }): Promise<ReconcileResponsesResult> {
-  // ponytail: 全量读答卷表再按月过滤。当前 855 行，读全表最简单也最幂等；上万行后再按提交时间增量。
-  const raw = await input.client.listAllRecords({
-    appToken: input.config.feedbackAppToken,
-    tableId: input.config.responseTableId,
-  });
-  const scope = input.onlyRecordIds ? new Set(input.onlyRecordIds) : null;
+  // ponytail: 全量读答卷表再按轮次过滤。当前约 1000 行，读全表最简单也最幂等；上万行后再按提交时间增量。
+  const raw = input.records ?? (await listResponseRecords(input.client, input.config));
 
   const responses: FeedbackResponseRecord[] = [];
   const schemaFailures: ResponseOutcome[] = [];
   for (const record of raw) {
-    if (scope && !scope.has(record.record_id)) continue;
     try {
       const parsed = parseFeedbackResponse(record);
-      if (monthOfShanghai(parsed.submittedAt) !== input.collectionMonth) continue;
+      if (collectionMonthOf(parsed) !== input.collectionMonth) continue;
+      // 飞书表里手动加出来的空行（学生、老师都没填）不是答卷，不进对账，也不进「对不上」横幅。
+      if (parsed.studentNames.length === 0 && parsed.teacherNames.length === 0) continue;
       responses.push(parsed);
     } catch (error) {
       if (!(error instanceof FeishuSchemaError)) throw error;
@@ -162,13 +202,31 @@ export async function reconcileResponses(input: {
     }
   }
 
-  const [tasks, aliases, manualBindings] = await Promise.all([
+  const [storedTasks, aliases, manualBindings, storedIds] = await Promise.all([
     input.repository.listByCollectionMonth(input.collectionMonth),
     input.repository.listAliases(),
     input.repository.listManualBindings(input.collectionMonth),
+    input.repository.listResponseIds(input.collectionMonth),
   ]);
+
+  // 库里有、飞书里已经没有（变成空行、或被改到了别的月份）的答卷：删掉引用，并把它占的任务位置腾出来。
+  const kept = new Set([...responses.map((r) => r.recordId), ...schemaFailures.map((o) => o.responseRecordId)]);
+  // 飞书整表读回 0 行更像是权限或接口出了问题，不能据此把整月答卷清空（手动绑定也存在答卷表里）。
+  const deleted = raw.length === 0 ? new Set<string>() : new Set(storedIds.filter((id) => !kept.has(id)));
+  const released = releaseDeletedResponses(storedTasks, deleted);
+  if (deleted.size > 0) {
+    await input.repository.deleteResponses([...deleted]);
+    await input.repository.updateTaskSlots(released.changed);
+  }
+  const tasks = released.tasks;
+
   const outcomes = [...matchResponsesToTasks({ responses, tasks, aliases, manualBindings }), ...schemaFailures];
   await input.repository.applyResponseOutcomes(outcomes);
+  // 存下这一轮的答卷快照，评分页按它计算。
+  if (raw.length > 0) {
+    const snapshot = buildFeedbackCsvWithCount({ records: raw, collectionMonth: input.collectionMonth });
+    await input.repository.saveSnapshot("feedback", input.collectionMonth, snapshot.csv, snapshot.rows);
+  }
 
   const count = (status: ResponseOutcome["syncStatus"]) =>
     outcomes.filter((outcome) => outcome.syncStatus === status).length;
@@ -180,6 +238,7 @@ export async function reconcileResponses(input: {
     unlinked: count("unlinked"),
     exception: count("exception"),
     tasksCovered: new Set(outcomes.filter((o) => o.taskId).map((o) => o.taskId)).size,
+    removed: deleted.size,
     outcomes,
   };
 }

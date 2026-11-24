@@ -1,10 +1,12 @@
 import { collectionMonthToCourseMonth, groupScheduleIntoTasks } from "../../domain";
-import type { SkippedScheduleRecord } from "../../domain";
+import type { LessonRow, SkippedScheduleRecord } from "../../domain";
 import type { FeishuClient } from "../feishu/client";
 import type { FeishuConfig } from "../feishu/config";
 import { FeishuSchemaError } from "../feishu/errors";
+import { SCHEDULE_CSV_HEADERS, scheduleRows, toCsv } from "../export/csv";
 import { parseScheduleRecord, parseStudentRecord } from "../feishu/parsers";
 import { planSelectOptionAppend } from "../feishu/options";
+import { ensureSelectFieldOptions } from "../feishu/sync-options";
 import { buildTaskSyncPlan } from "../tasks/reconcile";
 import type { FeedbackTaskRepository } from "../tasks/repository";
 import type { TaskSyncPlan } from "../tasks/types";
@@ -16,10 +18,16 @@ export interface GenerateTasksResult {
   created: number;
   updated: number;
   unchanged: number;
+  /** 不再是课程、没人填过而删掉的任务数 */
+  removed: number;
+  /** 不再是课程但已经有人填了、保留着的任务 */
+  orphanedTasks: Array<{ studentName: string; teacherName: string }>;
   excludedRecords: SkippedScheduleRecord[];
   reviewRecords: SkippedScheduleRecord[];
   invalidRecords: Array<{ recordId: string; reasons: string[] }>;
-  /** 课表里有、问卷下拉里没有的姓名。业务方决定不改飞书表，所以只提示，不写。 */
+  /** 本次自动追加进问卷「学生姓名」下拉的学生 */
+  studentsAddedToForm: string[];
+  /** 课表里有、问卷下拉里没有的姓名。学生会自动追加（预演时只列出），老师只提示。 */
   studentsMissingFromForm: string[];
   teachersMissingFromForm: string[];
 }
@@ -80,14 +88,31 @@ export async function generateMonthlyTasks(input: {
 
   const grouped = await groupScheduleIntoTasks(schedule.parsed, students.parsed, {
     collectionMonth: input.collectionMonth,
+    courseTypeOverrides: await input.repository.listCourseTypeOverrides(),
   });
 
   const invalidRecords = [...grouped.invalidRecords, ...schedule.failures, ...students.failures];
 
-  // 预填值不在问卷下拉里时扫码后会静默失败。业务方不允许改飞书表，所以这里只读出来提示教务。
+  // 预填值不在问卷下拉里时扫码后会静默失败。
+  // 学生：业务方要求自动同步，把本月课表学生追加进「学生姓名」下拉。只追加不删除——
+  // 删掉单选选项会清空历史答卷里的这个值。姓名取学生表「学生姓名」，不带课表里「姓名-手机尾号」的后缀。
+  // 老师：仍只提示，由教务在飞书里手动加。
+  let studentsAddedToForm: string[] = [];
   let studentsMissingFromForm: string[] = [];
   let teachersMissingFromForm: string[] = [];
   if (grouped.tasks.length > 0) {
+    const studentNames = [...new Set(grouped.tasks.map((task) => task.studentName))];
+    if (!input.dryRun) {
+      studentsAddedToForm = (
+        await ensureSelectFieldOptions({
+          client: input.client,
+          appToken: input.config.feedbackAppToken,
+          tableId: input.config.responseTableId,
+          fieldName: "学生姓名",
+          requiredNames: studentNames,
+        })
+      ).addedNames;
+    }
     const fields = await input.client.listAllFields({
       appToken: input.config.feedbackAppToken,
       tableId: input.config.responseTableId,
@@ -95,7 +120,7 @@ export async function generateMonthlyTasks(input: {
     studentsMissingFromForm = planSelectOptionAppend({
       fields,
       fieldName: "学生姓名",
-      requiredNames: [...new Set(grouped.tasks.map((task) => task.studentName))],
+      requiredNames: studentNames,
     }).missingNames;
     teachersMissingFromForm = planSelectOptionAppend({
       fields,
@@ -104,14 +129,24 @@ export async function generateMonthlyTasks(input: {
     }).missingNames;
   }
 
-  const existing = await input.repository.listByCollectionMonth(input.collectionMonth);
-  const plan = await buildTaskSyncPlan({
-    existing,
-    drafts: grouped.tasks,
-    publicTokenPepper: input.publicTokenPepper,
-    now: input.now,
+  // 课表快照的行（含记录ID）：评分页靠它算课时权重；每个任务也存一份自己的课，评价后课时就按它定稿。
+  const lessons = scheduleRows({
+    records: scheduleRaw,
+    courseMonth,
+    studentNamesByRecordId: new Map(students.parsed.map((student) => [student.recordId, student.name])),
   });
-  if (!input.dryRun) await input.repository.applySyncPlan(plan);
+  const lessonsById = new Map(lessons.map((row) => [row["记录ID"], row]));
+  const drafts = grouped.tasks.map((task) => ({
+    ...task,
+    lessons: task.scheduleRecordIds.map((id) => lessonsById.get(id)).filter((row): row is LessonRow => Boolean(row)),
+  }));
+
+  const existing = await input.repository.listByCollectionMonth(input.collectionMonth);
+  const plan = await buildTaskSyncPlan({ existing, drafts, publicTokenPepper: input.publicTokenPepper, now: input.now });
+  if (!input.dryRun) {
+    await input.repository.applySyncPlan(plan);
+    await input.repository.saveSnapshot("schedule", courseMonth, toCsv(SCHEDULE_CSV_HEADERS, lessons), lessons.length);
+  }
 
   return {
     plan,
@@ -121,9 +156,12 @@ export async function generateMonthlyTasks(input: {
     created: plan.create.length,
     updated: plan.update.length,
     unchanged: plan.unchanged.length,
+    removed: plan.remove.length,
+    orphanedTasks: plan.orphaned.map((task) => ({ studentName: task.studentName, teacherName: task.teacherCanonicalName })),
     excludedRecords: grouped.excludedRecords,
     reviewRecords: grouped.reviewRecords,
     invalidRecords,
+    studentsAddedToForm,
     studentsMissingFromForm,
     teachersMissingFromForm,
   };

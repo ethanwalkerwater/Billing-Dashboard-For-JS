@@ -2,12 +2,15 @@ import JSZip from "jszip";
 
 import teachersData from "../../data/teachers.json";
 import {
+  addCourseLine,
   buildConfirmedReport,
   buildRequiredSelectChoices,
   collectInvalidReports,
   formatMoney,
   hasChanges,
+  removeCourseLine,
   updateCourseLine,
+  updatePrepay,
   validateReport,
 } from "./report-model.js";
 import {
@@ -74,7 +77,7 @@ function compressionLabel(file) {
 }
 
 function reportLabel(report) {
-  return `${report.studentName} · ${report.month}`;
+  return `${report.studentName} · ${report.monthLabel}`;
 }
 
 function canProcess() {
@@ -86,7 +89,7 @@ const UPLOAD_FIELDS = [
     kind: "billing",
     icon: "ph-student",
     title: "学生课时情况 CSV",
-    hint: "每名学生的当月课时汇总（与课时账单模块使用同一份完整课时费导出），可一次多选",
+    hint: "每名学生的课时汇总，支持多个月份合并为一份账单（与课时账单模块使用同一份完整课时费导出），可一次多选",
     input: '<input id="billingFiles" type="file" accept=".csv,text/csv" multiple />',
   },
   {
@@ -170,8 +173,8 @@ function uploadScreen() {
 
       <section class="upload-form" aria-labelledby="upload-title">
         <p class="eyebrow">Step 01 · Upload</p>
-        <h2 id="upload-title">上传本月资料</h2>
-        <p>支持 UTF-8 CSV。学生课时情况可以一次选择多份，也可以上传包含多名学生的汇总文件。</p>
+        <h2 id="upload-title">上传账单资料</h2>
+        <p>支持 UTF-8 CSV。学生课时情况可以一次选择多份，也可以上传包含多名学生的汇总文件。同一学生的多个月份将合并为一份账单。</p>
 
         <div class="prep-notes" role="note" aria-label="资料准备说明">
           <div class="prep-notes-head">
@@ -179,8 +182,8 @@ function uploadScreen() {
             <strong>资料准备说明</strong>
           </div>
           <ol>
-            <li><strong>学生课时情况 CSV</strong>：当月学生课时汇总导出，可多选；也可直接使用包含多名学生的完整课时费汇总文件。</li>
-            <li><strong>完整课程 schedule.csv</strong>：排课系统导出的本月全量课表，用于交叉核对课时、单价与授课老师。</li>
+            <li><strong>学生课时情况 CSV</strong>：学生课时汇总导出，支持多个月份合并，可多选；也可直接使用包含多名学生的完整课时费汇总文件。</li>
+            <li><strong>完整课程 schedule.csv</strong>：排课系统导出的覆盖账单所有月份的全量课表，用于交叉核对课时、单价与授课老师。</li>
             <li><strong>老师历史累计评分 CSV</strong>：使用老师反馈模块 <code>cumulative/teacher_scores.csv</code>，用于更新师资卡上的三项累计评分。</li>
           </ol>
           <p>三份文件都需要是 UTF-8 编码的 CSV（用 Excel 另存时请选择「CSV UTF-8（逗号分隔）」）。</p>
@@ -710,11 +713,11 @@ function teachingTypeOptions(current) {
     "班课",
     "刷题班",
   ].filter(Boolean))];
-  return requiredSelectOptions(current, values, "请选择授课类型");
+  return requiredSelectOptions(current, values, "不填写", { allowEmpty: true });
 }
 
-function requiredSelectOptions(current, values, placeholderLabel) {
-  return buildRequiredSelectChoices(current, values, placeholderLabel).map((option) => (
+function requiredSelectOptions(current, values, placeholderLabel, options) {
+  return buildRequiredSelectChoices(current, values, placeholderLabel, options).map((option) => (
     `<option value="${esc(option.value)}" ${option.selected ? "selected" : ""} ${option.placeholder ? "disabled" : ""}>${esc(option.label)}</option>`
   )).join("");
 }
@@ -763,8 +766,10 @@ function courseRows(report) {
   return report.courseLines.map((line, index) => {
     const changed = line._changedFields?.length > 0;
     return `
-      <div class="course-row" data-course-row="${index}">
+      <div class="course-row${line._added ? " is-added" : ""}" data-course-row="${index}">
         <div class="course-cell">
+          ${line._added ? '<span class="added-badge">新增</span>' : ""}
+          ${report.months?.length > 1 && line.month ? `<span class="original-value">${esc(line.month)}</span>` : ""}
           <div class="${fieldClass(line, "courseType")}">
             <input
               aria-label="第 ${index + 1} 行课程名称"
@@ -820,13 +825,18 @@ function courseRows(report) {
           <input aria-label="第 ${index + 1} 行应付金额" type="number" min="0" step="1" value="${esc(fieldValue(index, "payableAmount", line.payableAmount))}" data-row="${index}" data-field="payableAmount" />
           ${originalValue(line, "payableAmount", formatMoney)}
         </div>
+        <div class="course-cell delete-cell">
+          <button class="icon-button danger" type="button" data-delete-line="${index}" aria-label="删除第 ${index + 1} 行课程" title="删除这行课程">
+            <i class="ph ph-trash" aria-hidden="true"></i>
+          </button>
+        </div>
         ${changed ? `
           <label class="reason-row">
             <i class="ph ph-note-pencil" aria-hidden="true"></i>
             <input
               aria-label="第 ${index + 1} 行修改原因"
               type="text"
-              placeholder="${line.manualPayable ? "手动覆盖应付金额，请填写原因（必填）" : "填写修改原因（选填）"}"
+              placeholder="${line.manualPayable && !line._added ? "手动覆盖应付金额，请填写原因（必填）" : "填写修改原因（选填）"}"
               value="${esc(fieldValue(index, "adjustmentReason", line.adjustmentReason))}"
               data-row="${index}"
               data-field="adjustmentReason"
@@ -874,7 +884,7 @@ function issueStrip(report) {
         <i class="ph ph-warning-circle" aria-hidden="true"></i>
         <div>
           <strong>还有 ${errors.length} 项需要处理，暂时不能生成报告</strong>
-          <span>${esc(errors.slice(0, 2).map((issue) => `第 ${issue.row} 行：${issue.message}`).join("；"))}</span>
+          <span>${esc(errors.slice(0, 2).map((issue) => `${issue.row ? `第 ${issue.row} 行：` : ""}${issue.message}`).join("；"))}</span>
         </div>
       </div>
     `;
@@ -905,39 +915,127 @@ function issueStrip(report) {
   `;
 }
 
+function previewMoney(value) {
+  return formatMoney(Math.floor(Number(value || 0)));
+}
+
 function previewPages(report) {
   return `
     <div class="preview-pages">
       <article class="preview-page" aria-label="报告封面预览">
         <div class="preview-brand"><strong>菁仕</strong><span>KING'S ACADEMY</span></div>
         <h3 class="preview-cover-name">${esc(report.studentName)}</h3>
-        <div class="preview-cover-title">课时费用明细</div>
+        <div class="preview-cover-title">课时费明细</div>
         <div class="preview-cover-bottom">
           <span>${esc(report.monthLabel)}<br />TUITION DETAIL</span>
-          <strong>${esc(formatMoney(report.totals.payableAmount))}</strong>
+          <strong>${esc(previewMoney(report.totals.payableAmount))}</strong>
         </div>
       </article>
       <article class="preview-page" aria-label="课程明细预览">
         <div class="preview-brand"><strong>菁仕</strong><span>KING'S ACADEMY</span></div>
         <div class="preview-bill-title">
           <h3>课程明细</h3>
-          <span>01 / 04</span>
+          <span>01 / ${String((report.calendars?.length || 1) + 3).padStart(2, "0")}</span>
+        </div>
+        <div class="mini-bill-row mini-bill-head" aria-hidden="true">
+          <span>课程</span><span>课时</span><span>单价</span><span>应付</span>
         </div>
         ${report.courseLines.map((line) => `
           <div class="mini-bill-row">
-            <strong>${esc(line.courseType)}</strong>
-            <span>${esc(line.duration)}h</span>
-            <span>${esc(formatMoney(line.unitPrice))}</span>
-            <span>${esc(formatMoney(line.payableAmount))}</span>
+            <div class="mini-bill-course">
+              <strong>${esc(line.courseType || "—")}</strong>
+              ${report.months?.length > 1 && line.month ? `<small>${esc(line.month)}</small>` : ""}
+            </div>
+            <span>${line.duration == null ? "—" : `${esc(line.duration)}h`}</span>
+            <span>${line.unitPrice == null ? "—" : esc(formatMoney(line.unitPrice))}</span>
+            <span>${esc(previewMoney(line.payableAmount))}</span>
           </div>
         `).join("")}
         <div class="mini-total">
           <span>TOTAL PAYABLE</span>
-          <strong>${esc(formatMoney(report.totals.payableAmount))}</strong>
+          <strong>${esc(previewMoney(report.totals.payableAmount))}</strong>
         </div>
+        ${report.prepay?.enabled ? `
+          <div class="mini-prepay">
+            <span>预付余额 ${esc(previewMoney(report.prepay.balanceBefore))}</span>
+            <strong>${esc(prepayRemainingLabel(report))}</strong>
+          </div>
+        ` : ""}
       </article>
     </div>
   `;
+}
+
+function prepayRemainingLabel(report) {
+  const prepay = report.prepay;
+  if (prepay.balanceBefore == null) return "预付剩余 —";
+  const remaining = Math.floor(prepay.balanceBefore) - Math.floor(report.totals.payableAmount);
+  return remaining < 0
+    ? `需补缴 ${previewMoney(-remaining)}`
+    : `预付剩余 ${previewMoney(remaining)}`;
+}
+
+function prepayPanel(report) {
+  const prepay = report.prepay || {};
+  return `
+    <section class="prepay-panel">
+      <label class="prepay-toggle">
+        <input id="prepayToggle" type="checkbox" ${prepay.enabled ? "checked" : ""} />
+        <span>
+          <strong>预付学员</strong>
+          <span>本期课时费从预付中扣除，PDF 显示本期费用与预付剩余</span>
+        </span>
+      </label>
+      ${prepay.enabled ? `
+        <div class="prepay-fields">
+          <label>
+            <span>扣费前预付余额</span>
+            <input id="prepayBalance" type="number" min="0" step="1" placeholder="由教务填写" value="${esc(prepay.balanceBefore ?? "")}" />
+          </label>
+          <div><span>本期费用</span><strong>${esc(formatMoney(report.totals.payableAmount))}</strong></div>
+          <div class="${prepay.remaining < 0 ? "is-negative" : ""}"><span>${prepay.remaining < 0 ? "需补缴" : "预付剩余"}</span><strong>${prepay.remaining == null ? "—" : esc(formatMoney(Math.abs(prepay.remaining)))}</strong></div>
+        </div>
+      ` : ""}
+    </section>
+  `;
+}
+
+function confirmDialog({ title, message, confirmLabel }) {
+  return new Promise((resolve) => {
+    const dialog = document.createElement("dialog");
+    dialog.className = "confirm-dialog";
+    dialog.innerHTML = `
+      <form method="dialog">
+        <h3>${esc(title)}</h3>
+        <p>${esc(message)}</p>
+        <div class="confirm-dialog-actions">
+          <button class="button" value="cancel" autofocus>取消</button>
+          <button class="button danger" value="confirm">${esc(confirmLabel)}</button>
+        </div>
+      </form>
+    `;
+    dialog.addEventListener("close", () => {
+      resolve(dialog.returnValue === "confirm");
+      dialog.remove();
+    });
+    document.body.append(dialog);
+    dialog.showModal();
+  });
+}
+
+async function deleteCourseLine(index) {
+  const report = state.reports[state.selectedIndex];
+  const line = report.courseLines[index];
+  const name = [line.courseType, line.teacher].filter(Boolean).join(" · ") || `第 ${index + 1} 行`;
+  const confirmed = await confirmDialog({
+    title: "删除这行课程？",
+    message: `${name}，应付 ${formatMoney(line.payableAmount)}。删除后费用明细、总额和 PDF 都会同步扣除。`,
+    confirmLabel: "确认删除",
+  });
+  if (!confirmed) return;
+  state.reports[state.selectedIndex] = removeCourseLine(state.reports[state.selectedIndex], index);
+  state.courseDrafts = {};
+  render();
 }
 
 function batchValidationPanel(invalidReports) {
@@ -1003,7 +1101,8 @@ function reviewScreen() {
   const courseNames = [...new Set(state.reports.flatMap((item) => (
     item.courseLines.map((line) => line.courseType)
   )))].filter(Boolean);
-  const changedCount = report.courseLines.filter((line) => line._changedFields?.length).length;
+  const changedCount = report.courseLines.filter((line) => line._changedFields?.length || line._added).length
+    + (report._deletedLineCount || 0);
   return `
     <main class="app-shell">
       ${stepRail()}
@@ -1015,7 +1114,7 @@ function reviewScreen() {
             <p class="workspace-subtitle">只编辑学生课时 CSV 中已汇总的课程行。所有调整会立即反映在右侧报告预览中。</p>
           </div>
           <label class="student-picker">
-            <span>当前学生 / 月份</span>
+            <span>当前学生 / 账单期间</span>
             <select id="studentSelect">
               ${state.reports.map((item, index) => (
                 `<option value="${index}" ${index === state.selectedIndex ? "selected" : ""}>${invalidIndexes.has(index) ? "⚠ " : ""}${esc(reportLabel(item))}</option>`
@@ -1056,14 +1155,21 @@ function reviewScreen() {
               <span>课程单价</span>
               <span>取消比例</span>
               <span style="text-align:right">应付金额</span>
+              <span></span>
             </div>
             ${courseRows(report)}
           </div>
+          <button id="addCourseLine" class="button small add-line-button" type="button">
+            <i class="ph ph-plus" aria-hidden="true"></i>
+            新增课程
+          </button>
 
           <div class="ledger-total">
             <span>应付总额 · ${esc(report.totals.duration)}h</span>
             <strong>${esc(formatMoney(report.totals.payableAmount))}</strong>
           </div>
+
+          ${prepayPanel(report)}
 
           ${batchValidationPanel(invalidReports)}
 
@@ -1232,6 +1338,22 @@ function bindEvents() {
         commitCourseValue(Number(event.currentTarget.dataset.row), field, event.currentTarget.value);
       });
     }
+  });
+  document.querySelectorAll("[data-delete-line]").forEach((button) => {
+    button.addEventListener("click", () => deleteCourseLine(Number(button.dataset.deleteLine)));
+  });
+  document.querySelector("#addCourseLine")?.addEventListener("click", () => {
+    state.reports[state.selectedIndex] = addCourseLine(state.reports[state.selectedIndex]);
+    render();
+    document.querySelector(`[data-course-row="${state.reports[state.selectedIndex].courseLines.length - 1}"] input`)?.focus();
+  });
+  document.querySelector("#prepayToggle")?.addEventListener("change", (event) => {
+    state.reports[state.selectedIndex] = updatePrepay(state.reports[state.selectedIndex], { enabled: event.currentTarget.checked });
+    render();
+  });
+  document.querySelector("#prepayBalance")?.addEventListener("change", (event) => {
+    state.reports[state.selectedIndex] = updatePrepay(state.reports[state.selectedIndex], { balanceBefore: event.currentTarget.value });
+    setTimeout(render, 0);
   });
   document.querySelector("#downloadSingle")?.addEventListener("click", async () => {
     await downloadReport(state.reports[state.selectedIndex]);

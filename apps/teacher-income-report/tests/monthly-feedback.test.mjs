@@ -50,3 +50,18 @@ test("a full-time teacher without a monthly score uses the base feedback rate", 
   assert.equal(row.feedbackMissingScore, true);
   assert.match(row.issues.find((issue) => issue.code === "missing_feedback_score").label, /当月评分.*47%/);
 });
+
+test("manual extra lesson rate stacks on top of the capped feedback rate", () => {
+  const scores = parseTeacherScoresCsv(scoresCsv);
+  scores[0].extraRate = 0.1;
+  scores[1].extraRate = 0.025;
+  const payroll = buildPayrollReport(buildReportFromCsv(lessonsCsv, "monthly-lessons.csv"), {
+    baseSalaries,
+    teacherScoresByMonth: { "2026-09": scores },
+    parameters: { fullTimeFeedbackMaxRate: 0.52 },
+  });
+
+  assert.equal(payroll.byMonth["2026-09"][scores[0].teacher].feedbackRate, 0.62);
+  assert.equal(payroll.byMonth["2026-09"][scores[1].teacher].feedbackRate, 0.545);
+  assert.equal(parseTeacherScoresCsv("老师,学习提升,责任心,个人魅力,额外课时系数\n黄钢,5,5,5,2.5%")[0].extraRate, 0.025);
+});

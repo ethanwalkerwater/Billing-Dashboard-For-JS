@@ -17,6 +17,9 @@ export interface SyncSummary {
   unlinked?: number;
   exception?: number;
   tasksCovered?: number;
+  removed?: number;
+  orphanedTasks?: Array<{ studentName: string; teacherName: string }>;
+  studentsAddedToForm?: string[];
   outcomes?: Array<{ responseRecordId: string; taskId: string | null; syncStatus: string; exceptionCode?: string }>;
 }
 
@@ -46,7 +49,7 @@ export function SyncDetails({ summary }: { summary: SyncSummary }) {
   const exceptions = (summary.outcomes ?? []).filter((outcome) => outcome.syncStatus === "exception");
   const lines: string[] = [];
   if (summary.scheduleRecordsScanned !== undefined) {
-    lines.push(`课表 ${summary.scheduleRecordsScanned} 条 · 新建 ${summary.created} · 更新 ${summary.updated} · 未变 ${summary.unchanged}`);
+    lines.push(`课表 ${summary.scheduleRecordsScanned} 条 · 新建 ${summary.created} · 更新 ${summary.updated} · 未变 ${summary.unchanged}${summary.removed ? ` · 移除 ${summary.removed}` : ""}`);
   }
   if (summary.monthTotal !== undefined) {
     lines.push(
@@ -62,17 +65,27 @@ export function SyncDetails({ summary }: { summary: SyncSummary }) {
       </CardHeader>
       <CardContent>
         <Bucket
+          title="已自动加进问卷的学生"
+          hint="本月课表里有、问卷「学生姓名」下拉里原来没有的学生，已自动追加为选项。"
+          items={summary.studentsAddedToForm ?? []}
+        />
+        <Bucket
           title="问卷下拉里缺的姓名"
-          hint="课表里有、问卷「学生姓名 / 老师姓名」下拉里没有的名字。系统不会改飞书表；这些人扫码后预填会失败，需要在飞书里手动把选项加上。"
+          hint="课表里有、问卷「学生姓名 / 老师姓名」下拉里没有的名字。学生会自动追加；老师需要在飞书里手动把选项加上，否则扫码后预填会失败。"
           items={[
             ...(summary.studentsMissingFromForm ?? []).map((name) => `学生 · ${name}`),
             ...(summary.teachersMissingFromForm ?? []).map((name) => `老师 · ${name}`),
           ]}
         />
         <Bucket
-          title="课程类型待确认"
-          hint="已经生成了任务，但课程类型看起来不像常规授课，复核后决定是否改成「拒绝填写」。"
+          title="未标注授课类型，按课程处理"
+          hint="课表里没填授课类型，课程类型名也看不出是咨询、考试、会议等，先按课程生成了问卷。不是课程的到「课程类型」页设成「不算课程」，下次生成名单时会移除。"
           items={(summary.reviewRecords ?? []).map((record) => `${record.recordId} · ${record.reason}`)}
+        />
+        <Bucket
+          title="已不算课程、但已有人填过的问卷"
+          hint="这些学生 × 老师在课表里已经不算课程了，因为已经收到反馈，保留没删。需要的话到飞书里处理那份答卷。"
+          items={(summary.orphanedTasks ?? []).map((task) => `${task.studentName} · ${task.teacherName}`)}
         />
         <Bucket
           title="未生成任务的课表记录"

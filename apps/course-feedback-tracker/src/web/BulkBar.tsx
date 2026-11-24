@@ -1,7 +1,9 @@
 import { Download, QrCode, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
+import { TASK_OWNERS } from "@/domain";
 
 /**
  * 批量操作栏。作用范围写清楚：教务最容易踩的坑是以为"标记已发"作用于全部，
@@ -17,6 +19,7 @@ export function BulkBar({
   onMarkSent,
   onMarkDeclined,
   onMarkUnsent,
+  onSetOwner,
   onDownloadZip,
   onExportCsv,
 }: {
@@ -29,6 +32,7 @@ export function BulkBar({
   onMarkSent: () => void;
   onMarkDeclined: () => void;
   onMarkUnsent: () => void;
+  onSetOwner: (owner: string) => void;
   onDownloadZip: () => void;
   onExportCsv: () => void;
 }) {
@@ -57,6 +61,20 @@ export function BulkBar({
       <Button variant="ghost" size="sm" disabled={busy} onClick={onMarkUnsent}>
         退回未发
       </Button>
+      <Separator orientation="vertical" className="h-5" />
+      {/* value 固定为空：每次选都是一次批量设置，下拉不保留上次的选择 */}
+      <Select value="" onValueChange={onSetOwner} disabled={busy}>
+        <SelectTrigger size="sm" className="w-28 border-none shadow-none" aria-label="批量设负责人">
+          <SelectValue placeholder="设负责人" />
+        </SelectTrigger>
+        <SelectContent>
+          {TASK_OWNERS.map((owner) => (
+            <SelectItem key={owner} value={owner}>
+              {owner}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
       <Separator orientation="vertical" className="h-5" />
       <Button variant="ghost" size="sm" disabled={busy} onClick={onDownloadZip}>
         <QrCode /> 二维码 ZIP

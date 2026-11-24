@@ -4,7 +4,8 @@ import { describe, it } from "node:test";
 
 import { feishuSignature, verifyFeishuEvent } from "../functions/feedback-api/feishu-event";
 import type { FeedbackResponseRecord } from "../src/server/feishu/parsers";
-import { matchResponsesToTasks } from "../src/server/sync/reconcile-responses";
+import { matchResponsesToTasks, reconcileResponses, releaseDeletedResponses } from "../src/server/sync/reconcile-responses";
+import type { FeedbackTaskRepository } from "../src/server/tasks/repository";
 import type { StoredFeedbackTask } from "../src/server/tasks/types";
 
 function task(overrides: Partial<StoredFeedbackTask> = {}): StoredFeedbackTask {
@@ -36,6 +37,7 @@ function response(overrides: Partial<FeedbackResponseRecord> = {}): FeedbackResp
     teacherNames: ["应雁心"],
     identity: ["学生本人"],
     submittedAt: "2026-09-03T02:00:00.000Z",
+    courseMonth: null,
     ...overrides,
   };
 }
@@ -143,6 +145,89 @@ describe("response matching by name", () => {
     });
     assert.equal(outcomes[0].collectionMonth, "2026-09");
   });
+
+  it("assigns an answer with a prefilled feedback month to that month's round, whenever it was submitted", () => {
+    const outcomes = matchResponsesToTasks({
+      responses: [
+        // 10 月 20 日提前评 10 月的课 → 11 月那一轮（10 月课程）
+        response({ recordId: "rec-early", submittedAt: "2026-10-20T02:00:00.000Z", courseMonth: "2026-10" }),
+        // 同一天交的老二维码（没有月份）→ 按提交月，评的是 9 月的课
+        response({ recordId: "rec-legacy", submittedAt: "2026-10-20T02:00:00.000Z" }),
+      ],
+      tasks: [],
+    });
+    assert.deepEqual(outcomes.map((o) => o.collectionMonth), ["2026-11", "2026-10"]);
+  });
+
+  it("keeps two rounds of the same student and teacher apart", async () => {
+    const applied: string[] = [];
+    const repository = {
+      listByCollectionMonth: async () => [task({ taskId: "ft_202610_x", courseMonth: "2026-10", collectionMonth: "2026-11" })],
+      listAliases: async () => [],
+      listManualBindings: async () => [],
+      listResponseIds: async () => [],
+      deleteResponses: async () => {},
+      updateTaskSlots: async () => {},
+      applyResponseOutcomes: async (outcomes: Array<{ responseRecordId: string; syncStatus: string }>) =>
+        void applied.push(...outcomes.map((o) => `${o.responseRecordId}:${o.syncStatus}`)),
+      saveSnapshot: async () => {},
+    } as unknown as FeedbackTaskRepository;
+    const at = Date.parse("2026-10-20T02:00:00.000Z");
+    const records = [
+      { record_id: "rec-sept", fields: { 学生姓名: "姚凯榕", 老师姓名: "应雁心", 提交时间: at } },
+      { record_id: "rec-oct", fields: { 学生姓名: "姚凯榕", 老师姓名: "应雁心", 提交时间: at, 反馈课程月份: "2026-10" } },
+    ];
+    const result = await reconcileResponses({ client: {} as never, config: {} as never, repository, collectionMonth: "2026-11", records });
+    // 9 月那份不进 10 月课程这一轮，也不会把 10 月那份挤成「重复」
+    assert.deepEqual(applied, ["rec-oct:matched"]);
+    assert.equal(result.duplicate, 0);
+  });
+});
+
+describe("responses deleted in Feishu", () => {
+  it("frees the slot and reverts a task with no answers left to sent", () => {
+    const { tasks, changed } = releaseDeletedResponses(
+      [
+        task({ taskId: "t-both", status: "completed", studentResponseId: "rec-gone", parentResponseId: "rec-kept" }),
+        task({ taskId: "t-only", status: "completed", studentResponseId: "rec-gone-2", submittedAt: "2026-09-03T02:00:00.000Z", boundBy: "name" }),
+        task({ taskId: "t-untouched", status: "completed", studentResponseId: "rec-other" }),
+      ],
+      new Set(["rec-gone", "rec-gone-2"]),
+    );
+    assert.deepEqual(changed.map((t) => t.taskId), ["t-both", "t-only"]);
+    assert.equal(tasks[0].status, "completed");
+    assert.equal(tasks[0].studentResponseId, undefined);
+    assert.equal(tasks[0].parentResponseId, "rec-kept");
+    assert.equal(tasks[1].status, "sent");
+    assert.equal(tasks[1].submittedAt, undefined);
+  });
+
+  it("removes stored responses that are gone from Feishu or blank, keeps the rest", async () => {
+    const calls: { deleted: string[]; slots: string[] } = { deleted: [], slots: [] };
+    const repository = {
+      listByCollectionMonth: async () => [task({ collectionMonth: "2026-10", status: "completed", studentResponseId: "rec-deleted" })],
+      listAliases: async () => [],
+      listManualBindings: async () => [],
+      listResponseIds: async () => ["rec-live", "rec-deleted", "rec-blank"],
+      deleteResponses: async (ids: string[]) => void calls.deleted.push(...ids),
+      updateTaskSlots: async (tasks: StoredFeedbackTask[]) => void calls.slots.push(...tasks.map((t) => t.status)),
+      applyResponseOutcomes: async () => {},
+      saveSnapshot: async () => {},
+    } as unknown as FeedbackTaskRepository;
+    const at = Date.parse("2026-10-01T06:00:00.000Z");
+    const client = {
+      listAllRecords: async () => [
+        { record_id: "rec-live", fields: { 学生姓名: "姚凯榕", 老师姓名: "应雁心", 提交时间: at } },
+        { record_id: "rec-blank", fields: { 提交时间: at } },
+      ],
+    } as never;
+    const result = await reconcileResponses({ client, config: {} as never, repository, collectionMonth: "2026-10" });
+    assert.deepEqual(calls.deleted.sort(), ["rec-blank", "rec-deleted"]);
+    // 被删的答卷腾出位置后，rec-live 重新占上去，任务仍是已填写
+    assert.equal(result.removed, 2);
+    assert.equal(result.unlinked, 0);
+    assert.equal(result.matched, 1);
+  });
 });
 
 describe("feishu webhook verification", () => {
@@ -161,6 +246,18 @@ describe("feishu webhook verification", () => {
     const body = JSON.stringify({ type: "url_verification", challenge: "hello", token: "vt" });
     const result = verifyFeishuEvent({ body, headers: headers(body), encryptKey, verificationToken: "vt" });
     assert.deepEqual(result, { ok: true, challenge: "hello" });
+  });
+
+  it("accepts an unsigned but encrypted url_verification (what Feishu sends when saving the URL)", () => {
+    const key = createHash("sha256").update(encryptKey).digest();
+    const iv = Buffer.alloc(16, 3);
+    const cipher = createCipheriv("aes-256-cbc", key, iv);
+    const plain = JSON.stringify({ type: "url_verification", challenge: "hi", token: "vt" });
+    const body = JSON.stringify({ encrypt: Buffer.concat([iv, cipher.update(plain, "utf8"), cipher.final()]).toString("base64") });
+    assert.deepEqual(verifyFeishuEvent({ body, headers: {}, encryptKey, verificationToken: "vt" }), { ok: true, challenge: "hi" });
+    // 不加密又不带签名的一律拒绝
+    const forged = JSON.stringify({ type: "url_verification", challenge: "hi", token: "vt" });
+    assert.deepEqual(verifyFeishuEvent({ body: forged, headers: {}, encryptKey, verificationToken: "vt" }), { ok: false, reason: "MISSING_SIGNATURE" });
   });
 
   it("rejects a forged signature", () => {

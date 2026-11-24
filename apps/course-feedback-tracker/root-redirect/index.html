@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>月度课程反馈 · 菁仕</title>
+    <!--
+      静态托管根目录的跳转页。月度课程反馈 2026-10 起搬到 /feedback/，
+      旧链接（app.jsjy.asia/、默认域名根目录、收藏夹里的 #/scores）打开这里会原样带着 ?参数 和 #页面 跳过去，顺便升级成 https。
+      部署：npm run deploy:root-redirect（只覆盖根目录 index.html，不碰 /feedback/、/ielts/、/income/）。
+    -->
+    <script>
+      (function () {
+        var secure = /(^|\.)(jsjy\.asia|tcloudbaseapp\.com)$/.test(location.hostname) ? "https:" : location.protocol;
+        location.replace(secure + "//" + location.host + "/feedback/" + location.search + location.hash);
+      })();
+    </script>
+  </head>
+  <body>
+    <p style="font-family: sans-serif; padding: 40px; text-align: center">
+      月度课程反馈已迁移到 <a href="/feedback/">/feedback/</a>，正在跳转…
+    </p>
+  </body>
+</html>

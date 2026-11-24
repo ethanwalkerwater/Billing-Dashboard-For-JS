@@ -132,7 +132,7 @@ function teacherSheet(model, teacher, usedNames) {
   const metaValues = [
     "雇佣属性",
     teacher.employmentType,
-    "个人总收入",
+    "实发工资",
     teacher.personalTotalIncome,
     "公司总成本",
     teacher.companyTotalCost,

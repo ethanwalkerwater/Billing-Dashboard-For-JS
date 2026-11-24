@@ -36,11 +36,12 @@ function renderCourseRows(report) {
     <tr${line.isLeave ? ` class="is-leave"` : ""}>
       <td>
         <strong>${esc(line.courseType)}</strong>
-        <span>${esc(line.teacher)} / ${esc(line.teachingType)}</span>
+        ${report.months?.length > 1 && line.month ? `<span>${esc(line.month)}</span>` : ""}
+        ${[line.teacher, line.teachingType].some(Boolean) ? `<span>${[line.teacher, line.teachingType].filter(Boolean).map(esc).join(" / ")}</span>` : ""}
         ${line.discountReason ? `<span class="bill-note">${esc(line.discountReason)}</span>` : ""}
       </td>
-      <td>${formatNumber(line.duration)}h</td>
-      <td>${line.unitPriceLabel === "缺失" ? "缺失" : `¥${esc(line.unitPriceLabel)}`}</td>
+      <td>${line.duration == null ? "—" : `${formatNumber(line.duration)}h`}</td>
+      <td>${["缺失", "—"].includes(line.unitPriceLabel) ? esc(line.unitPriceLabel) : `¥${esc(line.unitPriceLabel)}`}</td>
       <td>${formatMoney(line.grossAmount)}</td>
       <td>${esc(discountLabel(line))}</td>
       <td>${formatMoney(line.payableAmount)}</td>
@@ -48,12 +49,43 @@ function renderCourseRows(report) {
   `).join("");
 }
 
-function renderCalendar(report) {
+function renderTotalRow(report) {
+  const prepay = report.prepay;
+  if (!prepay?.enabled || prepay.balanceBefore == null) {
+    return `
+      <div class="total-row">
+        <p>折扣与临时请假已按规则计入应付课时费。</p>
+        <div>
+          <span class="section-label">Total Payable</span>
+          <strong>${formatMoney(report.totals.payableAmount)}</strong>
+        </div>
+      </div>`;
+  }
+  // 报告金额统一向下取整显示；剩余用取整后的两数相减，保证三行金额能对上
+  const balance = Math.floor(Number(prepay.balanceBefore));
+  const fee = Math.floor(Number(report.totals.payableAmount || 0));
+  const remaining = balance - fee;
+  const owed = remaining < 0;
+  return `
+    <div class="total-row prepay-total">
+      <p>${owed ? "预付余额不足以抵扣本期课时费，<br />差额需补缴。" : "本期课时费已从预付余额中扣除，"}<br />折扣与临时请假已按规则计入本期费用。</p>
+      <dl class="prepay-summary">
+        <div><dt>预付余额（扣费前）</dt><dd>${formatMoney(balance)}</dd></div>
+        <div><dt>本期课时费</dt><dd>− ${formatMoney(fee)}</dd></div>
+        <div class="is-final${owed ? " is-owed" : ""}">
+          <dt><span class="section-label">${owed ? "Amount Due" : "Prepaid Balance"}</span>${owed ? "需补缴" : "预付剩余"}</dt>
+          <dd>${formatMoney(Math.abs(remaining))}</dd>
+        </div>
+      </dl>
+    </div>`;
+}
+
+function renderCalendar(calendar) {
   return `
     <div class="calendar-wrap">
       <div class="calendar">
-        ${report.calendar.weekdays.map((day) => `<div class="weekday">${esc(day)}</div>`).join("")}
-        ${report.calendar.cells.map((cell) => `
+        ${calendar.weekdays.map((day) => `<div class="weekday">${esc(day)}</div>`).join("")}
+        ${calendar.cells.map((cell) => `
           <div class="day ${cell.inMonth ? "" : "muted"} ${cell.lessons?.some((lesson) => lesson.isLeave) ? "has-leave" : ""}">
             <div class="day-num">${esc(cell.day)}</div>
             <div class="day-lessons">
@@ -101,6 +133,9 @@ export function renderStudentBillingReportHtml(report, teachers, options = {}) {
     report.activeTeacherNames,
     facultyOptions(options),
   );
+
+  const calendars = report.calendars || [{ ...report.calendar, monthLabel: report.monthLabel }];
+  const sectionCount = calendars.length + 3;
 
   return `<!doctype html>
 <html lang="zh-CN">
@@ -214,6 +249,17 @@ export function renderStudentBillingReportHtml(report, teachers, options = {}) {
     .total-row p { margin: 0 0 14px; color: var(--muted); font-size: 12px; }
     .section-label { display: block; margin-bottom: 5px; color: var(--muted); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
     .total-row strong { font-size: 36px; font-weight: 600; }
+    .prepay-total { display: flex; justify-content: space-between; align-items: flex-end; gap: 40px; }
+    .prepay-total p { margin: 0; line-height: 1.8; }
+    .prepay-summary { flex: 0 0 360px; margin: 0; }
+    .prepay-summary div { display: flex; justify-content: space-between; align-items: baseline; gap: 24px; padding: 7px 0; }
+    .prepay-summary dt { color: var(--muted); font-size: 13px; }
+    .prepay-summary dd { margin: 0; font-size: 17px; font-variant-numeric: tabular-nums; }
+    .prepay-summary .is-final { margin-top: 8px; padding-top: 16px; border-top: 1px solid var(--hairline); align-items: flex-end; }
+    .prepay-summary .is-final dt { color: var(--ink); font-size: 14px; font-weight: 600; }
+    .prepay-summary .is-final .section-label { margin-bottom: 4px; font-weight: 400; }
+    .prepay-summary .is-final dd { color: var(--indigo); font-size: 36px; font-weight: 600; line-height: 1.1; }
+    .prepay-summary .is-owed dd { color: var(--leave); }
     .calendar-wrap { overflow: visible; }
     .calendar {
       display: grid;
@@ -326,7 +372,7 @@ export function renderStudentBillingReportHtml(report, teachers, options = {}) {
           <div class="kicker">Billing Detail</div>
           <h2>课程明细</h2>
         </div>
-        <div class="page-num">01 / 04</div>
+        <div class="page-num">01 / ${String(sectionCount).padStart(2, "0")}</div>
       </header>
       <table>
         <thead>
@@ -341,29 +387,25 @@ export function renderStudentBillingReportHtml(report, teachers, options = {}) {
         </thead>
         <tbody>${renderCourseRows(report)}</tbody>
       </table>
-      <div class="total-row">
-        <p>折扣与临时请假已按规则计入应付课时费。</p>
-        <div>
-          <span class="section-label">Total Payable</span>
-          <strong>${formatMoney(report.totals.payableAmount)}</strong>
-        </div>
-      </div>
+      ${renderTotalRow(report)}
     </section>
 
+    ${calendars.map((calendar, index) => `
     <section class="page">
       <header class="page-head">
         <div>
-          <div class="kicker">${esc(report.monthEnglish.split(" ")[0] || "Schedule")} Schedule</div>
-          <h2>${esc(report.monthLabel)}课表</h2>
+          <div class="kicker">Course Schedule</div>
+          <h2>${esc(calendar.monthLabel)}课表</h2>
         </div>
-        <div class="page-num">02 / 04</div>
+        <div class="page-num">${String(index + 2).padStart(2, "0")} / ${String(sectionCount).padStart(2, "0")}</div>
       </header>
-      ${renderCalendar(report)}
+      ${renderCalendar(calendar)}
       <div class="legend">
         <span><i></i>正常课程</span>
         <span class="leave"><i></i>请假 / 临时取消课程</span>
       </div>
     </section>
+    `).join("")}
 
     <section class="page">
       <header class="page-head">
@@ -371,7 +413,7 @@ export function renderStudentBillingReportHtml(report, teachers, options = {}) {
           <div class="kicker">Faculty Team</div>
           <h2>师资团队</h2>
         </div>
-        <div class="page-num">03 / 04</div>
+        <div class="page-num">${String(sectionCount - 1).padStart(2, "0")} / ${String(sectionCount).padStart(2, "0")}</div>
       </header>
 ${facultySections}
     </section>

@@ -1,0 +1,208 @@
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { averageDelta, positiveRate } from "@/domain/progress";
+import type { Tally } from "@/domain/progress";
+import { cn } from "@/lib/utils";
+
+export function pct(value: number | null): string {
+  return value == null ? "—" : `${Math.round(value * 100)}%`;
+}
+
+/** 带正负号；平均值传 digits=2 统一两位小数，单条提分保持 0.5 步长原样。 */
+export function signed(value: number | null, digits?: number): string {
+  if (value == null) return "—";
+  const text = digits == null ? String(value) : value.toFixed(digits);
+  return value > 0 ? `+${text}` : text;
+}
+
+function TallyTip({ value }: { value: Tally }) {
+  return (
+    <span className="tabular-nums">
+      提升 {value.up} · 持平 {value.flat} · 下降 {value.down} · 平均提分 {signed(averageDelta(value), 2)}
+    </span>
+  );
+}
+
+export function OutcomeLegend() {
+  return (
+    <div className="text-muted-foreground flex items-center gap-4 text-xs">
+      {(
+        [
+          ["bg-viz-up", "提升"],
+          ["bg-viz-flat", "持平"],
+          ["bg-viz-down", "下降"],
+        ] as const
+      ).map(([color, label]) => (
+        <span key={label} className="flex items-center gap-1.5">
+          <span className={cn("size-2.5 rounded-[3px]", color)} />
+          {label}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/** 一条 100% 堆叠条：提升 | 持平 | 下降，段间 2px 白缝，两端圆角。 */
+function OutcomeBar({ value }: { value: Tally }) {
+  const parts = [
+    [value.up, "bg-viz-up"],
+    [value.flat, "bg-viz-flat"],
+    [value.down, "bg-viz-down"],
+  ] as const;
+  return (
+    <div className="flex h-3 w-full gap-[2px] overflow-hidden rounded-[4px]">
+      {parts.map(([count, color]) =>
+        count > 0 ? <div key={color} className={cn("h-full", color)} style={{ flexGrow: count, flexBasis: 0 }} /> : null,
+      )}
+    </div>
+  );
+}
+
+export interface OutcomeRow {
+  key: string;
+  tally: Tally;
+}
+
+/** 按正向率从高到低；同率样本多的在前。 */
+export function sortOutcomeRows(rows: OutcomeRow[]): OutcomeRow[] {
+  return [...rows].sort(
+    (a, b) => (positiveRate(b.tally) ?? 0) - (positiveRate(a.tally) ?? 0) || b.tally.n - a.tally.n || a.key.localeCompare(b.key, "zh-CN"),
+  );
+}
+
+/** 一行一条 100% 堆叠条（老师、科目、月份都用它）。onPick 不传就是纯展示。 */
+export function OutcomeRows({
+  rows,
+  head,
+  focused = null,
+  onPick,
+}: {
+  rows: OutcomeRow[];
+  head: string;
+  focused?: string | null;
+  onPick?: (key: string) => void;
+}) {
+  return (
+    <div className="grid gap-1">
+      <OutcomeLegend />
+      <div className="text-muted-foreground grid grid-cols-[4.5rem_1fr_3rem_2.5rem] sm:grid-cols-[7rem_1fr_3.5rem_3rem_4rem] items-center gap-3 px-2 text-xs">
+        <span>{head}</span>
+        <span />
+        <span className="text-right">正向率</span>
+        <span className="text-right">样本</span>
+        <span className="hidden text-right sm:block">平均提分</span>
+      </div>
+      {rows.map(({ key, tally }) => (
+          <Tooltip key={key}>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                disabled={!onPick}
+                onClick={() => onPick?.(key)}
+                className={cn(
+                  "grid grid-cols-[4.5rem_1fr_3rem_2.5rem] sm:grid-cols-[7rem_1fr_3.5rem_3rem_4rem] items-center gap-3 rounded-md px-2 py-1.5 text-left text-sm transition-colors enabled:hover:bg-accent",
+                  focused === key && "bg-accent ring-foreground/20 ring-1",
+                )}
+              >
+                <span className="truncate font-medium">{key}</span>
+                <OutcomeBar value={tally} />
+                <span className="text-right font-medium tabular-nums">{pct(positiveRate(tally))}</span>
+                <span className="text-muted-foreground text-right tabular-nums">{tally.n}</span>
+                <span className="text-muted-foreground hidden text-right tabular-nums sm:block">{signed(averageDelta(tally), 2)}</span>
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="top">
+              <TallyTip value={tally} />
+            </TooltipContent>
+          </Tooltip>
+      ))}
+    </div>
+  );
+}
+
+// 单色蓝阶（浅 → 深），正向率 0–100% 分十档
+const RAMP = ["#cde2fb", "#b7d3f6", "#9ec5f4", "#86b6ef", "#6da7ec", "#5598e7", "#3987e5", "#2a78d6", "#256abf", "#1c5cab"];
+
+function Cell({ value, active, onClick }: { value: Tally | undefined; active: boolean; onClick: () => void }) {
+  if (!value || value.n === 0) return <td className="text-muted-foreground/50 p-0.5 text-center text-xs">·</td>;
+  const rate = positiveRate(value)!;
+  const step = Math.min(RAMP.length - 1, Math.floor(rate * RAMP.length));
+  return (
+    <td className="p-0.5">
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            onClick={onClick}
+            className={cn(
+              "flex h-10 w-full min-w-16 flex-col items-center justify-center rounded-[4px] text-xs tabular-nums transition-shadow hover:ring-2 hover:ring-foreground/30",
+              step >= 6 && "text-white",
+              active && "ring-2 ring-foreground",
+            )}
+            style={{ backgroundColor: RAMP[step] }}
+          >
+            <span className="font-medium">{pct(rate)}</span>
+            <span className="opacity-75">n={value.n}</span>
+          </button>
+        </TooltipTrigger>
+        <TooltipContent>
+          <TallyTip value={value} />
+        </TooltipContent>
+      </Tooltip>
+    </td>
+  );
+}
+
+/** 老师 × 列（科目或月份）。首行「整体」按样本去重。 */
+export function Matrix({
+  teachers,
+  columns,
+  cells,
+  overall,
+  active,
+  onPick,
+}: {
+  teachers: string[];
+  columns: string[];
+  cells: Map<string, Tally>;
+  overall: Map<string, Tally>;
+  active: { teacher: string | null; column: string | null };
+  onPick: (teacher: string | null, column: string) => void;
+}) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full border-separate border-spacing-0 text-sm">
+        <thead>
+          <tr className="text-muted-foreground text-xs">
+            <th className="w-28 px-2 py-1 text-left font-normal">老师</th>
+            {columns.map((column) => (
+              <th key={column} className="px-1 py-1 font-normal">
+                {column}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td className="px-2 text-xs font-medium">整体</td>
+            {columns.map((column) => (
+              <Cell key={column} value={overall.get(column)} active={!active.teacher && active.column === column} onClick={() => onPick(null, column)} />
+            ))}
+          </tr>
+          {teachers.map((teacher) => (
+            <tr key={teacher}>
+              <td className="truncate px-2 text-sm">{teacher}</td>
+              {columns.map((column) => (
+                <Cell
+                  key={column}
+                  value={cells.get(`${teacher}|${column}`)}
+                  active={active.teacher === teacher && active.column === column}
+                  onClick={() => onPick(teacher, column)}
+                />
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}

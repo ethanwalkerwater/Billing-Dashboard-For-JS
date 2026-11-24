@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="referrer" content="no-referrer" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; media-src https:; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <title>课堂复盘 · 菁仕教育</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <script type="module" src="./app.js"></script>
+  </head>
+  <body>
+    <a class="skip" href="#main">跳到主要内容</a>
+    <div id="root">
+      <main id="main" tabindex="-1" class="empty" aria-busy="true">
+        正在打开课堂复盘…
+      </main>
+    </div>
+    <dialog id="form-dialog" aria-labelledby="dialog-title"></dialog>
+    <dialog id="player" aria-labelledby="player-title"></dialog>
+    <div id="notice" role="status" aria-live="polite"></div>
+    <noscript>请启用 JavaScript 后打开课堂复盘。</noscript>
+  </body>
+</html>

@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -28,3 +28,13 @@ writeFileSync(
 );
 
 console.log(`feedback-api -> ${outDir}`);
+
+// feedback-score 是 Python 函数：入口 + 老看板的两个评分脚本（单一来源，打包时复制，不另存一份）。
+const scoreDir = resolve(root, "dist-functions/feedback-score");
+const scripts = resolve(root, "../teacher-feedback/scripts");
+mkdirSync(scoreDir, { recursive: true });
+copyFileSync(resolve(root, "functions/feedback-score/index.py"), resolve(scoreDir, "index.py"));
+for (const file of ["monthly_teacher_feedback.py", "cumulative_teacher_feedback.py"]) {
+  copyFileSync(resolve(scripts, file), resolve(scoreDir, file));
+}
+console.log(`feedback-score -> ${scoreDir}`);

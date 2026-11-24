@@ -1,0 +1,165 @@
+// 浏览器预览用的假后端（不进 Tauri 运行路径）。数据直接取自 docs/mvp-data.js，场景照搬 MVP.html 的 setScene。
+// ponytail: 每个页面（index/pill/toast）各有一份 mock，彼此不同步；要联动再加 BroadcastChannel。
+import raw from '../../../../docs/mvp-data.js?raw';
+import type { AppState, Backend, Lesson, LessonStatus } from './bridge';
+import { shanghaiToday } from './format';
+
+interface Demo { id: string; date: string; time: string; title: string; topic: string; status: LessonStatus; copied: boolean; tx?: string }
+const { lessons: demo, summaryOf } = new Function(`${raw}\nreturn { lessons, summaryOf };`)() as { lessons: Demo[]; summaryOf: (id: string) => string };
+
+// 把演示日期（2026-10-15 为「今天」）平移到真实的上海今天。
+const shift = (Date.parse(shanghaiToday()) - Date.parse('2026-10-15')) / 86_400_000;
+const addDays = (d: string, n: number) => new Date(Date.parse(`${d}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
+const epoch = (date: string, hm: string) => Date.parse(`${date}T${hm}:00+08:00`);
+
+let s: AppState = {
+  teacher: { name: '王老师' },
+  loggingIn: false,
+  lessons: demo.map((l): Lesson => {
+    const [start, end] = l.time.split('–');
+    const date = addDays(l.date, shift);
+    return {
+      id: l.id, date, start, end, startAt: epoch(date, start), endAt: epoch(date, end), title: l.title, topic: l.topic,
+      status: l.status, copied: l.copied, summary: l.tx ? summaryOf(l.id) : undefined, student: l.title.split(' · ')[1],
+      reportUrl: l.tx ? `https://app.jsjy.asia/classroom/report.html?t=demo-${l.id}` : undefined,
+    };
+  }),
+  rec: { mode: 'idle', lessonId: 'xiaoyu', sec: 0, paused: false, pausedSec: 0, nudge: '', endLeft: 60, autoStopAt: '17:30', autoStartAt: '15:57', savedSegments: 0, uploading: false, online: true },
+  mics: ['MacBook Pro 麦克风', 'AirPods Pro', 'USB 领夹麦'],
+  mic: 'MacBook Pro 麦克风',
+  autostart: true,
+  fab: true,
+  toast: null,
+  selectedLessonId: 'haoran',
+  version: '0.1.8',
+  updateReady: new URLSearchParams(location.search).has('update') ? '0.1.9' : null,
+};
+
+const listeners = new Map<string, Set<(p: never) => void>>();
+const emit = (event: string, payload: unknown) => listeners.get(event)?.forEach(cb => cb(structuredClone(payload) as never));
+const patch = (p: Partial<AppState>) => { s = { ...s, ...p }; emit('app-state', s); };
+const setLesson = (id: string, p: Partial<Lesson>) => s.lessons.map(l => (l.id === id ? { ...l, ...p } : l));
+const rec = (mode: AppState['rec']['mode'], sec = s.rec.sec): AppState['rec'] => ({
+  ...s.rec, mode, sec, paused: false, pausedSec: 0, nudge: '', savedSegments: Math.floor(sec / 30) + 1, uploading: false,
+});
+const pause = (nudge: AppState['rec']['nudge'] = '', pausedSec = 0) => patch({ rec: { ...s.rec, mode: 'paused', paused: true, pausedSec, nudge } });
+
+// 合并反馈：1.5 秒后「生成好」
+function merge(id: string, ids: string[]) {
+  return new Promise<void>(resolve => later(() => {
+    const src = ids.map(x => s.lessons.find(l => l.id === x)!).sort((a, b) => a.startAt - b.startAt);
+    const last = src.at(-1)!;
+    const lesson: Lesson = {
+      ...last, id, title: `${src.find(l => !l.kind)?.student || last.title.split(' · ')[0]} · 合并反馈`, topic: last.title.split(' · ')[0], kind: 'merged', student: src.find(l => !l.kind)?.student ?? '', sources: ids, copied: false,
+      summary: summaryOf('haoran'), reportUrl: 'https://app.jsjy.asia/classroom/report.html?t=demo-merged',
+    };
+    patch({ lessons: [...s.lessons.filter(l => l.id !== id), lesson] });
+    resolve();
+  }, 1500));
+}
+const timers: number[] = [];
+const later = (fn: () => void, ms: number) => timers.push(window.setTimeout(fn, ms));
+
+function startRec(lessonId: string, sec = 0, mode: AppState['rec']['mode'] = 'recording') {
+  patch({ lessons: setLesson(lessonId, { status: 'recording' }), rec: { ...rec(mode, sec), lessonId }, selectedLessonId: lessonId, toast: null });
+}
+function endRec() {
+  const id = s.rec.lessonId!;
+  patch({ rec: { ...rec('processing'), uploading: true }, lessons: setLesson(id, { status: 'processing', pendingUpload: true, audioSec: 3600, cloudSec: 3420 }) });
+  later(() => patch({ rec: { ...s.rec, uploading: false }, lessons: setLesson(id, { pendingUpload: false }) }), 1400);
+  later(() => patch({ rec: { ...s.rec, mode: 'gone' } }), 3200);
+  later(() => {
+    const summary = s.lessons.find(l => l.id === id)?.summary ?? '';
+    patch({ lessons: setLesson(id, { status: 'done', copied: false }), toast: { lessonId: id, title: '小雨今天的课堂总结好了', body: summary.replace(/\n+/g, ' ') } });
+  }, 3600);
+}
+
+function startAdhoc(sec = 0) {
+  const now = Date.now(), date = shanghaiToday(), start = new Date(now + 8 * 3_600_000).toISOString().slice(11, 16);
+  const id = `adhoc-${now.toString(16).padStart(16, '0').slice(-16)}`;
+  s.lessons = [...s.lessons, { id, date, start, end: '', startAt: now, endAt: now + 3 * 3_600_000, title: '随时录制', topic: '', status: 'upcoming', copied: false, kind: 'adhoc' }];
+  startRec(id, sec);
+}
+function endAdhoc() {
+  const id = s.rec.lessonId!;
+  patch({ rec: { ...rec('naming'), lessonId: id }, lessons: setLesson(id, { status: 'processing', needsName: true, end: new Date(Date.now() + 8 * 3_600_000).toISOString().slice(11, 16) }) });
+}
+function nameAdhoc(id: string, topic: string, kind: string) {
+  const meeting = kind === 'meeting';
+  patch({ rec: { ...rec('processing'), lessonId: id }, lessons: setLesson(id, { title: topic.trim() || '随时录制', kind: meeting ? 'meeting' : 'adhoc', needsName: false }) });
+  later(() => patch({ rec: { ...s.rec, mode: 'gone' } }), 2600);
+  later(() => {
+    const l = s.lessons.find(x => x.id === id)!;
+    const summary = meeting ? `${l.title} · 会议纪要\n\n演示总结\n\n【决定】\n1. 演示决定\n\n【待办】\n无\n\n【待跟进】\n无` : summaryOf('zihan');
+    patch({ lessons: setLesson(id, { status: 'done', summary, reportUrl: 'https://app.jsjy.asia/classroom/report.html?t=demo-zihan' }),
+      toast: { lessonId: id, title: `${l.title}的${meeting ? '会议纪要' : '课堂总结'}好了`, body: summary.replace(/\n+/g, ' ') } });
+  }, 3600);
+}
+
+const scene = new URLSearchParams(location.search).get('scene') ?? '0';
+function setScene() {
+  if (scene === 'login') return void (s.teacher = null);
+  s.selectedLessonId = scene === '0' ? 'haoran' : 'xiaoyu';
+  if (scene === '1') s.rec = { ...s.rec, mode: 'pre' };
+  if (scene === '2') startRec('xiaoyu');
+  if (scene === '3') startRec('xiaoyu', 15 * 60, 'warn');
+  if (scene === '4') startRec('xiaoyu', 63 * 60, 'quiet');
+  if (scene === 'cap') startRec('xiaoyu', 89 * 60, 'ending');
+  if (scene === '5') { startRec('xiaoyu', 73 * 60); endRec(); }
+  if (scene === 'paused') { startRec('xiaoyu', 49 * 60); pause('', 3 * 60 + 12); }
+  if (scene === 'voice') { startRec('xiaoyu', 49 * 60); pause('voice', 4 * 60); }
+  if (scene === 'long') { startRec('xiaoyu', 49 * 60); pause('long', 10 * 60); }
+  if (scene === 'confirm') { startRec('xiaoyu', 49 * 60); s.rec = rec('confirm'); }
+  if (scene === 'adhoc') { startAdhoc(22 * 60 + 14); endAdhoc(); }
+  // 随时录制的课也能合并反馈（不限学生）
+  if (scene === 'mergeadhoc') {
+    const date = shanghaiToday(), id = 'adhoc-00000000000000aa';
+    s.lessons = [...s.lessons, { id, date, start: '09:00', end: '10:20', startAt: epoch(date, '09:00'), endAt: epoch(date, '10:20'), title: '雅思口语加课', topic: '', status: 'done', copied: false, kind: 'adhoc', summary: summaryOf('haoran'), reportUrl: 'https://app.jsjy.asia/classroom/report.html?t=demo' }];
+    s.selectedLessonId = id;
+  }
+  // 云端重试用完的课、不算录制的课；?old 看 0.1.9 的样子（两种都显示成「整理中」）
+  const old = new URLSearchParams(location.search).has('old');
+  if (scene === 'failed') { s.selectedLessonId = 'haoran2'; s.lessons = setLesson('haoran2', { status: old ? 'processing' : 'failed', summary: undefined, reportUrl: undefined }); }
+  if (scene === 'empty') { s.selectedLessonId = 'zihan'; s.lessons = setLesson('zihan', { status: old ? 'processing' : 'empty', summary: undefined, reportUrl: undefined }); }
+}
+setScene();
+
+const commands: Record<string, (a: Record<string, string & boolean>) => unknown> = {
+  get_state: () => structuredClone(s),
+  login: () => { patch({ loggingIn: true }); later(() => patch({ loggingIn: false, teacher: { name: '王老师' } }), 2500); },
+  logout: () => patch({ teacher: null }),
+  start_recording: a => startRec(a.lessonId),
+  request_stop: () => patch({ rec: rec('confirm') }),
+  resume_recording: () => patch({ rec: rec('recording') }),
+  pause_recording: () => pause(),
+  cancel_stop: () => patch({ rec: { ...s.rec, mode: s.rec.paused ? 'paused' : 'recording' } }),
+  still_chatting: () => patch({ rec: { ...s.rec, nudge: '' } }),
+  merge_lessons: a => merge(a.mergeId, a.lessonIds as unknown as string[]),
+  end_recording: () => (s.lessons.find(l => l.id === s.rec.lessonId)?.kind ? endAdhoc() : endRec()),
+  start_adhoc: () => startAdhoc(),
+  name_adhoc: a => nameAdhoc(a.lessonId, a.topic, a.kind),
+  set_fab: a => patch({ fab: a.enabled }),
+  keep_recording: () => patch({ rec: rec('recording') }),
+  switch_mic: a => patch({ mic: a.name, rec: s.rec.mode === 'warn' ? rec('recording') : s.rec }),
+  save_summary: a => patch({ lessons: setLesson(a.lessonId, { summary: a.text }) }),
+  copy_summary: async a => {
+    await navigator.clipboard?.writeText(a.text).catch(() => {});
+    patch({ lessons: setLesson(a.lessonId, { summary: a.text, copied: true }) });
+  },
+  open_report: a => window.open(s.lessons.find(l => l.id === a.lessonId)?.reportUrl, '_blank', 'noopener'),
+  open_main: a => patch({ selectedLessonId: a.lessonId ?? s.selectedLessonId }),
+  hide_toast: () => patch({ toast: null }),
+  set_autostart: a => patch({ autostart: a.enabled }),
+  check_update: () => new Promise(r => setTimeout(() => r('已是最新版本'), 800)),
+  install_update: () => new Promise(r => setTimeout(r, 1500)),
+  refresh_lessons: () => new Promise(r => setTimeout(r, 800)),
+  delete_lesson: a => patch({ lessons: s.lessons.filter(l => l.id !== a.lessonId) }),
+};
+
+// 声波电平约 8 Hz；麦克风异常时几乎为 0。
+setInterval(() => emit('level', s.rec.mode === 'warn' ? 0.01 : 0.35 + Math.random() * 0.6), 125);
+
+export const mock: Backend = {
+  invoke: async (cmd, args = {}) => commands[cmd]?.(args as never),
+  listen: async (event, cb) => { if (!listeners.has(event)) listeners.set(event, new Set()); listeners.get(event)!.add(cb); },
+};
