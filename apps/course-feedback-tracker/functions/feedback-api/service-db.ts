@@ -9,7 +9,7 @@ import type { PostgrestLike, PostgrestResult } from "../../src/shared/rdb";
  * 浏览器那一侧继续走 js-sdk 的 rdb() + RLS 管理员白名单，两条路都不经过 anon。
  *
  * 这里不用 SDK 里的 PostgrestClient：那个包只发布了打包产物，没有可单独引入的子模块。
- * 本项目只用到 select/upsert/update 三种请求，直接拼 URL 比把整个 SDK 塞进来更省事。
+ * 本项目只用到 select/upsert/update/delete 几种请求，直接拼 URL 比把整个 SDK 塞进来更省事。
  */
 interface ServiceDbOptions {
   envId: string;
@@ -108,7 +108,9 @@ export function createServiceDb(options: ServiceDbOptions): PostgrestLike {
           send("POST", path, upsertOptions?.onConflict ? `on_conflict=${encodeURIComponent(upsertOptions.onConflict)}` : "", rows, {
             prefer: "resolution=merge-duplicates,return=minimal",
           }),
-        update: (values) => new Query((search) => send("PATCH", path, search, values)) as never,
+        // 返回被改动的行，调用方可据此判断条件更新（如 status=pending）是否命中
+        update: (values) => new Query((search) => send("PATCH", path, search, values, { prefer: "return=representation" })) as never,
+        delete: () => new Query((search) => send("DELETE", path, search)) as never,
       };
     },
   };

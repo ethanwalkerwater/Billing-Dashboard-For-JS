@@ -14,6 +14,8 @@ export interface TeacherLine extends Evaluation {
   students: string[];
   unitPriceAuto: number | null;
   settings: TeacherSettings;
+  /** 被排除的老师（兼职、已离职、不需要盯的）：不进统计和导出，页面上可恢复 */
+  excluded: boolean;
 }
 
 const num = (value: unknown): number | null => (value == null || value === "" ? null : Number(value));
@@ -39,7 +41,7 @@ export function useIncomeData(month: string) {
       setMonths(monthRows.data ?? []);
       setTeachers(teacherRows.data ?? []);
       const settings = settingRows.data?.[0];
-      if (settings) setRates({ min: Number(settings.min_rate), max: Number(settings.max_rate) });
+      if (settings) setRates({ min: Number(settings.min_rate), max: Number(settings.max_rate), baseMultiplier: Number(settings.base_multiplier ?? DEFAULT_RATES.baseMultiplier) });
       setError(null);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -64,6 +66,8 @@ export function useIncomeData(month: string) {
         const settings: TeacherSettings = {
           baseSalary: num(row?.base_salary),
           unitPrice: num(row?.unit_price),
+          extraIncome: num(row?.extra_income),
+          customRate: num(row?.custom_rate),
           note: row?.note ?? "",
         };
         const lessonFee = Number(monthRow?.lesson_fee ?? 0);
@@ -76,6 +80,7 @@ export function useIncomeData(month: string) {
           students: monthRow?.students ?? [],
           unitPriceAuto,
           settings,
+          excluded: row?.is_excluded ?? false,
           ...evaluateTeacher({ lessonFee, unitPriceAuto, settings, rates }),
         };
       })
@@ -97,15 +102,18 @@ export function useIncomeData(month: string) {
     }
   }, [month, reload]);
 
-  /** 底薪 / 单价 / 备注：改一格存一格。 */
+  /** 底薪 / 额外收入 / 单价 / 自定义系数 / 备注 / 排除：改一格存一格。 */
   const saveTeacher = useCallback(
-    async (teacher: string, patch: Partial<Pick<TeacherRow, "base_salary" | "unit_price" | "note">>) => {
+    async (teacher: string, patch: Partial<Pick<TeacherRow, "base_salary" | "extra_income" | "unit_price" | "custom_rate" | "note" | "is_excluded">>) => {
       const current = teachers.find((row) => row.teacher === teacher);
       const next: TeacherRow = {
         teacher,
         base_salary: current?.base_salary ?? null,
         unit_price: current?.unit_price ?? null,
+        extra_income: current?.extra_income ?? null,
+        custom_rate: current?.custom_rate ?? null,
         note: current?.note ?? "",
+        is_excluded: current?.is_excluded ?? false,
         ...patch,
         updated_at: new Date().toISOString(),
       };
@@ -125,7 +133,7 @@ export function useIncomeData(month: string) {
       setRates(next);
       const result = await db
         .from(SETTINGS_TABLE)
-        .upsert([{ id: 1, min_rate: next.min, max_rate: next.max, updated_at: new Date().toISOString() }], { onConflict: "id" });
+        .upsert([{ id: 1, min_rate: next.min, max_rate: next.max, base_multiplier: next.baseMultiplier, updated_at: new Date().toISOString() }], { onConflict: "id" });
       if (result.error) setError(`保存系数失败：${result.error.message}`);
     },
     [],

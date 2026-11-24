@@ -28,12 +28,19 @@ export interface PostgrestLike {
       options?: { onConflict?: string },
     ): PromiseLike<PostgrestResult<unknown>>;
     update(values: Record<string, unknown>): PostgrestFilter<unknown>;
+    delete(): PostgrestFilter<unknown>;
   };
 }
 
 export const TASKS_TABLE = "feedback_tasks";
 export const RESPONSES_TABLE = "feedback_responses";
 export const ALIASES_TABLE = "feedback_name_aliases";
+export const EXCLUDED_TEACHERS_TABLE = "feedback_excluded_teachers";
+export const SNAPSHOTS_TABLE = "feedback_source_snapshots";
+export const SCORE_HISTORY_TABLE = "feedback_score_history";
+export const SCORE_RESULTS_TABLE = "feedback_score_results";
+export const COURSE_TYPE_RULES_TABLE = "feedback_course_type_rules";
+export const OWNER_ASSIGNMENTS_TABLE = "feedback_owner_assignments";
 
 function unwrap<T>(result: PostgrestResult<T>, context: string): T[] {
   if (result.error) throw new Error(`${context}失败：${result.error.message}`);
@@ -67,7 +74,25 @@ export class RdbFeedbackTaskRepository implements FeedbackTaskRepository {
     return unwrap(result, "按短链接读取任务").map(rowToTask)[0] ?? null;
   }
 
+  async listResponseMonths(responseRecordIds: string[]): Promise<string[]> {
+    if (responseRecordIds.length === 0) return [];
+    const result = await this.db
+      .from(RESPONSES_TABLE)
+      .select<{ collection_month: string | null }>("collection_month")
+      .in("response_record_id", responseRecordIds);
+    return [...new Set(unwrap(result, "读取答卷轮次").flatMap((row) => (row.collection_month ? [row.collection_month] : [])))];
+  }
+
+  async listCourseTypeOverrides(): Promise<Map<string, boolean>> {
+    const result = await this.db.from(COURSE_TYPE_RULES_TABLE).select<{ course_type: string; is_course: boolean }>("course_type,is_course");
+    return new Map(unwrap(result, "读取课程类型设定").map((row) => [row.course_type, row.is_course]));
+  }
+
   async applySyncPlan(plan: TaskSyncPlan): Promise<void> {
+    for (const chunk of chunked(plan.remove.map((task) => task.taskId), 200)) {
+      const result = await this.db.from(TASKS_TABLE).delete().in("task_id", chunk);
+      if (result.error) throw new Error(`删除已不是课程的任务失败：${result.error.message}`);
+    }
     const rows = [...plan.create, ...plan.update].map(taskToRow) as unknown as Record<string, unknown>[];
     if (rows.length === 0) return;
     // task_id 唯一，upsert 保证重复同步幂等；状态字段由 buildTaskSyncPlan 保留教务的手动修改。
@@ -91,6 +116,44 @@ export class RdbFeedbackTaskRepository implements FeedbackTaskRepository {
     return unwrap(result, "读取手动绑定")
       .filter((row) => row.task_id)
       .map((row) => ({ responseRecordId: row.response_record_id, taskId: row.task_id! }));
+  }
+
+  async listResponseIds(collectionMonth: string): Promise<string[]> {
+    const result = await this.db
+      .from(RESPONSES_TABLE)
+      .select<{ response_record_id: string }>("response_record_id")
+      .eq("collection_month", collectionMonth);
+    return unwrap(result, "读取答卷引用").map((row) => row.response_record_id);
+  }
+
+  async deleteResponses(responseRecordIds: string[]): Promise<void> {
+    for (const chunk of chunked(responseRecordIds, 200)) {
+      const result = await this.db.from(RESPONSES_TABLE).delete().in("response_record_id", chunk);
+      if (result.error) throw new Error(`删除答卷引用失败：${result.error.message}`);
+    }
+  }
+
+  async updateTaskSlots(tasks: StoredFeedbackTask[]): Promise<void> {
+    for (const task of tasks) {
+      const result = await this.db
+        .from(TASKS_TABLE)
+        .update({
+          status: task.status,
+          student_response_id: task.studentResponseId ?? null,
+          parent_response_id: task.parentResponseId ?? null,
+          submitted_at: task.submittedAt ?? null,
+          bound_by: task.boundBy ?? null,
+        })
+        .eq("task_id", task.taskId);
+      if (result.error) throw new Error(`清理任务答卷位置失败：${result.error.message}`);
+    }
+  }
+
+  async saveSnapshot(kind: "schedule" | "feedback", month: string, csv: string, rowCount: number): Promise<void> {
+    const result = await this.db
+      .from(SNAPSHOTS_TABLE)
+      .upsert([{ kind, month, csv, row_count: rowCount, synced_at: new Date().toISOString() }], { onConflict: "kind,month" });
+    if (result.error) throw new Error(`保存${kind === "schedule" ? "课表" : "答卷"}快照失败：${result.error.message}`);
   }
 
   async applyResponseOutcomes(outcomes: ResponseOutcome[]): Promise<void> {

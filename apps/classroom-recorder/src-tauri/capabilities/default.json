@@ -1,0 +1,15 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "菁仕课堂四个窗口：事件监听 + 拖动胶囊 / 悬浮按钮",
+  "windows": [
+    "main",
+    "pill",
+    "toast",
+    "fab"
+  ],
+  "permissions": [
+    "core:default",
+    "core:window:allow-start-dragging"
+  ]
+}

@@ -1,0 +1,60 @@
+name: classroom-recorder release
+
+on:
+  push:
+    tags: ["classroom-v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            args: --target universal-apple-darwin --bundles app,dmg
+            rust_targets: aarch64-apple-darwin,x86_64-apple-darwin
+          - platform: windows-latest
+            args: --bundles nsis
+            rust_targets: ""
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_targets }}
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: apps/classroom-recorder/src-tauri -> target
+
+      - run: npm ci
+
+      # 只打包和签名，不在这里建 Release：仓库默认 GITHUB_TOKEN 建不了 Release，
+      # 发布由本地 scripts/publish-release.mjs 完成（下载这里的产物 → 传 CloudBase → 建 GitHub Release 留档）。
+      # 没有 Apple 开发者证书，不要传 APPLE_* 环境变量（传空值会让签名步骤失败）。
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: apps/classroom-recorder
+          args: ${{ matrix.args }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bundle-${{ matrix.platform }}
+          if-no-files-found: error
+          path: |
+            apps/classroom-recorder/src-tauri/target/*/release/bundle/macos/*.app.tar.gz*
+            apps/classroom-recorder/src-tauri/target/*/release/bundle/dmg/*.dmg
+            apps/classroom-recorder/src-tauri/target/release/bundle/nsis/*-setup.exe*

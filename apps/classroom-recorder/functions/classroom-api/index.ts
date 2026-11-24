@@ -1,0 +1,1536 @@
+/**
+ * classroom-api —— 菁仕课堂云端（HTTP 访问服务路径 /classroom-api，转写完成靠腾讯云回调推进，每日定时触发兜底）。
+ * 接口与数据结构见 docs/design.md；纯逻辑在 src/server/logic.ts。
+ *
+ *   定时触发（北京时间 03:00 和 22:45，兜底：失败重试、回调丢失、App 没回来的课、清理过期录音） runPipeline
+ *   tcb fn invoke {"action":"tick"}                 手动推进一次
+ *   tcb fn invoke {"action":"tick","lessonId":"rec…"} 只推进某节课
+ *   {"action":"rebuild","lessonId":"rec…"}            按现在的流程重出报告，只返回不写库（scripts/rebuild-archive.ts 逐节调用）
+ */
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { once } from "node:events";
+import { createReadStream, createWriteStream } from "node:fs";
+import { mkdtemp, rm, stat } from "node:fs/promises";
+import type { IncomingMessage } from "node:http";
+import https from "node:https";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import type { ReadableStream as NodeReadableStream } from "node:stream/web";
+
+import { asr } from "tencentcloud-sdk-nodejs-asr";
+import { CommonClient } from "tencentcloud-sdk-nodejs-common/tencentcloud/common";
+
+import { FeishuClient } from "../../../course-feedback-tracker/src/server/feishu/client";
+import { parseTeacher, TEACHER_FIELDS } from "../../../teacher-birthday/src/domain/records";
+import * as L from "../../src/server/logic";
+import type { LessonDoc, Stage } from "../../src/server/logic";
+import { formRoute, workbenchRoute } from "./workbench";
+import { issueSession, readSession, SESSION_RENEW_MS, type Session } from "./session";
+
+import { issueReviewSession, readReviewSession } from "./review/access";
+import { workflow } from "./review/workflow";
+import { catalog } from "./review/catalog";
+import { processReview } from "./review/jobs.cjs";
+
+export function requireEnv(name: string): string {
+  const value = process.env[name]?.trim();
+  if (!value) throw new Error(`缺少环境变量 ${name}`);
+  return value;
+}
+
+const AUTH = "classroom_auth";
+const SESSIONS = "classroom_sessions";
+const LESSONS = "classroom_lessons";
+const SEGMENTS = "classroom_segments";
+const PROMPTS = "classroom_prompts";
+export const ADMIN_SESSIONS = "classroom_admin_sessions";
+const ADMINS = "classroom_admins";
+
+/**
+ * CloudBase PostgreSQL（PostgREST）。环境没开文档型数据库；表结构见 migrations/。
+ * 用环境 API Key（service_role）直连，同 course-feedback-tracker/functions/feedback-api/service-db.ts 的做法；
+ * 这里需要 lt / 条件更新 / 条件删除，直接拼查询串比扩那个只支持 eq/in 的客户端省事。
+ */
+export async function pg<T = any>(method: string, table: string, query = "", body?: unknown, prefer = "return=representation", signal?: AbortSignal): Promise<T[]> {
+  const response = await fetch(`https://${requireEnv("CLOUDBASE_ENV_ID")}.api.tcloudbasegateway.com/v1/rdb/rest/${table}${query ? `?${query}` : ""}`, {
+    method, signal,
+    headers: {
+      authorization: `Bearer ${requireEnv("CLOUDBASE_API_KEY")}`, "content-type": "application/json", accept: "application/json",
+      "accept-profile": "public", "content-profile": "public", prefer,
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const text = await response.text();
+  if (!response.ok) throw new Error(`数据库 ${method} ${table} 失败：${response.status} ${text.slice(0, 300)}`);
+  return text ? (JSON.parse(text) as T[]) : [];
+}
+/**
+ * 录音存 PostgreSQL 环境的 Storage 桶 `classroom`（node-sdk 的 uploadFile 在 PG 环境报 STORAGE_NOT_SUPPORTED），
+ * 接口同 tcb CLI 的 `storage objects`：/v1/storages/object/…，同样用 API Key 鉴权。对象名 = `{lessonId}/{文件}`。
+ */
+const STORAGE = () => `https://${requireEnv("CLOUDBASE_ENV_ID")}.api.tcloudbasegateway.com/v1/storages`;
+const BUCKET = "classroom";
+const storageAuth = () => ({ authorization: `Bearer ${requireEnv("CLOUDBASE_API_KEY")}` });
+export async function putObject(name: string, bytes: Buffer, contentType = "audio/mpeg"): Promise<string> {
+  const response = await fetch(`${STORAGE()}/object/${BUCKET}/${name}`, { method: "PUT", headers: { ...storageAuth(), "content-type": contentType }, body: new Uint8Array(bytes) });
+  if (!response.ok) throw new Error(`存储录音失败：${response.status} ${(await response.text()).slice(0, 200)}`);
+  return name;
+}
+async function readObject(name: string, signal?: AbortSignal) {
+  const response = await fetch(`${STORAGE()}/object/authenticated/${BUCKET}/${name}`, { headers: storageAuth(), signal });
+  if (!response.ok) throw new Error(`下载分段失败：${name} ${response.status}`);
+  return response;
+}
+export async function getObject(name: string): Promise<Buffer> {
+  return Buffer.from(await (await readObject(name)).arrayBuffer());
+}
+
+async function* downloadParts(parts: string[]) {
+  for (let i = 0; i < parts.length; i += 10) {
+    const controller = new AbortController();
+    try {
+      const batch = await Promise.all(parts.slice(i, i + 10).map((name) => readObject(name, controller.signal)));
+      for (const part of batch) {
+        if (part.body) yield* Readable.fromWeb(part.body as NodeReadableStream);
+      }
+    } finally {
+      controller.abort(); // 下载或写盘失败时关闭该批剩下的连接
+    }
+  }
+}
+
+/** 按顺序流式写到临时文件，再按已知长度上传；下载和上传都保持背压。 */
+export async function concatObjects(name: string, parts: string[], contentType = "audio/mpeg", expectSha256?: string): Promise<number> {
+  const directory = await mkdtemp(join(tmpdir(), "classroom-audio-"));
+  const file = join(directory, "audio");
+  try {
+    await pipeline(downloadParts(parts), createWriteStream(file));
+    const { size } = await stat(file);
+    // 分块拼出来的必须和老师电脑上的整节一模一样，否则不交给转写
+    if (expectSha256) {
+      const hash = createHash("sha256");
+      for await (const chunk of createReadStream(file)) hash.update(chunk as Buffer);
+      if (hash.digest("hex") !== expectSha256) throw new Error("拼好的录音和老师电脑上的校验值不一致");
+    }
+    // Node 20 fetch 在大文件流式 PUT 时仍会积累大量外部内存。
+    const request = https.request(`${STORAGE()}/object/${BUCKET}/${name}`, {
+      method: "PUT", headers: { ...storageAuth(), "content-type": contentType, "content-length": String(size) },
+    });
+    const reply = once(request, "response");
+    const [, [incoming]] = await Promise.all([pipeline(createReadStream(file), request), reply]);
+    const response = incoming as IncomingMessage;
+    const status = response.statusCode ?? 0;
+    let message = "";
+    for await (const chunk of response.setEncoding("utf8")) {
+      if (message.length < 200) message += chunk.slice(0, 200 - message.length);
+    }
+    if (status < 200 || status >= 300) throw new Error(`存储录音失败：${status} ${message}`);
+    return size;
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}
+/** 批量删除对象（接口每次最多 20 个），失败时由后续清理再试。 */
+async function removeObjects(names: string[]): Promise<boolean> {
+  const batches = Array.from({ length: Math.ceil(names.length / 20) }, (_, i) => names.slice(i * 20, i * 20 + 20));
+  const results = await Promise.allSettled(batches.map(async (prefixes) => {
+    const response = await fetch(`${STORAGE()}/object/${BUCKET}`, { method: "DELETE", headers: { ...storageAuth(), "content-type": "application/json" }, body: JSON.stringify({ prefixes }) });
+    if (!response.ok) throw new Error(`删除录音失败：${response.status} ${(await response.text()).slice(0, 200)}`);
+  }));
+  for (const result of results) if (result.status === "rejected") console.error(result.reason);
+  return results.every((result) => result.status === "fulfilled");
+}
+/** 对象大小（字节），不存在返回 null；HEAD 不下载内容 */
+async function objectSize(name: string): Promise<number | null> {
+  const response = await fetch(`${STORAGE()}/object/authenticated/${BUCKET}/${name}`, { method: "HEAD", headers: storageAuth() });
+  if (response.status === 404) return null;
+  if (!response.ok) throw new Error(`查询录音失败：${name} ${response.status}`);
+  return Number(response.headers.get("content-length")) || null;
+}
+/** App 直传用的签名上传地址：服务端固定 60 秒有效，x-upsert 允许覆盖（重传、拖堂后再传） */
+async function uploadUrl(name: string): Promise<string> {
+  const response = await fetch(`${STORAGE()}/object/upload/sign/${BUCKET}/${name}`, { method: "POST", headers: { ...storageAuth(), "content-type": "application/json", "x-upsert": "true" }, body: "{}" });
+  const body = (await response.json().catch(() => ({}))) as { fullUrl?: string };
+  if (!response.ok || !body.fullUrl) throw new Error(`获取上传地址失败：${response.status}`);
+  return body.fullUrl;
+}
+/**
+ * 分块上传（0.1.14 起）：每位老师每台电脑一个目录 `{id}/p-{key}/`。签名不查库，所以按目录隔开：
+ * 别人签不到你的目录，云端拼的时候只读这节课主人那台电脑的目录。
+ */
+const partDir = (id: string, openId: string, device = "") => `${id}/p-${sha256(`${openId}|${device || "-"}`).slice(0, 16)}`;
+const partName = (dir: string, n: number) => `${dir}/${String(n).padStart(3, "0")}.mp3`;
+/** 这节课云端所有的块（转写入库后删掉；网好时 App 另外整段直传过，块也一样删） */
+async function partFiles(doc: Pick<LessonDoc, "_id" | "teacherOpenId" | "device" | "partsAt">): Promise<string[]> {
+  if (!doc.partsAt) return [];
+  const dir = partDir(doc._id, doc.teacherOpenId, doc.device ?? "");
+  // 列不出来就先不删（清理失败不能把出报告搞失败），30 天过期清理时再列一次
+  return [...(await listParts(dir).catch(() => new Map())).keys()].map((n) => partName(dir, n));
+}
+/** 云端已有的块：序号 → { 大小, 上传时间 } */
+async function listParts(dir: string): Promise<Map<number, { size: number; at: number }>> {
+  const response = await fetch(`${STORAGE()}/object/list/${BUCKET}`, {
+    method: "POST", headers: { ...storageAuth(), "content-type": "application/json" }, body: JSON.stringify({ prefix: `${dir}/`, limit: 1000 }),
+  });
+  if (!response.ok) throw new Error(`列出录音块失败：${response.status}`);
+  const body = (await response.json()) as { objects?: Array<{ name: string; updated_at?: string; metadata?: { size?: number } }> };
+  const parts = new Map<number, { size: number; at: number }>();
+  for (const o of body.objects ?? []) {
+    const m = o.name.match(/\/(\d{3,})\.mp3$/);
+    if (m && o.name.startsWith(`${dir}/`)) parts.set(Number(m[1]), { size: Number(o.metadata?.size) || 0, at: Date.parse(o.updated_at ?? "") || 0 });
+  }
+  return parts;
+}
+export async function signedUrl(name: string, expiresIn: number): Promise<string> {
+  const response = await fetch(`${STORAGE()}/object/sign/${BUCKET}/${name}`, { method: "POST", headers: { ...storageAuth(), "content-type": "application/json" }, body: JSON.stringify({ expiresIn }) });
+  const body = (await response.json().catch(() => ({}))) as { fullSignedURL?: string }; // signedURL 是带 /v1/storages 的相对路径
+  if (!response.ok || !body.fullSignedURL) throw new Error(`获取合并录音临时链接失败：${response.status}`);
+  return body.fullSignedURL;
+}
+
+export const eq = (value: string | number) => `eq.${encodeURIComponent(String(value))}`;
+export const inList = (values: string[]) => `in.(${values.map((v) => encodeURIComponent(`"${v}"`)).join(",")})`;
+
+let feishuClient: FeishuClient | undefined;
+export const feishu = () => (feishuClient ??= new FeishuClient({ appId: requireEnv("FEISHU_APP_ID"), appSecret: requireEnv("FEISHU_APP_SECRET") }));
+export const schedule = () => ({ appToken: requireEnv("SCHEDULE_APP_TOKEN"), tableId: requireEnv("SCHEDULE_TABLE_ID") });
+
+let asrClient: InstanceType<typeof asr.v20190614.Client> | undefined;
+const asrApi = () =>
+  (asrClient ??= new asr.v20190614.Client({
+    credential: { secretId: requireEnv("TENCENT_SECRET_ID"), secretKey: requireEnv("TENCENT_SECRET_KEY") },
+    region: "ap-shanghai",
+    profile: { httpProfile: { endpoint: "asr.tencentcloudapi.com" } },
+  }));
+
+export const sha256 = (data: string | Buffer) => createHash("sha256").update(data).digest("hex");
+const RECORDING_ID = /^(rec[A-Za-z0-9]+|adhoc-[0-9a-f]{16})$/;
+const LEASE_MS = 6 * 60_000; // > 函数超时 300 s，进程被杀后 6 分钟自动释放
+
+// ---------- HTTP helpers ----------
+
+export interface HttpEvent {
+  httpMethod?: string; path?: string; headers?: Record<string, string>; queryStringParameters?: Record<string, string>;
+  body?: string; isBase64Encoded?: boolean; Type?: string; TriggerName?: string; action?: string; signature?: string; issuedAt?: number; lessonId?: string; lessonIds?: unknown; prompts?: L.Prompts;
+}
+
+
+export const json = (statusCode: number, body: unknown) => ({
+  statusCode,
+  headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "access-control-allow-origin": "*" },
+  body: JSON.stringify(body),
+  isBase64Encoded: false,
+});
+export const fail = (statusCode: number, error: string, message: string) => json(statusCode, { error, message });
+const escapeHtml = (value: string) => value.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
+const page = (statusCode: number, title: string, message: string) => ({
+  statusCode,
+  headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
+  isBase64Encoded: false,
+  body: `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark"><title>${escapeHtml(title)} · 菁仕课堂</title><style>
+:root{--bg:#f6f7f9;--paper:#fff;--text:#16181d;--muted:#5d6573;--line:#e3e6eb}@media(prefers-color-scheme:dark){:root{--bg:#0f1115;--paper:#171a20;--text:#eceef2;--muted:#a3aab6;--line:#2a2f38}}
+body{margin:0;min-height:100vh;display:grid;place-items:center;background:var(--bg);color:var(--text);font:15px/1.8 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif}
+main{width:min(420px,calc(100% - 32px));padding:36px 32px;background:var(--paper);border:1px solid var(--line);border-radius:16px}.brand{display:flex;align-items:center;gap:10px;font-weight:600;font-size:14px}.mark{display:grid;place-items:center;width:30px;height:30px;background:#2f6bff;color:#fff;border-radius:8px}h1{font-size:24px;margin:28px 0 8px}p{margin:0;color:var(--muted)}
+</style></head><body><main><div class="brand"><span class="mark">菁</span>菁仕课堂</div><h1>${escapeHtml(title)}</h1><p>${escapeHtml(message)}</p></main></body></html>`,
+});
+
+export function header(event: HttpEvent, name: string): string {
+  for (const [key, value] of Object.entries(event.headers ?? {})) if (key.toLowerCase() === name) return String(value);
+  return "";
+}
+export function jsonBody(event: HttpEvent): Record<string, any> {
+  if (!event.body) return {};
+  try {
+    return JSON.parse(event.isBase64Encoded ? Buffer.from(event.body, "base64").toString("utf8") : event.body);
+  } catch {
+    return {};
+  }
+}
+
+export const getRow = async <T>(table: string, id: string): Promise<T | undefined> => (await pg<T>("GET", table, `_id=${eq(id)}&limit=1`))[0];
+/** 课程行 + 分段表拼成 LessonDoc */
+async function getLesson(id: string, withSegments = true): Promise<LessonDoc | undefined> {
+  const row = await getRow<Omit<LessonDoc, "segments">>(LESSONS, id);
+  if (!row) return undefined;
+  if (!withSegments || row.earlyAt || row.finalUploadAt || row.partsAt) return { ...row, segments: {} };
+  const segments = await pg<{ seq: number; sha256: string; bytes: number; fileId: string }>("GET", SEGMENTS, `lessonId=${eq(id)}&select=seq,sha256,bytes,fileId`);
+  return { ...row, segments: Object.fromEntries(segments.map(({ seq, ...rest }) => [String(seq), rest])) };
+}
+const updateLesson = (id: string, patch: Record<string, unknown>) => pg("PATCH", LESSONS, `_id=${eq(id)}`, { ...patch, updatedAt: Date.now() }, "return=minimal");
+
+const signedSessionKey = () => requireEnv("CLOUDBASE_API_KEY");
+const wantsSignedSession = (event: HttpEvent) => header(event, "x-classroom-signed-session") === "1";
+const revokedTeacher = (openId: string) =>
+  (process.env.CLASSROOM_REVOKED_OPEN_IDS ?? "").split(",").some((id) => id.trim() === openId);
+
+async function authenticate(event: HttpEvent, scheduleOnly: boolean): Promise<{ session: Session; renewal?: string } | undefined> {
+  const token = header(event, "authorization").replace(/^Bearer\s+/i, "").trim();
+  if (token.startsWith("s1.")) {
+    const claims = readSession(token, signedSessionKey());
+    if (!claims || revokedTeacher(claims.openId)) return;
+    // 已经访问数据库的操作仍允许通过删除会话行立即吊销。
+    const session = scheduleOnly ? claims : await getRow<Session>(SESSIONS, claims._id);
+    if (!session || session.openId !== claims.openId) return;
+    return { session, renewal: claims.exp - Date.now() <= SESSION_RENEW_MS ? issueSession(session, signedSessionKey()) : undefined };
+  }
+  const session = token ? await getRow<Session>(SESSIONS, sha256(token)) : undefined;
+  if (!session || revokedTeacher(session.openId)) return;
+  return { session, renewal: wantsSignedSession(event) ? issueSession(session, signedSessionKey()) : undefined };
+}
+
+// ---------- 飞书登录 ----------
+
+const redirectUri = () => `${requireEnv("API_BASE_URL").replace(/\/$/, "")}/auth/callback`;
+
+/** 老师 App（kind 为空）和后台网页（kind = admin）共用同一个飞书回调地址，靠 state 行区分 */
+async function authorizeUrl(kind?: "admin" | "workbench" | "fupan", nonce?: string) {
+  const state = randomBytes(16).toString("base64url") + (nonce ? "." + sha256(nonce) : "");
+  await pg("POST", AUTH, "", [{ _id: state, status: "pending", expiresAt: Date.now() + 10 * 60_000, ...(kind ? { kind } : {}) }], "return=minimal");
+  const url = new URL("https://accounts.feishu.cn/open-apis/authen/v1/authorize");
+  url.searchParams.set("client_id", requireEnv("FEISHU_APP_ID"));
+  url.searchParams.set("redirect_uri", redirectUri());
+  url.searchParams.set("state", state);
+  return { state, url: url.href };
+}
+
+const authStart = async () => json(200, await authorizeUrl());
+
+async function feishuUser(code: string): Promise<{ openId: string; name: string }> {
+  const tokenResponse = await fetch("https://open.feishu.cn/open-apis/authen/v2/oauth/token", {
+    method: "POST",
+    headers: { "content-type": "application/json; charset=utf-8" },
+    body: JSON.stringify({ grant_type: "authorization_code", client_id: requireEnv("FEISHU_APP_ID"), client_secret: requireEnv("FEISHU_APP_SECRET"), code, redirect_uri: redirectUri() }),
+  });
+  const token = (await tokenResponse.json()) as { code?: number; access_token?: string; error_description?: string; msg?: string };
+  if (token.code !== 0 || !token.access_token) throw new Error(`飞书换取用户凭证失败：${token.error_description ?? token.msg ?? token.code}`);
+  const infoResponse = await fetch("https://open.feishu.cn/open-apis/authen/v1/user_info", { headers: { authorization: `Bearer ${token.access_token}` } });
+  const info = (await infoResponse.json()) as { code?: number; msg?: string; data?: { open_id?: string; name?: string } };
+  if (info.code !== 0 || !info.data?.open_id) throw new Error(`飞书用户信息获取失败：${info.msg ?? info.code}`);
+  return { openId: info.data.open_id, name: info.data.name ?? "" };
+}
+
+/** 「老师信息」表里认人；第一次登录、档案还没选飞书账号：按姓名认上后写回，以后都按飞书账号认 */
+async function findTeacher(openId: string, name: string) {
+  const teacherTable = { appToken: requireEnv("TEACHER_APP_TOKEN"), tableId: requireEnv("TEACHER_TABLE_ID") };
+  const match = L.matchTeacher((await feishu().listAllRecords(teacherTable)).map(parseTeacher), openId, name);
+  if (match?.bind) await feishu().updateRecord({ ...teacherTable, recordId: match.teacher.recordId, fields: { [TEACHER_FIELDS.feishu]: [{ id: openId }] } });
+  return match;
+}
+
+async function authCallback(query: Record<string, string>, event: HttpEvent) {
+  const state = query.state ?? "";
+  const auth = state ? await getRow<{ status: string; expiresAt: number; kind?: string }>(AUTH, state) : undefined;
+  if (!auth || auth.expiresAt < Date.now() || auth.status !== "pending") return page(400, "登录链接已过期", "请回到菁仕课堂，重新点「飞书登录」。");
+  if (!query.code) return page(400, "没有完成授权", "请回到菁仕课堂，重新点「飞书登录」并同意授权。");
+  try {
+    if (auth.kind === "fupan") return await reviewCallback(state, query.code, event);
+    if (auth.kind === "admin" || auth.kind === "workbench") return await adminCallback(state, query.code, auth.kind);
+    const { openId, name } = await feishuUser(query.code);
+    const match = await findTeacher(openId, name);
+    if (!match) {
+      await pg("PATCH", AUTH, `_id=${eq(state)}`, { status: "not_teacher" }, "return=minimal");
+      await notifyAdmins(`${name || "有人"} 想登录菁仕课堂，但「老师信息」表里没有对得上的档案。请在老师信息表新增一行（姓名和飞书里一致），并选上他的「飞书账号」。`);
+      return page(403, "老师档案里还没有你", `${name || "你"}，「老师信息」表里没有找到你的姓名，已通知教务添加。添加好后回到菁仕课堂再点一次「飞书登录」。`);
+    }
+    const { teacher } = match;
+    await pg("PATCH", AUTH, `_id=${eq(state)}`, { status: "done", openId, name: teacher.name, scheduleName: teacher.scheduleName }, "return=minimal");
+    return page(200, "登录成功", `${match.bind ? `${teacher.name}，已自动关联你在「老师信息」里的档案。` : ""}可以回到菁仕课堂了，这个页面可以关闭。`);
+  } catch (error) {
+    console.error(error);
+    return page(500, "登录失败", "飞书暂时没有响应，请回到菁仕课堂重试。");
+  }
+}
+
+async function authPoll(state: string, signed: boolean) {
+  const auth = state ? await getRow<{ status: string; expiresAt: number; openId: string; name: string; scheduleName: string }>(AUTH, state) : undefined;
+  if (!auth || auth.expiresAt < Date.now()) return fail(410, "EXPIRED", "登录已过期，请重新登录");
+  if (auth.status === "pending") return json(202, { pending: true });
+  if (auth.status === "not_teacher" || (auth.openId && revokedTeacher(auth.openId))) return fail(403, "NOT_A_TEACHER", "「老师信息」表里还没有你，已通知教务添加，添加好后再登录");
+  // 原子领取：同一个 state 只发一次 token；数据库只存 token 的 sha256
+  const claimed = await pg("DELETE", AUTH, `_id=${eq(state)}&status=eq.done`);
+  if (!claimed.length) return fail(410, "EXPIRED", "登录已过期，请重新登录");
+  const token = randomBytes(32).toString("base64url");
+  const session = { _id: sha256(token), openId: auth.openId, name: auth.name, scheduleName: auth.scheduleName };
+  await pg("POST", SESSIONS, "", [{ ...session, createdAt: Date.now() }], "return=minimal");
+  return json(200, { token: signed ? issueSession(session, signedSessionKey()) : token, teacher: { name: auth.name } });
+}
+
+// ---------- 课程 ----------
+
+async function listLessons(session: Session, scheduleOnly: boolean) {
+  const { from, to } = L.lessonWindow(Date.now());
+  const records = await feishu().searchRecords({ ...schedule(), fieldNames: L.SCHEDULE_FIELDS, filter: L.scheduleFilter(session.scheduleName, from, to) });
+  const lessons = records
+    .map(L.parseScheduleRecord)
+    // 没有学生的是会议 / 例会 / 「空出」占位，不当课录（「空出」常是 00:00–23:00，否则会整天自动录）
+    .filter((lesson): lesson is L.ScheduleLesson => lesson !== null && Boolean(lesson.student) && lesson.startAt >= from && lesson.startAt < to)
+    .sort((a, b) => a.startAt - b.startAt);
+  const base = requireEnv("REPORT_BASE_URL");
+  if (scheduleOnly) return json(200, { lessons: lessons.map((lesson) => L.toLesson(lesson, undefined, base)) });
+  const ids = lessons.map((lesson) => lesson.id);
+  const docs = ids.length
+    ? await pg<LessonDoc>("GET", LESSONS, `_id=${inList(ids)}&teacherOpenId=${eq(session.openId)}&select=_id,stage,attempts,copied,summary,editedSummary,reportToken,report`)
+    : [];
+  const byId = new Map(docs.map((doc) => [doc._id, doc]));
+  const adhoc = await pg<LessonDoc>("GET", LESSONS,
+    `teacherOpenId=${eq(session.openId)}&kind=in.(adhoc,meeting)&startAt=gte.${from}&startAt=lt.${to}&select=_id,course,kind,startAt,endAt,stage,attempts,copied,summary,editedSummary,reportToken`);
+  const merged = await pg<LessonDoc>("GET", LESSONS,
+    `teacherOpenId=${eq(session.openId)}&kind=eq.merged&startAt=gte.${from}&startAt=lt.${to}&select=_id,student,course,kind,startAt,endAt,stage,attempts,copied,summary,editedSummary,reportToken,sources`);
+  return json(200, { lessons: [
+    ...lessons.map((lesson) => L.toLesson(lesson, byId.get(lesson.id), base)),
+    ...adhoc.map((doc) => L.adhocLesson(doc, base)),
+    ...merged.map((doc) => L.mergedLesson(doc, base)),
+  ] });
+}
+
+/** 第一次碰到某节课时回查课表，确认是这位老师的课再建档；之后只比对 teacherOpenId */
+async function ownLesson(id: string, session: Session, device = "", withSegments = true): Promise<LessonDoc | string> {
+  const existing = await getLesson(id, withSegments);
+  if (existing) return existing.teacherOpenId !== session.openId ? "NOT_YOUR_LESSON" : await claimDevice(existing, device);
+  const now = Date.now();
+  // 随时录制：不在课表里，第一次上传就按这位老师建档；主题、类型、真实起止时间等 finish 时再填
+  const lesson = L.isAdhocId(id)
+    ? { student: "", course: "随时录制", location: "", startAt: now, endAt: now + L.ADHOC_MAX_MS, kind: "adhoc" as const }
+    : await scheduledLesson(id, session);
+  if (typeof lesson === "string") return lesson;
+  const { segments, ...row }: LessonDoc = {
+    _id: id, teacherOpenId: session.openId, teacherName: session.name, kind: "lesson", ...lesson,
+    stage: "recording", attempts: 0, lockedUntil: 0, segments: {}, copied: false, createdAt: now, updatedAt: now,
+  };
+  // 并发上传同时建档：冲突时忽略，以已建好的那行为准
+  await pg("POST", LESSONS, "on_conflict=_id", [row], "resolution=ignore-duplicates,return=minimal");
+  const created = await getLesson(id, withSegments);
+  if (!created) return "LESSON_NOT_FOUND";
+  return created.teacherOpenId === session.openId ? await claimDevice(created, device) : "NOT_YOUR_LESSON";
+}
+
+async function scheduledLesson(id: string, session: Session) {
+  const record = await feishu().getRecord({ ...schedule(), recordId: id });
+  const lesson = record ? L.parseScheduleRecord(record) : null;
+  if (!lesson) return "LESSON_NOT_FOUND";
+  if (lesson.teacher !== session.scheduleName) return "NOT_YOUR_LESSON";
+  return { student: lesson.student, course: lesson.course, location: lesson.location, startAt: lesson.startAt, endAt: lesson.endAt };
+}
+
+/** 同一节课只收第一台上传的电脑：老师两台电脑都开着时，两边都会自动录，分段序号相同会互相覆盖 */
+async function claimDevice(lesson: LessonDoc, device: string): Promise<LessonDoc | string> {
+  if (!device || lesson.device === device) return lesson;
+  if (lesson.device) return "OTHER_DEVICE";
+  const claimed = await pg("PATCH", LESSONS, `_id=${eq(lesson._id)}&device=is.null`, { device });
+  return claimed.length ? { ...lesson, device } : claimDevice((await getLesson(lesson._id))!, device);
+}
+
+const ownFail = (code: string) =>
+  code === "OTHER_DEVICE" ? fail(409, code, "这节课已经在另一台电脑上录制") : fail(code === "NOT_YOUR_LESSON" ? 403 : 404, code, "这节课不在你的课表里");
+
+async function uploadSegment(event: HttpEvent, session: Session, id: string, seq: number) {
+  const bytes = Buffer.from(event.body ?? "", event.isBase64Encoded ? "base64" : "latin1");
+  if (!bytes.length || bytes.length > 2_000_000) return fail(400, "BAD_BODY", "分段为空或超过 2 MB");
+  const hash = sha256(bytes);
+  if (hash !== header(event, "x-sha256").toLowerCase()) return fail(400, "BAD_SHA256", "分段校验失败，请重传");
+  const lesson = await ownLesson(id, session, header(event, "x-device"));
+  if (typeof lesson === "string") return ownFail(lesson);
+  const fileID = await putObject(`${id}/${String(seq).padStart(5, "0")}.mp3`, bytes);
+  await pg("POST", SEGMENTS, "on_conflict=lessonId,seq", [{ lessonId: id, seq, sha256: hash, bytes: bytes.length, fileId: fileID }], "resolution=merge-duplicates,return=minimal");
+  await updateLesson(id, {}); // 记下最近一次收到分段的时间，没发 finish 的课据此判断 App 是否还在补传
+  return json(200, { ok: true });
+}
+
+async function signUpload(event: HttpEvent, session: Session, id: string, kind: string) {
+  if (kind !== "final" && (kind !== "early" || L.isAdhocId(id))) return fail(400, "BAD_KIND", "kind 只能是 final，课表课另有 early");
+  const lesson = await ownLesson(id, session, header(event, "x-device"), false);
+  if (typeof lesson === "string") return ownFail(lesson);
+  // 云端已经开始出报告时，晚到的完整录音沿用旧版的补传规则。
+  if (!L.acceptsAudio(lesson) || lesson.finish || (kind === "early" && lesson.finalUploadAt)) return json(200, { done: true });
+  const now = Date.now();
+  const updated = await pg("PATCH", LESSONS,
+    `_id=${eq(id)}&stage=in.(recording,empty)&transcript=is.null&finish=is.null&lockedUntil=lt.${now}&updatedAt=${eq(lesson.updatedAt)}&select=_id`,
+    { [kind === "early" ? "earlyAt" : "finalUploadAt"]: now, updatedAt: now });
+  if (!updated.length) return fail(503, "UPLOAD_BUSY", "正在确认录音，请稍后重试");
+  return json(200, { url: await uploadUrl(`${id}/${kind === "final" ? L.AUDIO_FILE : L.EARLY_FILE}`) });
+}
+
+/**
+ * 分块上传地址（0.1.14 起，上课时每 5 分钟一块）。第一块（first=1）查库：认课、认电脑、记 partsAt，App 没回来时云端靠它收尾；
+ * 之后的块只验签名令牌、不碰数据库（数据库按「有访问的 5 分钟」计费，每块都查会让它整节课都在计费）。
+ * 上一次没传上的原因放在查询参数里（fails、last），访问日志里能查到。
+ */
+async function signPart(event: HttpEvent, session: Session, id: string, n: number, first: boolean) {
+  if (!Number.isInteger(n) || n < 0 || n > 999) return fail(400, "BAD_PART", "块序号无效");
+  const device = header(event, "x-device");
+  if (first) {
+    const lesson = await ownLesson(id, session, device, false);
+    if (typeof lesson === "string") return ownFail(lesson);
+    if (!L.acceptsAudio(lesson) || lesson.finish) return json(200, { done: true });
+    if (!lesson.partsAt) await pg("PATCH", LESSONS, `_id=${eq(id)}&partsAt=is.null`, { partsAt: Date.now() }, "return=minimal");
+  }
+  return json(200, { url: await uploadUrl(partName(partDir(id, session.openId, device), n)) });
+}
+
+/** 分块课的 finish：核对云端每一块的大小，缺的让 App 补传；齐了马上拼起来转写，缺块的等 2 小时（见 L.planParts） */
+async function finishParts(id: string, lesson: LessonDoc, finish: NonNullable<LessonDoc["finish"]>, adhoc: Record<string, unknown>) {
+  if (!L.acceptsAudio(lesson) && lesson.stage !== "queued") return json(200, { missing: [] });
+  const stored = await listParts(partDir(id, lesson.teacherOpenId, lesson.device ?? ""));
+  const missing = L.planParts(finish.parts, new Map([...stored].map(([n, p]) => [n, p.size])), Date.now(), Date.now()).missing;
+  const updated = await pg("PATCH", LESSONS, `_id=${eq(id)}&stage=in.(recording,queued,empty)&transcript=is.null&lockedUntil=lt.${Date.now()}&select=_id`,
+    { finish, stage: "queued", partsAt: lesson.partsAt ?? Date.now(), ...adhoc, updatedAt: Date.now() });
+  if (!updated.length) return fail(503, "UPLOAD_BUSY", "正在确认录音，请稍后重试");
+  if (!missing.length) await processLesson(id, Date.now() + 40_000);
+  return json(200, { missing });
+}
+
+async function finishLesson(event: HttpEvent, session: Session, id: string) {
+  const body = jsonBody(event);
+  const audio = body.audio;
+  const validAudio = audio && /^[0-9a-f]{64}$/.test(String(audio.sha256)) && Number.isSafeInteger(audio.bytes) && audio.bytes > 0;
+  const segments = validAudio && body.segments === undefined ? [] : audio === undefined && Array.isArray(body.segments) ? body.segments : null;
+  // 分块清单（0.1.14 起）：audio 这时是整节的校验值
+  const parts = body.parts === undefined ? undefined
+    : Array.isArray(body.parts) && body.parts.length <= 1000 && validAudio &&
+      body.parts.every((p: any) => Number.isInteger(p?.n) && p.n >= 0 && p.n <= 999 && Number.isSafeInteger(p?.bytes) && p.bytes > 0) &&
+      new Set(body.parts.map((p: any) => p.n)).size === body.parts.length
+      ? (body.parts as L.FinishPart[]).map((p) => ({ n: p.n, bytes: p.bytes })).sort((a, b) => a.n - b.n) : null;
+  const valid =
+    segments?.every((s: any) => Number.isInteger(s?.seq) && s.seq >= 0 && /^[0-9a-f]{64}$/.test(String(s.sha256))) &&
+    Number.isFinite(Date.parse(body.startedAt)) && Number.isFinite(Date.parse(body.endedAt));
+  if (!segments || !valid || parts === null) return fail(400, "BAD_BODY", "需要 startedAt、endedAt 和 segments[{seq, sha256, bytes}] 或 audio{sha256, bytes}（分块时另带 parts[{n, bytes}]）");
+  const lesson = await ownLesson(id, session, header(event, "x-device"), !audio);
+  if (typeof lesson === "string") return ownFail(lesson);
+  // 老师点暂停的时段（0.1.9 起的 App 才有），出档案时标成「暂停」
+  const pauses = (Array.isArray(body.pauses) ? body.pauses : [])
+    .filter((p: any) => Number.isFinite(Date.parse(p?.start)) && Date.parse(p?.end) > Date.parse(p?.start))
+    .slice(0, 200)
+    .map((p: any) => ({ start: String(p.start), end: String(p.end) }));
+  const finish = {
+    startedAt: String(body.startedAt), endedAt: String(body.endedAt),
+    segments: segments.map((s: any) => ({ seq: s.seq, sha256: String(s.sha256), bytes: Number(s.bytes) || 0 })),
+    ...(pauses.length ? { pauses } : {}),
+    ...(audio ? { audio: { sha256: String(audio.sha256), bytes: audio.bytes } } : {}),
+    ...(parts ? { parts } : {}),
+  };
+  // 随时录制：老师结束时填的主题和类型，起止时间以 App 实际录制为准
+  const adhoc = L.isAdhocId(id)
+    ? { course: String(body.topic ?? "").trim().slice(0, 30) || "随时录制", kind: body.kind === "meeting" ? "meeting" : "adhoc", startAt: Date.parse(finish.startedAt), endAt: Date.parse(finish.endedAt) }
+    : {};
+  if (parts) return await finishParts(id, lesson, finish, adhoc);
+  if (audio) {
+    if (!L.acceptsAudio(lesson) || lesson.finish) return json(200, { missing: [] });
+    if (!lesson.finalUploadAt || (await objectSize(`${id}/${L.AUDIO_FILE}`)) !== audio.bytes) {
+      return json(200, { missing: [], reupload: true });
+    }
+    const now = Date.now();
+    const updated = await pg("PATCH", LESSONS,
+      `_id=${eq(id)}&stage=in.(recording,empty)&transcript=is.null&finish=is.null&lockedUntil=lt.${now}&updatedAt=${eq(lesson.updatedAt)}&select=_id`,
+      { finish, stage: "queued", ...adhoc, updatedAt: now });
+    if (!updated.length) return fail(503, "UPLOAD_BUSY", "正在确认录音，请稍后重试");
+    await processLesson(id, now + 20_000);
+    return json(200, { missing: [] });
+  }
+  const missing = L.missingSeqs(finish.segments, lesson.segments);
+  if (lesson.stage === "recording" || lesson.stage === "queued") {
+    await updateLesson(id, { finish, stage: "queued", ...adhoc });
+    if (!missing.length) await processLesson(id, Date.now() + 20_000); // 齐了立刻合并提交转写，失败交给定时器重试
+  }
+  return json(200, { missing });
+}
+
+/**
+ * 老师在 App 里删了这节课：还没出报告的不再处理。标成失败且次数用满，定时器不会再捡起来，后台能看到原因。
+ * ponytail: 删除恰好撞上正在跑的处理时，那一轮写回的阶段会盖掉这里；极少见，后台看到再手动处理
+ */
+async function discardLesson(session: Session, id: string) {
+  // 合并反馈没有录音，删掉就是整行删掉；单节课不受影响
+  if (L.isMergedId(id)) {
+    await pg("DELETE", LESSONS, `_id=${eq(id)}&teacherOpenId=${eq(session.openId)}&kind=eq.merged`, undefined, "return=minimal");
+    return json(200, { ok: true });
+  }
+  await pg("PATCH", LESSONS, `_id=${eq(id)}&teacherOpenId=${eq(session.openId)}&stage=neq.done`,
+    { stage: "failed", attempts: L.MAX_ATTEMPTS, error: "老师在 App 里删除了这节课", updatedAt: Date.now() }, "return=minimal");
+  return json(200, { ok: true });
+}
+
+/**
+ * 老师选几节课合并一份反馈：最近 7 天、已出报告的课表课和随时录制（课程）；课表课只能是同一个学生，随时录制不限。编号由 App 生成；同一个编号再提交 = 「重新选课程」，覆盖重出。
+ * 生成约 15 秒，在这次请求里直接做完；失败的交给定时器重试。单节课的行一个字都不改。
+ */
+async function saveMerge(event: HttpEvent, session: Session, id: string) {
+  const raw = jsonBody(event).lessonIds;
+  const ids = [...new Set(Array.isArray(raw) ? raw.map(String) : [])];
+  if (ids.length < 2 || ids.length > L.MERGE_MAX || !ids.every((x) => /^rec[A-Za-z0-9]+$/.test(x) || L.isAdhocId(x))) return fail(400, "BAD_BODY", `请选 2–${L.MERGE_MAX} 节课`);
+  const rows = await pg<LessonDoc>("GET", LESSONS, `_id=${inList(ids)}&teacherOpenId=${eq(session.openId)}&select=_id,student,course,kind,stage,startAt,endAt`);
+  const { from } = L.lessonWindow(Date.now());
+  if (rows.length !== ids.length || rows.some((r) => r.stage !== "done" || !["lesson", "adhoc"].includes(r.kind ?? "lesson") || r.startAt < from)) {
+    return fail(400, "NOT_MERGEABLE", "只能合并最近 7 天已出报告的课，请刷新后重选");
+  }
+  const student = L.mergeStudent(rows);
+  if (student === null) return fail(400, "NOT_MERGEABLE", "课表里的课只能合并同一个学生的（随时录制的不限）");
+  const existing = await getRow<LessonDoc>(LESSONS, id);
+  if (existing && (existing.teacherOpenId !== session.openId || existing.kind !== "merged")) return fail(409, "CONFLICT", "编号冲突，请再试一次");
+  if (existing && existing.lockedUntil > Date.now()) return fail(409, "BUSY", "这份合并反馈正在生成，请稍等");
+  rows.sort((a, b) => a.startAt - b.startAt);
+  const last = rows.at(-1)!;
+  const now = Date.now();
+  // 日期、时间跟最后一节：App 列表里排在它后面，最后一节还在「最近 7 天」里它就一直在
+  await pg("POST", LESSONS, "on_conflict=_id", [{
+    _id: id, teacherOpenId: session.openId, teacherName: session.name, student, course: last.course, location: "", kind: "merged",
+    sources: rows.map((r) => r._id), startAt: last.startAt, endAt: last.endAt,
+    stage: "summarizing", attempts: 0, lockedUntil: 0, error: "", copied: false, editedSummary: null, rawReport: null,
+    reportToken: existing?.reportToken ?? null, createdAt: existing?.createdAt ?? now, updatedAt: now,
+  }], "resolution=merge-duplicates,return=minimal");
+  await processLesson(id, Date.now() + 100_000);
+  const [done] = await pg<{ stage: Stage }>("GET", LESSONS, `_id=${eq(id)}&select=stage`);
+  if (done?.stage === "failed") return fail(502, "GENERATE_FAILED", "合并反馈生成失败，30 分钟内会自动重试");
+  return json(200, { ok: true });
+}
+
+async function ownedPatch(id: string, session: Session, patch: Record<string, unknown>) {
+  const lesson = await getRow<LessonDoc>(LESSONS, id);
+  if (!lesson || lesson.teacherOpenId !== session.openId) return fail(404, "LESSON_NOT_FOUND", "没有找到这节课的录音");
+  await updateLesson(id, patch);
+  return json(200, { ok: true });
+}
+
+async function getReport(token: string) {
+  if (!/^[A-Za-z0-9_-]{32}$/.test(token)) return fail(404, "NOT_FOUND", "未找到这份课堂报告");
+  // 有报告就给：合并反馈「重新选课程」重出期间（或重出失败），家长手里的链接仍是上一版
+  const [doc] = await pg<LessonDoc>("GET", LESSONS, `reportToken=${eq(token)}&report=not.is.null&limit=1&select=student,course,kind,teacherName,startAt,endAt,finish,report,archive,gapMinutes,audioSec`);
+  return doc ? json(200, L.reportData(doc)) : fail(404, "NOT_FOUND", "未找到这份课堂报告"); // reportData 只带出算好的数字，档案本身（含闲聊）不出后台
+}
+
+// ---------- 处理流水线 ----------
+
+
+export async function chat(messages: Array<{ role: string; content: string }>, jsonMode = false, maxTokens = 4000): Promise<string> {
+  const response = await fetch(`${requireEnv("AI_BASE_URL").replace(/\/$/, "")}/chat/completions`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${requireEnv("AI_API_KEY")}`, "content-type": "application/json" },
+    body: JSON.stringify({ model: requireEnv("AI_MODEL"), messages, temperature: 0.3, max_tokens: maxTokens, ...(jsonMode ? { response_format: { type: "json_object" } } : {}) }),
+    // 分段摘要 + 总结 + 纠错重试加起来可能超过函数的 300 s 硬上限：被硬杀不会记失败次数、会反复付费重跑，所以按剩余时间截止
+    signal: AbortSignal.timeout(Math.max(1_000, Math.min(150_000, hardStop - Date.now()))),
+  });
+  const body = (await response.json()) as { choices?: Array<{ message?: { content?: string } }>; error?: { message?: string } };
+  const content = body.choices?.[0]?.message?.content?.trim();
+  if (!response.ok || !content) throw new Error(`大模型调用失败：${response.status} ${body.error?.message ?? ""}`);
+  return content;
+}
+
+/** 让大模型判断哪个「说话人N」是老师，改成「老师 / 学生」；判断失败就保持原样，不影响出总结 */
+async function withRoles(transcript: string): Promise<string> {
+  if (L.speakerStats(transcript).size < 2) return transcript;
+  try {
+    return L.labelSpeakers(transcript, L.parseTeacher(await chat([{ role: "user", content: L.teacherPrompt(transcript) }], true), transcript));
+  } catch (error) {
+    console.error("判断老师失败", error);
+    return transcript;
+  }
+}
+
+/**
+ * 转写 → 课堂时间档案 → 家长总结 + 学情报告；流水线、后台预览、重建旧报告共用。
+ * 第一步整节课一次抽档案（超过 12 万字才切开），程序检查；第二步只拿学习环节：A 写总结和报告，B 用 A 的知识点名归章节。
+ */
+async function generate(meta: L.PromptMeta, transcript: string, prompts: L.Prompts, pauses: Array<[number, number]> = []) {
+  const archive = L.applyPauses(await extractArchive(transcript, prompts), pauses);
+  return { archive, ...(await writeReport(meta, archive, prompts)) };
+}
+
+/** 第一步：整节课 → 课堂时间档案 */
+async function extractArchive(transcript: string, prompts: L.Prompts) {
+  if (!transcript.trim()) throw new Error("转写为空：录音里没有识别到有效语音");
+  const chunks = L.chunkTranscript(transcript, L.ARCHIVE_CHARS);
+  // ponytail: 输出上限 8000 token 够 3 小时内的课（实测 2 小时约 5000）；更长的课被截断会走重试再失败，到时把切段阈值调小
+  const extract = (retry = "") => Promise.all(chunks.map((chunk) => chat([{ role: "user", content: L.archivePrompt(chunk, prompts.rules, retry) }], true, 8000)));
+  try {
+    return L.parseArchive(await extract(), transcript);
+  } catch (error) {
+    return L.parseArchive(await extract(`上次的输出不符合要求：${(error as Error).message}。`), transcript);
+  }
+}
+
+/** 第二步：档案里的学习环节 → 家长总结 + 学情报告（合并反馈也走这里） */
+async function writeReport(meta: L.PromptMeta, archive: L.Archive, prompts: L.Prompts) {
+  const messages = L.reportMessages(meta, archive, prompts);
+  const headings = L.promptHeadings(prompts);
+  // 只有生效提示词是新 1️⃣ 格式才做抬头规范化；旧【】自定义模板和历史行为保持原样
+  const ctx = L.usesEmojiHeadings(prompts) ? L.summaryContext(meta, archive) : undefined;
+  const raw = await chat(messages, true);
+  let out: ReturnType<typeof L.parseSummary>;
+  try {
+    out = L.parseSummary(raw, headings, ctx);
+  } catch (error) {
+    const retry = await chat([...messages, { role: "assistant", content: raw }, { role: "user", content: `上面的输出不符合要求：${(error as Error).message}。请重新只输出符合结构的 JSON。` }], true);
+    try {
+      out = L.parseSummary(retry, headings, ctx);
+    } catch (again) {
+      // 重试后仍命中 A7 就按句剥除；A3 只记日志放行。缺段名或剥空正文仍会抛错。
+      console.error("家长总结重试后仍未通过校验，尝试按句清理 A7；空段不放行", again);
+      out = L.parseSummary(retry, headings, ctx, { strict: false });
+    }
+  }
+  const points = out.report.mastery.map((m) => m.name);
+  let chapters = await chat([{ role: "user", content: L.chapterPrompt(archive, points) }], true);
+  const problem = L.chapterProblem(chapters, archive);
+  if (problem) chapters = await chat([{ role: "user", content: L.chapterPrompt(archive, points, `${problem}请重新归组。`) }], true);
+  return { parentSummary: out.parentSummary, report: L.assembleReport(out.report, archive, chapters) }; // 重试后还不合格，由程序修正
+}
+
+/** 录音开始的时刻：App 上报的 startedAt，没有就用课表时间 */
+const recStartOf = (doc: Pick<LessonDoc, "finish" | "startAt">) => Date.parse(doc.finish?.startedAt ?? "") || doc.startAt;
+/**
+ * finish 里的暂停时段 → 录音里的秒（按「真实时刻 − 开录时刻」换算）。
+ * 录音中间断过（崩溃续录、合盖睡眠）时真实时间和录音时间对不上，换算出来会落在讲课上，宁可不标暂停
+ */
+function pausesOf(doc: Pick<LessonDoc, "finish" | "startAt" | "audioSec">): Array<[number, number]> {
+  const pauses = doc.finish?.pauses ?? [];
+  const wall = (Date.parse(doc.finish?.endedAt ?? "") - recStartOf(doc)) / 1000;
+  if (!pauses.length || doc.audioSec == null || !(Math.abs(wall - doc.audioSec) <= 60)) return [];
+  return pauses.map((p) => [(Date.parse(p.start) - recStartOf(doc)) / 1000, (Date.parse(p.end) - recStartOf(doc)) / 1000]);
+}
+const metaOf = (doc: LessonDoc): L.PromptMeta => ({
+  student: doc.student, course: doc.course, teacher: doc.teacherName, monthDay: L.shMonthDay(doc.startAt),
+  fullDate: L.shFullDate(doc.startAt),
+  // 抬头的时间行只写真实上课时间：随时录制的是录音时间、没选学生的课不写，都交给 timeRangeOf 判
+  timeRange: doc.student ? L.timeRangeOf(doc.startAt, doc.endAt, doc.kind) : undefined,
+});
+
+/**
+ * 合并反馈：不重新转写、不重抽档案，把各节的档案接起来，只重写总结和报告（约 15 秒）。
+ * 档案上线前的旧课没有档案，补抽一次存回那节课（不改它自己的总结和报告）。
+ */
+async function mergedReport(doc: LessonDoc, prompts: L.Prompts) {
+  const ids = doc.sources ?? [];
+  const rows = ids.length
+    ? await pg<LessonDoc>("GET", LESSONS, `_id=${inList(ids)}&teacherOpenId=${eq(doc.teacherOpenId)}&select=_id,student,course,teacherName,startAt,endAt,stage,finish,transcript,archive,gapMinutes,audioSec`)
+    : [];
+  if (rows.length < 2 || rows.length !== ids.length || rows.some((r) => r.stage !== "done")) throw new Error("要合并的课有的已经删除或还没出报告，请重新选课程");
+  rows.sort((a, b) => a.startAt - b.startAt);
+  for (const row of rows) {
+    if (row.archive) continue;
+    row.archive = L.applyPauses(await extractArchive(row.transcript ?? "", prompts), pausesOf(row));
+    await updateLesson(row._id, { archive: row.archive });
+  }
+  const archive = L.mergeArchives(rows.map((r) => ({ lessonId: r._id, archive: r.archive!, recStart: recStartOf(r), plan: (r.endAt - r.startAt) / 1000 })));
+  const last = rows.at(-1)!;
+  const parts = archive.parts!;
+  const labels = L.partLabels(parts, true, true);
+  const days = [...new Set(parts.map((p) => L.shMonthDay(p.clock0 + p.start * 1000)))];
+  const meta: L.PromptMeta = {
+    ...metaOf(last),
+    student: doc.student, // 最后一节可能是随时录制（没有学生名），用合并时定下的学生
+    monthDay: L.shMonthDay(parts.at(-1)!.clock0 + parts.at(-1)!.start * 1000),
+    fullDate: days.length > 1 ? days.join("、") : L.shFullDate(parts[0].clock0 + parts[0].start * 1000),
+    // 同一天列出各节时段；跨天只写日期，不写时间行
+    timeRange: doc.student && days.length === 1 ? labels.map((l) => l.split(" ").at(-1)!).join("、") : undefined,
+    merged: {
+      labels, days,
+      teachers: [...new Set(rows.map((r) => r.teacherName).filter(Boolean))],
+    },
+  };
+  const gapMinutes = rows.reduce((sum, r) => sum + (r.gapMinutes ?? 0), 0);
+  const { parentSummary, report } = await writeReport(meta, archive, prompts);
+  return { parentSummary, archive, report: { ...report, gapMinutes }, gapMinutes };
+}
+
+/** 转写 → 结构化会议纪要 + 纯文本；分段规则同 generate */
+async function meetingMinutes(meta: { topic: string; monthDay: string }, transcript: string, prompt: string) {
+  if (!transcript.trim()) throw new Error("转写为空：录音里没有识别到有效语音");
+  const chunks = L.chunkTranscript(transcript);
+  const material = chunks.length === 1
+    ? transcript
+    : (await Promise.all(chunks.map((chunk, index) => chat([{ role: "user", content: L.meetingChunkPrompt(chunk, index, chunks.length) }]))))
+        .map((notes, index) => `【第 ${index + 1} 段】\n${notes}`)
+        .join("\n\n");
+  const messages = L.meetingMessages(meta, material, chunks.length > 1, prompt);
+  const speakers = L.meetingSpeakers(transcript);
+  const raw = await chat(messages, true, 8000); // 长会的议题多，4000 token 会把 JSON 截断
+  let report: L.MeetingReport;
+  try {
+    report = L.parseMeetingReport(raw, speakers);
+  } catch (error) {
+    report = L.parseMeetingReport(await chat([...messages, { role: "assistant", content: raw }, { role: "user", content: `上面的输出不符合要求：${(error as Error).message}。请重新只输出符合结构的 JSON。` }], true, 8000), speakers);
+  }
+  return { report, text: L.meetingText(report, meta.monthDay) };
+}
+
+type PromptRow = L.Prompts & { version: number; createdAt: number; createdBy: string };
+/** 线上提示词 = 版本号最大的一行；还没在后台保存过时用代码里的默认（版本 0） */
+async function livePrompts(): Promise<PromptRow> {
+  const [row] = await pg<PromptRow>("GET", PROMPTS, "order=version.desc&limit=1");
+  return row ? withMeeting(row) : { ...L.DEFAULT_PROMPTS, version: 0, createdAt: 0, createdBy: "默认" };
+}
+
+/** 加「会议纪要」之前保存的版本没有 meeting，用默认补上 */
+function withMeeting(row: PromptRow): PromptRow {
+  return { ...row, meeting: row.meeting || L.DEFAULT_PROMPTS.meeting };
+}
+
+/**
+ * 腾讯云的回调把整份转写放在请求体里（一节课 1～4 MB 的表单），CloudBase HTTP 访问服务只收 100 KB 以内的文本请求体，
+ * 直接回调 /asr/callback 会被网关拒掉（EXCEED_MAX_PAYLOAD_SIZE）。所以回调先到官网（菁仕官网仓库 src/app/api/asr-callback），
+ * 那边丢掉请求体、只把课程编号转到 /asr/callback。官网不通时由录课请求顺带推进和每日定时兜底。
+ */
+const ASR_CALLBACK_URL = "https://jsjy.asia/api/asr-callback";
+
+/** Storage 里的整段录音 → 腾讯云录音识别（6 小时签名链接），转完经官网中转回调 /asr/callback 接着出总结 */
+async function submitAsr(doc: LessonDoc, fileID: string) {
+  const task = await asrApi().CreateRecTask({
+    EngineModelType: process.env.ASR_ENGINE?.trim() || "16k_zh_en_2.0", ChannelNum: 1, SourceType: 0, Url: await signedUrl(fileID, 6 * 3600),
+    SpeakerDiarization: 1, SpeakerNumber: 0, ResTextFormat: 2, ConvertNumMode: 1,
+    CallbackUrl: `${ASR_CALLBACK_URL}?lesson=${encodeURIComponent(doc._id)}`,
+  });
+  if (!task.Data?.TaskId) throw new Error("腾讯云录音识别任务提交失败");
+  return { stage: "transcribing" as const, mergedFileId: fileID, asrTaskId: task.Data.TaskId };
+}
+
+/** 执行一步，返回要写回的字段；null = 外部还没好（转写进行中），本轮结束 */
+async function runStep(doc: LessonDoc, step: L.Step): Promise<Partial<LessonDoc> | null> {
+  if (step.action === "retry") return { stage: step.stage };
+  if (step.action === "direct") {
+    for (const file of step.files) {
+      const name = `${doc._id}/${file}`;
+      const bytes = await objectSize(name);
+      if (bytes) return { ...(await submitAsr(doc, name)), gapMinutes: 0, audioSec: Math.round(bytes / L.AUDIO_BYTES_PER_SEC) };
+    }
+    if (doc.finish) throw new Error("没有找到上传的录音");
+    return { stage: "empty", audioSec: 0 }; // App 没回来、也没传上任何录音：先算没录到；之后 App 传上整段还会接着处理（L.acceptsAudio）
+  }
+  if (step.action === "parts") {
+    const stored = await listParts(partDir(doc._id, doc.teacherOpenId, doc.device ?? ""));
+    const now = Date.now();
+    if (!doc.finish) {
+      // App 没回来：最后一块传上来还不到 2 小时的（随时录制可能还在录、还在补传），接着等
+      const newest = Math.max(0, ...[...stored.values()].map((p) => p.at));
+      if (now < Math.max(L.partsOrphanFrom(doc), newest) + L.PARTS_GRACE_MS) return null;
+    }
+    const sizes = new Map([...stored].map(([n, p]) => [n, p.size]));
+    const plan = L.planParts(doc.finish?.parts, sizes, now, doc.finish ? Date.parse(doc.finish.endedAt) : 0);
+    if (!plan.ready) return null;
+    if (!plan.use.length) return { stage: "empty", audioSec: 0 }; // 一块都没收到：不算录制；App 之后再传上来还会接着处理
+    const complete = !!doc.finish && !plan.missing.length;
+    const fileID = `${doc._id}/${L.AUDIO_FILE}`;
+    const dir = partDir(doc._id, doc.teacherOpenId, doc.device ?? "");
+    const bytes = await concatObjects(fileID, plan.use.map((n) => partName(dir, n)), "audio/mpeg", complete ? doc.finish?.audio?.sha256 : undefined);
+    const audioSec = Math.round(bytes / L.AUDIO_BYTES_PER_SEC);
+    const asrFields = await submitAsr(doc, fileID);
+    if (!complete) {
+      const name = `${[doc.course, doc.student].filter(Boolean).join(" · ")}（${L.shMonthDay(doc.startAt)}）`;
+      const total = doc.finish?.parts ? Math.round(doc.finish.parts.reduce((s, p) => s + p.bytes, 0) / L.AUDIO_BYTES_PER_SEC / 60) : 0;
+      await notifyAdmins(`${doc.teacherName} 的 ${name}下课 2 小时录音还没传完，已用云端收到的 ${Math.round(audioSec / 60)}${total ? `/${total}` : ""} 分钟先出报告` +
+        `${doc.finish ? "" : "（App 一直没回来，不知道整节多长）"}。\n课程编号 ${doc._id}，上传失败原因：tcb logs search -q 'logType:accesslog AND "${doc._id}"'`);
+    }
+    return { ...asrFields, gapMinutes: plan.gapMinutes, audioSec };
+  }
+  if (step.action === "merge") {
+    if (!step.seqs.length) return { stage: "empty", audioSec: 0 }; // 一段都没收到：不算录制
+    // MP3 帧可直接按字节拼接，不需要 ffmpeg
+    const fileID = `${doc._id}/${L.AUDIO_FILE}`;
+    const bytes = await concatObjects(fileID, step.seqs.map((seq) => doc.segments[String(seq)].fileId));
+    const audioSec = Math.round(bytes / L.AUDIO_BYTES_PER_SEC);
+    return { ...(await submitAsr(doc, fileID)), gapMinutes: step.gapMinutes, audioSec };
+  }
+  if (step.action === "poll") {
+    if (!doc.asrTaskId) return { stage: "queued" };
+    const status = await asrApi().DescribeTaskStatus({ TaskId: doc.asrTaskId });
+    const data = status.Data;
+    if (data?.Status === 3) {
+      doc.stage = doc.finish ? "queued" : "recording"; // 没有 finish 的课也要重新提交已有的录音
+      throw new Error(`腾讯云录音识别失败：${data.ErrorMsg ?? ""}`);
+    }
+    if (data?.Status !== 2) return null;
+    const transcript = L.formatTranscript(data.ResultDetail, data.Result ?? "");
+    // 录音很短又几乎没人说话：不算录制，不调模型、不发通知，App 里当作没录
+    if (L.isEmptyRecording(doc.audioSec ?? 0, transcript)) return { stage: "empty", transcript };
+    return { stage: "summarizing", transcript: doc.kind === "meeting" ? transcript : await withRoles(transcript) };
+  }
+  if (step.action === "summarize" && doc.kind === "meeting") {
+    const prompts = await livePrompts();
+    const { report, text } = await meetingMinutes({ topic: doc.course, monthDay: L.shMonthDay(doc.startAt) }, doc.transcript ?? "", prompts.meeting);
+    return { stage: "done", summary: text, report, reportToken: randomBytes(24).toString("base64url"), promptVersion: prompts.version, error: "" };
+  }
+  if (step.action === "summarize" && doc.kind === "merged") {
+    const prompts = await livePrompts();
+    const { parentSummary, report, archive, gapMinutes } = await mergedReport(doc, prompts);
+    return { stage: "done", summary: parentSummary, report, archive, gapMinutes, reportToken: doc.reportToken || randomBytes(24).toString("base64url"), promptVersion: prompts.version, error: "" };
+  }
+  if (step.action === "summarize") {
+    const prompts = await livePrompts();
+    const { parentSummary, report, archive } = await generate(metaOf(doc), doc.transcript ?? "", prompts, pausesOf(doc));
+    return {
+      stage: "done", summary: parentSummary, report: { ...report, gapMinutes: doc.gapMinutes ?? 0 }, archive, reportToken: randomBytes(24).toString("base64url"),
+      promptVersion: prompts.version, error: "",
+    };
+  }
+  return null;
+}
+
+async function notifyTeacher(doc: LessonDoc, text: string) {
+  try {
+    await feishu().sendMessage({ receiveIdType: "open_id", receiveId: doc.teacherOpenId, msgType: "text", content: { text } });
+  } catch (error) {
+    console.error("飞书通知失败", doc._id, error);
+  }
+}
+
+async function processLesson(id: string, deadline: number) {
+  const leased = await pg("PATCH", LESSONS, `_id=${eq(id)}&lockedUntil=lt.${Date.now()}`, { lockedUntil: Date.now() + LEASE_MS });
+  if (!leased.length) return; // 另一个实例正在处理
+  let doc = (await getLesson(id))!;
+  try {
+    while (Date.now() < deadline) {
+      const step = L.nextStep(doc, Date.now());
+      if (step.action === "none" || step.action === "wait") break;
+      const patch = await runStep(doc, step);
+      if (!patch) break;
+      await updateLesson(id, patch);
+      if (patch.transcript && doc.kind !== "meeting" && doc.kind !== "merged") await sendReview(id);
+      // 转写已入库：分段和计划下课时传的 early.mp3 只在重新合并时有用，删掉，云端只留转写用的那份（失败重试从 summarizing 起步，不再需要）
+      if (patch.transcript !== undefined) {
+        const early = `${id}/${L.EARLY_FILE}`;
+        const unusedEarly = doc.earlyAt && doc.mergedFileId !== early ? [early] : [];
+        await removeObjects([...Object.values(doc.segments).map((s) => s.fileId), ...unusedEarly, ...(await partFiles(doc))]);
+      }
+      doc = { ...doc, ...patch };
+      if ((step.action === "direct" || step.action === "parts") && doc.stage === "transcribing") break; // 回调到达时再查转写结果
+      if (doc.stage === "done") {
+        if (doc.kind === "merged") break; // 老师自己在 App 里点的合并，App 里直接看到，不再私信
+        const title = doc.kind === "meeting" ? `${doc.course}的会议纪要好了` : doc.student ? `${doc.student}今天的课堂总结好了` : `${doc.course}的课堂总结好了`;
+        await notifyTeacher(doc, `${title}\n\n${doc.summary}${doc.reportToken ? `\n\n完整报告：${requireEnv("REPORT_BASE_URL")}?t=${doc.reportToken}` : ""}`);
+        break;
+      }
+    }
+  } catch (error) {
+    console.error("处理失败", id, error);
+    const attempts = (doc.attempts ?? 0) + 1;
+    await updateLesson(id, { stage: "failed", failedStage: doc.stage as Stage, attempts, error: (error as Error).message?.slice(0, 500) ?? String(error) });
+    if (attempts >= L.MAX_ATTEMPTS) {
+      const name = `${[doc.course, doc.student].filter(Boolean).join(" · ")}（${L.shMonthDay(doc.startAt)}）`;
+      // 老师只需要知道结果；技术原因发给管理员，在后台重试
+      await notifyTeacher(doc, doc.kind === "merged"
+        ? `${doc.student}的合并反馈没能生成，可以在菁仕课堂里点「重新选课程」再试。`
+        : `${name}没能生成总结，录音还在，已经通知管理员处理。`);
+      if (doc.kind !== "merged") await notifyAdmins(`${doc.teacherName} 的 ${name}自动重试 ${attempts} 次仍失败：${(error as Error).message}\n课程编号 ${id}，可在后台重试。`);
+    }
+  } finally {
+    await pg("PATCH", LESSONS, `_id=${eq(id)}`, { lockedUntil: 0 }, "return=minimal");
+  }
+}
+
+/**
+ * 腾讯云录音识别转完的回调（经官网中转，请求体已丢掉，见 ASR_CALLBACK_URL）。不信回调里的内容，只按 URL 里的课程编号接着处理：processLesson 会自己调
+ * DescribeTaskStatus 确认真的转完了，伪造的请求最多让我们多查一次。必须回 code 0，否则腾讯云会重试；
+ * 出总结要一两分钟，腾讯云等不及重试时，这节课已经不在 transcribing，直接回成功。
+ * 回调丢失时由后续录课请求或每日定时任务补查。
+ */
+async function asrCallback(query: Record<string, string>) {
+  const id = query.lesson ?? "";
+  if (!RECORDING_ID.test(id)) return json(200, { code: 0, message: "成功" });
+  for (let i = 0; i < 12; i++) {
+    const doc = await getRow<LessonDoc>(LESSONS, id);
+    if (!doc) break;
+    if (doc.stage === "transcribing" && doc.lockedUntil < Date.now()) {
+      await Promise.all([processLesson(id, Date.now() + 170_000), piggyback(id)]);
+      break;
+    }
+    if (doc.stage !== "transcribing" && !((doc.stage === "recording" || doc.stage === "queued") && doc.lockedUntil > Date.now())) break;
+    // 很短的录音会比 finish 那次请求先转完，它还拿着锁：等它放手再接着做，免得要等定时器
+    await new Promise((resolve) => setTimeout(resolve, 5000));
+  }
+  return json(200, { code: 0, message: "成功" });
+}
+
+/** 录音保留 30 天：删分段和 merged.mp3，转写、总结、报告保留。每分钟最多处理 20 节，远大于每天新增的课数 */
+async function expireAudio() {
+  const rows = await pg<Pick<LessonDoc, "_id" | "mergedFileId" | "earlyAt" | "finalUploadAt" | "partsAt" | "teacherOpenId" | "device">>("GET", LESSONS,
+    `audioDeletedAt=is.null&startAt=lt.${Date.now() - L.AUDIO_KEEP_MS}&stage=neq.recording&select=_id,mergedFileId,earlyAt,finalUploadAt,partsAt,teacherOpenId,device&order=startAt.asc&limit=20`);
+  for (const row of rows) {
+    const names = new Set([...(row.mergedFileId ? [row.mergedFileId] : []), ...(await partFiles(row))]);
+    if (row.earlyAt) names.add(`${row._id}/${L.EARLY_FILE}`);
+    if (row.finalUploadAt) names.add(`${row._id}/${L.AUDIO_FILE}`);
+    const segments = await pg<{ fileId: string }>("GET", SEGMENTS, `lessonId=${eq(row._id)}&select=fileId`);
+    for (const segment of segments) names.add(segment.fileId);
+    if (await removeObjects([...names])) await updateLesson(row._id, { mergedFileId: null, audioDeletedAt: Date.now() });
+  }
+}
+
+/**
+ * 按现在的流程给一节已出报告的课重新生成学情报告和课堂时间档案，只返回、不写库：
+ * scripts/rebuild-archive.ts 先试跑出预览给人看，确认后把同一份结果写库。prompts 不传就用线上版本。
+ */
+async function rebuild(lessonId: string, override?: L.Prompts) {
+  const doc = await getLesson(lessonId);
+  if (!doc || doc.stage !== "done" || doc.kind === "meeting" || !doc.transcript?.trim()) return { ok: false, error: "不是有转写的已完成课程" };
+  const prompts = override ?? (await livePrompts());
+  const out = await generate(metaOf(doc), doc.transcript, prompts, pausesOf(doc));
+  const report = { ...out.report, gapMinutes: doc.gapMinutes ?? 0 };
+  return { ok: true, parentSummary: out.parentSummary, archive: out.archive, reportData: L.reportData({ ...doc, report, archive: out.archive }) };
+}
+
+const PIGGYBACK_INTERVAL_MS = 10 * 60_000;
+const CALLBACK_GRACE_MS = 15 * 60_000;
+const PIGGYBACK_BATCH = 5;
+let nextPiggybackAt = 0;
+
+function pendingLessons(now: number, limit: number, exclude?: string) {
+  const quiet = now - L.DIRECT_QUIET_MS;
+  const direct = `and(stage.eq.recording,partsAt.is.null,or(earlyAt.not.is.null,finalUploadAt.not.is.null),or(earlyAt.is.null,earlyAt.lte.${quiet}),or(finalUploadAt.is.null,finalUploadAt.lte.${quiet}))`;
+  const legacy = `and(stage.eq.recording,earlyAt.is.null,finalUploadAt.is.null,partsAt.is.null,or(and(kind.eq.lesson,endAt.lte.${now},updatedAt.lte.${now - L.ORPHAN_QUIET_MS}),and(kind.in.(adhoc,meeting),updatedAt.lte.${now - L.ADHOC_QUIET_MS})))`;
+  // 分块上传、App 没回来的课：过了 L.partsOrphanFrom 2 小时（随时录制在 runStep 里再看最后一块）
+  const grace = now - L.PARTS_GRACE_MS;
+  const parts = `and(stage.eq.recording,partsAt.not.is.null,or(and(kind.eq.lesson,endAt.lte.${grace}),and(kind.in.(adhoc,meeting),partsAt.lte.${grace})))`;
+  const queued = exclude
+    ? `and(stage.eq.queued,or(finalUploadAt.not.is.null,updatedAt.lte.${now - L.MISSING_GRACE_MS}))`
+    : "stage.eq.queued";
+  return pg<{ _id: string }>("GET", LESSONS,
+    `attempts=lt.${L.MAX_ATTEMPTS}&lockedUntil=lt.${now}&or=(${direct},${legacy},${parts},${queued},stage.in.(summarizing,failed),and(stage.eq.transcribing,updatedAt.lte.${now - CALLBACK_GRACE_MS}))` +
+      `&select=_id&order=updatedAt.asc&limit=${limit}${exclude ? `&_id=not.${eq(exclude)}` : ""}`,
+    undefined, "return=representation", exclude ? AbortSignal.timeout(1200) : undefined);
+}
+
+function reviewSignature(id: string, issuedAt: number) {
+  return createHmac("sha256", requireEnv("CLOUDBASE_API_KEY")).update(`classroom-review/1/${issuedAt}/${id}`).digest("hex");
+}
+
+async function sendReview(id: string) {
+  try {
+    const issuedAt = Date.now();
+    const client = new CommonClient("scf.tencentcloudapi.com", "2018-04-16", {
+      region: "ap-shanghai", credential: { secretId: requireEnv("TENCENTCLOUD_SECRETID"), secretKey: requireEnv("TENCENTCLOUD_SECRETKEY"), token: requireEnv("TENCENTCLOUD_SESSIONTOKEN") }, profile: { httpProfile: { reqTimeout: 2 } },
+    });
+    await client.request("Invoke", { FunctionName: "classroom-api", Namespace: requireEnv("CLOUDBASE_ENV_ID"), InvocationType: "Event",
+      ClientContext: JSON.stringify({ action: "classroomReview", lessonId: id, issuedAt, signature: reviewSignature(id, issuedAt) }) });
+  } catch {
+    console.warn("复盘未投递，已保留待处理任务", id);
+  }
+}
+
+async function retryReviews() {
+  const due = await pg<{ lesson_id: string }>("GET", "classroom_content_reviews",
+    `version=eq.1&status=in.(pending,running,failed)&available_at=lte.${encodeURIComponent(new Date().toISOString())}&attempts=lt.4&select=lesson_id&order=available_at.asc&limit=8`);
+  await Promise.all(due.map(r => sendReview(r.lesson_id)));
+}
+
+/** 只在正在访问数据库的请求中检查；SCF 接受事件后即可返回，后续处理由另一实例执行。 */
+async function piggyback(exclude: string) {
+  const now = Date.now();
+  const { TENCENTCLOUD_SECRETID: secretId, TENCENTCLOUD_SECRETKEY: secretKey, TENCENTCLOUD_SESSIONTOKEN: token } = process.env;
+  if (now < nextPiggybackAt) return;
+  nextPiggybackAt = now + PIGGYBACK_INTERVAL_MS;
+  if (!secretId || !secretKey || !token) {
+    console.warn("课堂兜底未获运行角色凭据");
+    return;
+  }
+  try {
+    const rows = await pendingLessons(now, PIGGYBACK_BATCH, exclude);
+    if (!rows.length) return;
+    const client = new CommonClient("scf.tencentcloudapi.com", "2018-04-16", {
+      region: "ap-shanghai", credential: { secretId, secretKey, token }, profile: { httpProfile: { reqTimeout: 2 } },
+    });
+    const result = await client.request("Invoke", {
+      FunctionName: "classroom-api", Namespace: requireEnv("CLOUDBASE_ENV_ID"), InvocationType: "Event",
+      ClientContext: JSON.stringify({ action: "ride", lessonIds: rows.map(({ _id }) => _id) }),
+    });
+    console.info("课堂兜底已投递", result.RequestId, rows.length);
+  } catch (error) {
+    console.error("课堂兜底投递失败", error instanceof Error ? error.message : String(error));
+  }
+}
+
+async function processPending(ids: string[]) {
+  const deadline = Date.now() + 170_000;
+  for (const id of ids) {
+    if (Date.now() >= deadline) break;
+    await processLesson(id, deadline);
+  }
+}
+
+async function runPipeline(lessonId?: string) {
+  if (lessonId) return processPending([lessonId]);
+  await expireAudio().catch((error) => console.error("清理过期录音失败", error));
+  const rows = await pendingLessons(Date.now(), 50);
+  await processPending(rows.map(({ _id }) => _id));
+}
+
+// ---------- 后台（/classroom/admin/）----------
+// 两种人：老师（「老师信息」表里有的）只看、只改自己的课和会议；超级管理员看全部、管提示词和管理员名单。
+// 超级管理员 = 环境变量 ADMIN_OPEN_IDS（创建者，后台里移不掉）+ classroom_admins 表（后台里增删）。角色每次请求现查，撤销立即生效。
+
+type AdminSession = { _id: string; openId: string; name: string; expiresAt: number; role: "admin" | "teacher" };
+const ADMIN_TTL_MS = 30 * L.DAY;
+const adminUrl = () => requireEnv("REPORT_BASE_URL").replace(/report\.html$/, "admin/");
+const adminOpenIds = () => (process.env.ADMIN_OPEN_IDS ?? "").split(",").map((id) => id.trim()).filter(Boolean);
+export const isAdmin = async (openId: string) =>
+  adminOpenIds().includes(openId) || (await pg("GET", ADMINS, `openId=${eq(openId)}&select=openId`)).length > 0;
+const canSee = (admin: AdminSession, doc: { teacherOpenId: string }) => admin.role === "admin" || doc.teacherOpenId === admin.openId;
+
+/** 私信后台管理员；发不出去只记日志，不影响主流程 */
+async function notifyAdmins(text: string) {
+  for (const receiveId of adminOpenIds()) {
+    await feishu()
+      .sendMessage({ receiveIdType: "open_id", receiveId, msgType: "text", content: { text } })
+      .catch((error: unknown) => console.error("[classroom-api] 通知管理员失败", error instanceof Error ? error.message : error));
+  }
+}
+const redirect = (location: string) => ({ statusCode: 302, headers: { location, "cache-control": "no-store" }, body: "", isBase64Encoded: false });
+
+type ReviewGrant = { open_id: string; name: string; grant_id: string };
+const reviewGrant = async (openId: string) =>
+  (await pg<ReviewGrant>("GET", "fupan_supervisors", `open_id=${eq(openId)}&select=open_id,name,grant_id&limit=1`))[0];
+
+const reviewSessionCookie = "__Secure-fupan_session";
+const reviewLoginCookie = "__Secure-fupan_login";
+function readCookie(event: HttpEvent, name: string) {
+  const prefix = name + "=";
+  return header(event, "cookie").split(";").map(part => part.trim()).find(part => part.startsWith(prefix))?.slice(prefix.length) ?? "";
+}
+function cookieRedirect(location: string, cookie: string) {
+  const response = redirect(location);
+  return { ...response, headers: { ...response.headers, "set-cookie": cookie, "referrer-policy": "no-referrer" } };
+}
+const sessionCookie = (value: string, age: number) =>
+  `${reviewSessionCookie}=${value}; Max-Age=${age}; Path=/classroom-api/fupan; HttpOnly; Secure; SameSite=Strict`;
+
+async function reviewCallback(state: string, code: string, event: HttpEvent) {
+  const nonce = readCookie(event, reviewLoginCookie);
+  if (!/^[\w-]{43}$/.test(nonce) || state.split(".")[1] !== sha256(nonce))
+    return page(403, "请在原浏览器完成登录", "回到课堂复盘，再点一次「用飞书登录」。");
+  const claimed = await pg("DELETE", AUTH, `_id=${eq(state)}&status=eq.pending&kind=eq.fupan&expiresAt=gt.${Date.now()}`);
+  if (!claimed.length) return page(400, "登录链接已过期", "请回到课堂复盘重新登录。");
+  const user = await feishuUser(code);
+  const grant = await reviewGrant(user.openId);
+  const target = new URL("/fupan/", requireEnv("REPORT_BASE_URL")).href;
+  if (!grant) return cookieRedirect(target + "#denied", sessionCookie("", 0));
+  const token = issueReviewSession(user.openId, grant.grant_id, signedSessionKey());
+  return cookieRedirect(target, sessionCookie(token, 8 * 3600));
+}
+
+async function reviewRoute(method: string, path: string, event: HttpEvent, query: Record<string, string>) {
+  try {
+    if (method === "GET" && path === "/login") {
+      const nonce = randomBytes(32).toString("base64url");
+      const {url} = await authorizeUrl("fupan", nonce);
+      return cookieRedirect(url, `${reviewLoginCookie}=${nonce}; Max-Age=600; Path=/classroom-api/auth/callback; HttpOnly; Secure; SameSite=Lax`);
+    }
+    const cookie = readCookie(event, reviewSessionCookie);
+    if (!cookie) return fail(401, "UNAUTHORIZED", "请使用飞书登录课堂复盘");
+    const origin = header(event, "origin");
+    if (header(event, "x-fupan-request") !== "1" ||
+        ((origin || method === "POST") && origin !== new URL(requireEnv("REPORT_BASE_URL")).origin))
+      return fail(403, "FORBIDDEN", "请从课堂复盘页面操作");
+    if (method === "POST" && path === "/logout") {
+      const response = json(200, {ok:true});
+      return {...response, headers:{...response.headers, "set-cookie":sessionCookie("",0)}};
+    }
+    const identity = readReviewSession("Bearer " + cookie, signedSessionKey());
+    if (!identity) return fail(401, "UNAUTHORIZED", "登录已失效，请重新登录");
+    const grant = await reviewGrant(identity.openId);
+    if (!grant || grant.grant_id !== identity.grant) return fail(403, "FORBIDDEN", "此账号没有课堂复盘权限");
+    const actor = { openId: grant.open_id, name: grant.name };
+    if (method === "GET" && path === "/me") return json(200, {name: actor.name});
+    const body = jsonBody(event);
+    if (!body || typeof body !== "object" || Array.isArray(body)) return fail(400, "INVALID_BODY", "请求格式不正确");
+    const data = ["/inbox", "/issues", "/decision"].includes(path)
+      ? await workflow(method, path, query, body, actor)
+      : await catalog(method, path, query, body, actor, {signedUrl});
+    // 网关日志不含登录人；审计只留主体与课程的不可逆索引，不记录请求正文或播放地址。
+    console.info("[fupan-access]", method, path, sha256(actor.openId), sha256(String(query.id || query.lessonId || body.lessonId || "")));
+    return json(200, data);
+  } catch (error) {
+    const status = (error as { status?: number })?.status;
+    if (typeof status === "number" && Number.isInteger(status) && status >= 400 && status < 500 && error instanceof Error)
+      return fail(status, "REVIEW_REQUEST", error.message);
+    // PostgREST 错误可能含片段和笔记，运行日志只记录路由与技术状态。
+    console.error("[fupan] request failed", method, path.slice(0, 60).replace(/[^a-z/-]/g, ""));
+    return fail(500, "INTERNAL", "课堂复盘暂时不可用，请稍后重试");
+  }
+}
+
+/** 后台和工作台：管理员、教务（wb_roles）不一定是老师；其他人要在老师档案里对得上。对上了记下课表名，工作台按它筛课表 */
+async function adminCallback(state: string, code: string, kind: string) {
+  const claimed = await pg("DELETE", AUTH, `_id=${eq(state)}&status=eq.pending`);
+  if (!claimed.length) return page(400, "登录链接已过期", "请回到后台重新登录。");
+  const user = await feishuUser(code);
+  const [admin, staff] = await Promise.all([isAdmin(user.openId), pg("GET", "wb_roles", `openId=${eq(user.openId)}&select=openId`)]);
+  const privileged = admin || staff.length > 0;
+  const match = await findTeacher(user.openId, user.name).catch((error) => {
+    if (!privileged) throw error;
+    console.error("[classroom-api] 管理员登录时查老师档案失败", error);
+    return null;
+  });
+  if (!match && !privileged) {
+    // 教务多半不在老师档案里：记下来并通知管理员，管理员在工作台「录课管理 → 教务」里选上就能进
+    await pg("POST", "wb_people", "on_conflict=openId", [{ openId: user.openId, name: user.name || "未命名", triedAt: Date.now() }], "resolution=merge-duplicates,return=minimal");
+    await notifyAdmins(`${user.name || "有人"} 想登录菁仕工作台，但不在老师档案里。如果是教务，请在工作台「录课管理 → 教务」里把他设为教务。`);
+    return page(403, "还没有开通", `${user.name || "你"}，「老师信息」表里没有找到你，已通知管理员。开通后再点一次「用飞书登录」。`);
+  }
+  const token = randomBytes(32).toString("base64url");
+  await pg("POST", ADMIN_SESSIONS, "", [{
+    _id: sha256(token), openId: user.openId, name: match?.teacher.name || user.name || "老师", scheduleName: match?.teacher.scheduleName ?? null, expiresAt: Date.now() + ADMIN_TTL_MS,
+  }], "return=minimal");
+  const target = kind === "workbench" ? new URL("/work/", requireEnv("REPORT_BASE_URL")).href : adminUrl(); // 工作台短地址 /work/，旧地址 /classroom/workbench/ 也还能打开
+  return redirect(`${target}#token=${token}`); // 放在 # 后面，不进服务器日志；网页读出后立刻从地址栏清掉
+}
+
+async function authenticateAdmin(event: HttpEvent): Promise<AdminSession | undefined> {
+  const token = header(event, "authorization").replace(/^Bearer\s+/i, "").trim();
+  const session = token ? await getRow<AdminSession>(ADMIN_SESSIONS, sha256(token)) : undefined;
+  if (!session || session.expiresAt <= Date.now()) return undefined;
+  const role = (await isAdmin(session.openId)) ? "admin" : "teacher";
+  // 超级管理员「切换到某位老师的视角」：之后的请求完全按这位老师的权限走
+  const viewAs = header(event, "x-view-as");
+  if (role === "admin" && /^ou_[A-Za-z0-9_-]{8,64}$/.test(viewAs)) return { ...session, openId: viewAs, role: "teacher" };
+  return { ...session, role };
+}
+
+const STAGE_FILTER: Record<string, string> = { done: "eq.done", recording: "eq.recording", failed: "eq.failed", empty: "eq.empty", processing: "in.(queued,transcribing,summarizing)" };
+
+async function adminLessons(query: Record<string, string>, admin: AdminSession) {
+  const filters = ["select=_id,student,course,kind,teacherName,startAt,endAt,audioSec,stage,attempts,promptVersion,stats:archive->stats", "order=startAt.desc", "limit=50"];
+  if (admin.role !== "admin") filters.push(`teacherOpenId=${eq(admin.openId)}`);
+  if (STAGE_FILTER[query.stage]) filters.push(`stage=${STAGE_FILTER[query.stage]}`);
+  if (query.kind === "meeting") filters.push("kind=eq.meeting");
+  if (query.kind === "lesson") filters.push("kind=in.(lesson,adhoc)");
+  if (query.kind === "merged") filters.push("kind=eq.merged");
+  if (query.teacher) filters.push(`teacherName=${eq(query.teacher.slice(0, 40))}`);
+  if (query.student) filters.push(`student=${eq(query.student.slice(0, 40))}`);
+  if (/^\d+$/.test(query.before ?? "")) filters.push(`startAt=lt.${query.before}`);
+  // 只留文字和数字：PostgREST 的 or=(…) 里逗号、括号、星号都有含义
+  const q = (query.q ?? "").replace(/[^\p{L}\p{N}-]/gu, "").slice(0, 20);
+  if (q) filters.push(`or=(${["student", "course", "teacherName"].map((column) => `${column}.ilike.*${encodeURIComponent(q)}*`).join(",")})`);
+  return json(200, { lessons: await pg("GET", LESSONS, filters.join("&")) });
+}
+
+/** 表头筛选的候选：上过课的「老师 × 学生」去重（视图 classroom_lesson_people） */
+async function adminPeople(admin: AdminSession) {
+  const mine = admin.role === "admin" ? "" : `&teacherOpenId=${eq(admin.openId)}`;
+  return json(200, { people: await pg("GET", "classroom_lesson_people", `select=teacherName,student,teacherOpenId${mine}&limit=5000`) });
+}
+
+async function adminLesson(id: string, admin: AdminSession) {
+  const [doc] = await pg<LessonDoc>("GET", LESSONS,
+    `_id=${eq(id)}&select=_id,teacherOpenId,student,course,kind,teacherName,startAt,endAt,stage,attempts,error,finish,mergedFileId,audioDeletedAt,transcript,summary,editedSummary,reportToken,promptVersion,gapMinutes,audioSec,rawTranscript,archive,sources`);
+  if (!doc || !canSee(admin, doc)) return fail(404, "LESSON_NOT_FOUND", "没有找到这节课");
+  // 合并反馈：列出由哪几节合并，后台点过去看单节
+  const sourceLessons = doc.sources?.length
+    ? (await pg<{ _id: string; startAt: number; endAt: number }>("GET", LESSONS, `_id=${inList(doc.sources)}&select=_id,startAt,endAt`)).sort((a, b) => a.startAt - b.startAt)
+    : undefined;
+  const { finish, mergedFileId, rawTranscript, teacherOpenId, ...rest } = doc;
+  return json(200, {
+    ...rest,
+    transcriptEdited: rawTranscript != null,
+    sourceLessons,
+    mins: L.reportData(doc).mins,
+    // 课堂时间档案页按真实时钟画：录音开始时刻 = App 上报的 startedAt
+    recStart: Date.parse(finish?.startedAt ?? "") || doc.startAt,
+    fileName: [doc.student, doc.course, L.shDate(doc.startAt)].filter(Boolean).join("_").replace(/[\\/:*?"<>|\s]/g, ""),
+    audioUrl: mergedFileId ? await signedUrl(mergedFileId, 6 * 3600) : null, // 存储同 Supabase：链接后加 &download=文件名 即按附件下载
+    reportUrl: doc.reportToken ? `${requireEnv("REPORT_BASE_URL")}?t=${doc.reportToken}` : null,
+  });
+}
+
+/**
+ * 后台改转写（错字、说话人改名）：整段覆盖。第一次改时把机器原文存进 rawTranscript，改坏了还能找回。
+ * base = 打开编辑时那份转写的 sha256，别人先存过就拒绝，不悄悄覆盖。会议的发言占比按新名字重算。
+ */
+async function saveTranscript(event: HttpEvent, id: string, admin: AdminSession) {
+  const body = jsonBody(event);
+  const transcript = typeof body.transcript === "string" ? body.transcript.replace(/\r/g, "").trim() : "";
+  if (!transcript || transcript.length > 300_000) return fail(400, "BAD_BODY", "转写不能为空，且不超过 30 万字");
+  const doc = await getRow<LessonDoc>(LESSONS, id);
+  if (!doc?.transcript || !canSee(admin, doc)) return fail(404, "LESSON_NOT_FOUND", "这节课还没有转写");
+  if (body.base !== sha256(doc.transcript)) return fail(409, "STALE", "转写刚被别人改过，请刷新后再改");
+  const patch: Partial<LessonDoc> = { transcript };
+  if (doc.rawTranscript == null) patch.rawTranscript = doc.transcript;
+  if (doc.kind === "meeting" && doc.report && "speakers" in doc.report) patch.report = { ...doc.report, speakers: L.meetingSpeakers(transcript) };
+  await updateLesson(id, patch);
+  if (doc.kind !== "meeting" && doc.kind !== "merged") await sendReview(id);
+  return json(200, { ok: true });
+}
+
+/** 后台改家长总结 / 会议纪要文字：和老师在 App 里改的是同一份（editedSummary）；base 对不上说明 App 或别人刚改过 */
+async function saveSummary(event: HttpEvent, id: string, admin: AdminSession) {
+  const body = jsonBody(event);
+  const text = typeof body.text === "string" ? body.text.replace(/\r/g, "").trim() : "";
+  if (!text || text.length > 5000) return fail(400, "BAD_BODY", "总结不能为空，且不超过 5000 字");
+  const [doc] = await pg<LessonDoc>("GET", LESSONS, `_id=${eq(id)}&select=teacherOpenId,summary,editedSummary`);
+  if (!doc || !canSee(admin, doc)) return fail(404, "LESSON_NOT_FOUND", "没有找到这节课");
+  if (body.base !== sha256(doc.editedSummary || doc.summary || "")) return fail(409, "STALE", "总结刚被改过（可能是老师在 App 里改的），请刷新后再改");
+  await updateLesson(id, { editedSummary: text });
+  return json(200, { ok: true });
+}
+
+/** 网页上改报告：先取可编辑的原始数据和版本号（rev = 报告 JSON 的 sha256），保存时版本对不上就拒绝 */
+async function reportForEdit(token: string, admin: AdminSession) {
+  if (!/^[A-Za-z0-9_-]{32}$/.test(token)) return undefined;
+  const [doc] = await pg<LessonDoc>("GET", LESSONS, `reportToken=${eq(token)}&stage=eq.done&limit=1&select=_id,teacherOpenId,kind,startAt,report,rawReport,editedSummary`);
+  return doc?.report && canSee(admin, doc) ? doc : undefined;
+}
+const reportRev = (report: unknown) => sha256(JSON.stringify(report));
+
+async function getReportForEdit(token: string, admin: AdminSession) {
+  const doc = await reportForEdit(token, admin);
+  if (!doc) return fail(404, "NOT_FOUND", "没有找到这份报告，或这不是你的课");
+  return json(200, { rev: reportRev(doc.report), report: doc.report, edited: doc.rawReport != null });
+}
+
+async function saveReport(event: HttpEvent, token: string, admin: AdminSession) {
+  const body = jsonBody(event);
+  const doc = await reportForEdit(token, admin);
+  if (!doc) return fail(404, "NOT_FOUND", "没有找到这份报告，或这不是你的课");
+  if (body.rev !== reportRev(doc.report)) return fail(409, "STALE", "报告刚被别人改过，请刷新后再改");
+  const report = L.applyReportEdits(doc.kind, doc.report!, body.report);
+  const patch: Partial<LessonDoc> = { report };
+  if (doc.rawReport == null) patch.rawReport = doc.report; // 第一次改时留一份 AI 原稿
+  // 会议纪要的文字版（App 里复制、飞书私信）由报告生成，跟着更新；老师在 App 里手改过的不动
+  if (doc.kind === "meeting" && !doc.editedSummary) patch.summary = L.meetingText(report as L.MeetingReport, L.shMonthDay(doc.startAt));
+  await updateLesson(doc._id, patch);
+  const [fresh] = await pg<LessonDoc>("GET", LESSONS, `_id=${eq(doc._id)}&select=student,course,kind,teacherName,startAt,endAt,finish,report,archive,gapMinutes,audioSec`);
+  return json(200, { ...L.reportData(fresh), rev: reportRev(fresh.report) });
+}
+
+/** 超级管理员名单：创建者（环境变量）+ 后台加的；候选 = 登录过 App 或后台的老师 */
+async function adminList() {
+  const [admins, app, web] = await Promise.all([
+    pg<{ openId: string; name: string; addedBy: string; addedAt: number }>("GET", ADMINS, "select=*&order=addedAt.asc"),
+    pg<{ openId: string; name: string }>("GET", SESSIONS, "select=openId,name&limit=5000"),
+    pg<{ openId: string; name: string }>("GET", ADMIN_SESSIONS, "select=openId,name&limit=5000"),
+  ]);
+  const names = new Map([...web, ...app].map((p) => [p.openId, p.name]));
+  return json(200, {
+    owners: adminOpenIds().map((openId) => ({ openId, name: names.get(openId) ?? "" })),
+    admins,
+    people: [...names].map(([openId, name]) => ({ openId, name })).sort((a, b) => a.name.localeCompare(b.name, "zh-CN")),
+  });
+}
+
+async function setAdmin(method: string, openId: string, event: HttpEvent, admin: AdminSession) {
+  if (adminOpenIds().includes(openId)) return fail(400, "OWNER", "创建者一直是超级管理员，不能在这里改");
+  if (method === "DELETE") {
+    await pg("DELETE", ADMINS, `openId=${eq(openId)}`);
+    return json(200, { ok: true });
+  }
+  const name = String(jsonBody(event).name ?? "").trim().slice(0, 40);
+  if (!name) return fail(400, "BAD_BODY", "缺少名字");
+  await pg("POST", ADMINS, "on_conflict=openId", [{ openId, name, addedBy: admin.name, addedAt: Date.now() }], "resolution=merge-duplicates,return=minimal");
+  return json(200, { ok: true });
+}
+
+function readPrompts(value: any): L.Prompts | null {
+  const keys = ["rules", "parent", "report", "meeting"] as const;
+  if (!value || keys.some((key) => typeof value[key] !== "string" || !value[key].trim() || value[key].length > 20_000)) return null;
+  return { rules: value.rules.trim(), parent: value.parent.trim(), report: value.report.trim(), meeting: value.meeting.trim() };
+}
+
+async function savePrompts(event: HttpEvent, admin: AdminSession) {
+  const body = jsonBody(event);
+  const prompts = readPrompts(body.prompts);
+  if (!prompts) return fail(400, "BAD_BODY", "四段提示词都不能为空，且每段不超过 20000 字");
+  const live = await livePrompts();
+  if (Number(body.base) !== live.version) return fail(409, "STALE", "提示词刚被别人更新过，请刷新后再改");
+  const version = live.version + 1;
+  try {
+    await pg("POST", PROMPTS, "", [{ version, ...prompts, createdAt: Date.now(), createdBy: admin.name }], "return=minimal");
+  } catch {
+    return fail(409, "STALE", "提示词刚被别人更新过，请刷新后再改"); // 两人同时保存：主键冲突
+  }
+  return json(200, { version });
+}
+
+/** 用给定提示词试生成，不写库；素材 = 已有课程的转写，或直接给的转写文本 */
+async function previewPrompts(event: HttpEvent, admin: AdminSession) {
+  const body = jsonBody(event);
+  const prompts = readPrompts(body.prompts);
+  if (!prompts) return fail(400, "BAD_BODY", "四段提示词都不能为空，且每段不超过 20000 字");
+  // 已有课程用它自己的信息；粘贴 / 上传的转写拼一节假课，课表时间 = 转写长度
+  let doc: LessonDoc;
+  if (typeof body.lessonId === "string") {
+    const row = await getRow<LessonDoc>(LESSONS, body.lessonId);
+    if (!row) return fail(404, "LESSON_NOT_FOUND", "没有找到这节课");
+    doc = row;
+  } else {
+    const transcript = String(body.transcript ?? "");
+    const last = [...transcript.matchAll(/-(\d+):(\d{2})\]/g)].at(-1);
+    const secs = last ? Number(last[1]) * 60 + Number(last[2]) : 0;
+    doc = { student: "", course: "", teacherName: admin.name, kind: "lesson", startAt: Date.now(), endAt: Date.now() + secs * 1000, audioSec: secs, gapMinutes: 0, transcript } as LessonDoc;
+  }
+  const transcript = doc.transcript ?? "";
+  if (!transcript.trim()) return fail(400, "NO_TRANSCRIPT", "这节课还没有转写内容");
+  if (transcript.length > 200_000) return fail(400, "TOO_LONG", "转写超过 20 万字");
+  const monthDay = L.shMonthDay(doc.startAt);
+  try {
+    if (body.kind === "meeting") {
+      const out = await meetingMinutes({ topic: doc.course || "会议", monthDay }, transcript, prompts.meeting);
+      return json(200, { parentSummary: out.text, reportData: L.reportData({ ...doc, kind: "meeting", report: out.report, archive: null }) });
+    }
+    const out = await generate({ student: doc.student, course: doc.course, teacher: doc.teacherName, monthDay }, transcript, prompts);
+    return json(200, { parentSummary: out.parentSummary, reportData: L.reportData({ ...doc, kind: doc.kind === "meeting" ? "lesson" : doc.kind, report: out.report, archive: out.archive }) });
+  } catch (error) {
+    return fail(422, "GENERATE_FAILED", `生成失败：${(error as Error).message}`);
+  }
+}
+
+/** 测试音频分块上传（每块 ≤ 2 MB，HTTP 访问层 body 有大小限制），finish 时按序拼回原文件再提交腾讯云识别 */
+async function uploadPart(event: HttpEvent, uid: string, n: number) {
+  const bytes = Buffer.from(event.body ?? "", event.isBase64Encoded ? "base64" : "latin1");
+  if (!bytes.length || bytes.length > 2_000_000) return fail(400, "BAD_BODY", "分块为空或超过 2 MB");
+  await putObject(`preview/${uid}/${n}`, bytes, "application/octet-stream");
+  return json(200, { ok: true });
+}
+
+async function finishUpload(event: HttpEvent, uid: string) {
+  const parts = Number(jsonBody(event).parts);
+  if (!Number.isInteger(parts) || parts < 1 || parts > 100) return fail(400, "BAD_BODY", "parts 应为 1–100");
+  const keys = Array.from({ length: parts }, (_, i) => `preview/${uid}/${i}`);
+  const name = `preview/${uid}/audio`;
+  await concatObjects(name, keys, "application/octet-stream");
+  await removeObjects(keys);
+  const task = await asrApi().CreateRecTask({
+    EngineModelType: process.env.ASR_ENGINE?.trim() || "16k_zh_en_2.0", ChannelNum: 1, SourceType: 0, Url: await signedUrl(name, 6 * 3600),
+    SpeakerDiarization: 1, SpeakerNumber: 0, ResTextFormat: 2, ConvertNumMode: 1,
+  });
+  if (!task.Data?.TaskId) return fail(502, "ASR_FAILED", "腾讯云录音识别任务提交失败");
+  return json(200, { taskId: task.Data.TaskId });
+}
+
+async function asrStatus(taskId: number) {
+  const data = (await asrApi().DescribeTaskStatus({ TaskId: taskId })).Data;
+  if (data?.Status === 3) return json(200, { status: "failed", message: `识别失败：${data.ErrorMsg ?? ""}` });
+  if (data?.Status !== 2) return json(200, { status: "pending" });
+  return json(200, { status: "done", transcript: await withRoles(L.formatTranscript(data.ResultDetail, data.Result ?? "")) });
+}
+
+async function adminRoute(method: string, path: string, event: HttpEvent, query: Record<string, string>, admin: AdminSession) {
+  if (method === "GET" && path === "/admin/me") return json(200, { name: admin.name, role: admin.role });
+  if (method === "GET" && path === "/admin/lessons") return adminLessons(query, admin);
+  if (method === "GET" && path === "/admin/people") return adminPeople(admin);
+  if (method === "GET" && path === "/admin/report") return getReportForEdit(query.t ?? "", admin);
+  if (method === "PUT" && path === "/admin/report") return saveReport(event, query.t ?? "", admin);
+  let m = path.match(/^\/admin\/lessons\/(rec[A-Za-z0-9]+|adhoc-[0-9a-f]{16}|merged-[0-9a-f]{16})(\/retry|\/transcript|\/summary)?$/);
+  if (m && method === "GET" && !m[2]) return adminLesson(m[1], admin);
+  if (m && method === "PUT" && m[2] === "/transcript") return saveTranscript(event, m[1], admin);
+  if (m && method === "PUT" && m[2] === "/summary") return saveSummary(event, m[1], admin);
+  if (m && method === "POST" && m[2] === "/retry") {
+    const [doc] = await pg<{ teacherOpenId: string }>("GET", LESSONS, `_id=${eq(m[1])}&select=teacherOpenId`);
+    if (!doc || !canSee(admin, doc)) return fail(404, "LESSON_NOT_FOUND", "没有找到这节课");
+    await pg("PATCH", LESSONS, `_id=${eq(m[1])}&stage=eq.failed`, { attempts: 0 }, "return=minimal");
+    await processLesson(m[1], Date.now() + 40_000); // 从失败的那一步立刻重跑；没跑完的交给回调 / 定时器
+    return json(200, { ok: true });
+  }
+  // 以下只给超级管理员：提示词、试生成、管理员名单
+  if (admin.role !== "admin") return fail(403, "FORBIDDEN", "只有超级管理员可以操作");
+  if (method === "GET" && path === "/admin/admins") return adminList();
+  m = path.match(/^\/admin\/admins\/(ou_[A-Za-z0-9_-]{8,64})$/);
+  if (m && (method === "PUT" || method === "DELETE")) return setAdmin(method, m[1], event, admin);
+  if (method === "GET" && path === "/admin/prompts") {
+    const rows = await pg<PromptRow>("GET", PROMPTS, "order=version.desc&limit=30");
+    return json(200, { versions: rows.length ? rows.map(withMeeting) : [await livePrompts()] });
+  }
+  if (method === "POST" && path === "/admin/prompts") return savePrompts(event, admin);
+  if (method === "POST" && path === "/admin/preview") return previewPrompts(event, admin);
+  m = path.match(/^\/admin\/uploads\/([A-Za-z0-9_-]{8,40})\/(\d{1,2}|finish)$/);
+  if (m && method === "POST") return m[2] === "finish" ? finishUpload(event, m[1]) : uploadPart(event, m[1], Number(m[2]));
+  m = path.match(/^\/admin\/asr\/(\d{1,20})$/);
+  if (m && method === "GET") return asrStatus(Number(m[1]));
+  return fail(404, "NOT_FOUND", "接口不存在");
+}
+
+// ---------- 入口 ----------
+
+/** 本次调用必须结束的时间（函数超时 300 s，留 20 s 写失败状态） */
+let hardStop = Date.now() + 280_000;
+
+export async function main(event: HttpEvent) {
+  hardStop = Date.now() + 280_000;
+  if (typeof event.httpMethod !== "string") {
+    if (event.action === "classroomReview") {
+      const { lessonId, issuedAt, signature } = event;
+      if (!lessonId || !RECORDING_ID.test(lessonId) || typeof issuedAt !== "number" || Math.abs(Date.now() - issuedAt) > 600_000 ||
+          typeof signature !== "string" || !/^[a-f0-9]{64}$/.test(signature) ||
+          !timingSafeEqual(Buffer.from(signature, "hex"), Buffer.from(reviewSignature(lessonId, issuedAt), "hex"))) return { ok: false, error: "UNAUTHORIZED" };
+      const result = await processReview(lessonId);
+      return { ok: true, status: result.status };
+    }
+    if (event.action === "rebuild" && event.lessonId) return await rebuild(event.lessonId, readPrompts(event.prompts) ?? undefined);
+    if (event.action === "ride" && Array.isArray(event.lessonIds)) {
+      const ids = event.lessonIds.filter((id): id is string =>
+        typeof id === "string" && (RECORDING_ID.test(id) || L.isMergedId(id)));
+      await processPending([...new Set(ids)].slice(0, PIGGYBACK_BATCH));
+      return { ok: true };
+    }
+    if (event.Type === "Timer" || event.TriggerName || event.action === "tick") {
+      if (!event.lessonId && (event.Type === "Timer" || event.TriggerName)) {
+        await retryReviews().catch(() => console.warn("复盘补投递稍后重试"));
+      }
+      await runPipeline(event.lessonId);
+      return { ok: true };
+    }
+    return { ok: false, error: "UNKNOWN_ACTION" };
+  }
+  try {
+    const method = event.httpMethod.toUpperCase();
+    const path = (event.path ?? "").replace(/^\/classroom-api(?=\/|$)/, "").replace(/\/$/, "") || "/";
+    const query = event.queryStringParameters ?? {};
+    if (method === "GET" && path === "/auth/start") return await authStart();
+    if (method === "GET" && path === "/auth/callback") return await authCallback(query, event);
+    if (method === "GET" && path === "/auth/poll") return await authPoll(query.state ?? "", wantsSignedSession(event));
+    if (method === "GET" && path === "/report") return await getReport(query.t ?? "");
+    if (method === "POST" && path === "/asr/callback") return await asrCallback(query);
+    if (method === "GET" && path === "/admin/login") return redirect((await authorizeUrl(query.to === "workbench" ? "workbench" : "admin")).url);
+    if (path.startsWith("/fupan/")) return await reviewRoute(method, path.slice("/fupan".length), event, query);
+    if (path === "/wb-form") return await formRoute(method, event, query);
+    if (path.startsWith("/wb/")) return await workbenchRoute(method, path, event, query);
+    if (path.startsWith("/admin/")) {
+      const admin = await authenticateAdmin(event);
+      if (!admin) return fail(401, "UNAUTHORIZED", "登录已失效，请重新用飞书登录");
+      return await adminRoute(method, path, event, query, admin);
+    }
+
+    // 课表和分块上传地址（第一块除外）只验签名令牌、不查库
+    const stateless = (method === "GET" && path === "/schedule") || (method === "POST" && /^\/lessons\/[^/]+\/part-url$/.test(path) && query.first !== "1");
+    const auth = await authenticate(event, stateless);
+    if (!auth) return fail(401, "UNAUTHORIZED", "登录已失效，请重新使用飞书登录");
+    const response = await desktopRoute(method, path, event, query, auth.session);
+    if (response.statusCode < 400 && auth.renewal) {
+      return { ...response, headers: { ...response.headers, "x-classroom-session": auth.renewal } };
+    }
+    return response;
+  } catch (error) {
+    console.error(error);
+    return fail(500, "INTERNAL", "服务暂时不可用，请稍后重试");
+  }
+}
+
+async function desktopRoute(method: string, path: string, event: HttpEvent, query: Record<string, string>, session: Session) {
+  if (method === "GET" && path === "/me") return json(200, { teacher: { name: session.name } });
+  if (method === "GET" && (path === "/lessons" || path === "/schedule")) return await listLessons(session, path === "/schedule");
+
+  const merge = path.match(/^\/merges\/(merged-[0-9a-f]{16})$/);
+  if (merge && method === "POST") return await saveMerge(event, session, merge[1]);
+
+  const match = path.match(/^\/lessons\/(rec[A-Za-z0-9]+|adhoc-[0-9a-f]{16}|merged-[0-9a-f]{16})\/(segments\/(\d{1,5})|finish|upload-url|part-url|summary|copied|discard)$/);
+  if (match) {
+    const [, id, action, seq] = match;
+    if (L.isMergedId(id) && (seq !== undefined || action === "finish" || action === "upload-url" || action === "part-url")) return fail(404, "NOT_FOUND", "接口不存在"); // 合并反馈没有录音
+    if (method === "POST" && seq !== undefined) return await uploadSegment(event, session, id, Number(seq));
+    if (method === "POST" && action === "part-url") {
+      const first = query.first === "1";
+      const response = await signPart(event, session, id, Number(query.n), first);
+      if (first && response.statusCode === 200) await piggyback(id); // 只在本来就查了库的第一块顺带推进待办
+      return response;
+    }
+    if (method === "POST" && (action === "upload-url" || action === "finish")) {
+      const response = action === "upload-url" ? await signUpload(event, session, id, query.kind ?? "") : await finishLesson(event, session, id);
+      if (response.statusCode === 200) await piggyback(id);
+      return response;
+    }
+    if (method === "PUT" && action === "summary") {
+      const text = jsonBody(event).text;
+      if (typeof text !== "string" || !text.trim() || text.length > 5000) return fail(400, "BAD_BODY", "总结不能为空，且不超过 5000 字");
+      return await ownedPatch(id, session, { editedSummary: text });
+    }
+    if (method === "POST" && action === "copied") return await ownedPatch(id, session, { copied: true });
+    if (method === "POST" && action === "discard") return await discardLesson(session, id);
+  }
+  return fail(404, "NOT_FOUND", "接口不存在");
+}

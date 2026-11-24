@@ -25,7 +25,7 @@ for (const line of readFileSync(envFile, "utf8").split("\n")) {
   if (value) envVariables[trimmed.slice(0, index).trim()] = value;
 }
 
-const required = ["FEISHU_APP_ID", "FEISHU_APP_SECRET", "FEISHU_SCHEDULE_APP_TOKEN", "FEISHU_SCHEDULE_TABLE_ID", "CLOUDBASE_ENV_ID", "CLOUDBASE_API_KEY"];
+const required = ["FEISHU_APP_ID", "FEISHU_APP_SECRET", "FEISHU_SCHEDULE_APP_TOKEN", "FEISHU_STUDENT_TABLE_ID", "FEISHU_SCHEDULE_TABLE_ID", "CLOUDBASE_ENV_ID", "CLOUDBASE_API_KEY"];
 const missing = required.filter((key) => !envVariables[key]);
 if (missing.length > 0) {
   console.error(`server.env 缺少：${missing.join("、")}`);

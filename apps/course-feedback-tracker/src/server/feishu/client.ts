@@ -1,5 +1,5 @@
 import { FeishuApiError } from "./errors";
-import type { FeishuEnvelope, FeishuField, FeishuFieldOption, FeishuPage, FeishuRecord } from "./types";
+import type { FeishuEnvelope, FeishuField, FeishuFieldOption, FeishuPage, FeishuRecord, SearchFilter } from "./types";
 
 const FEISHU_API_ORIGIN = "https://open.feishu.cn";
 
@@ -122,6 +122,93 @@ export class FeishuClient {
       }
     } while (pageToken);
     return records;
+  }
+
+  /**
+   * 「查询记录」接口（POST /records/search）：支持服务端按日期过滤、只取指定列。
+   * 返回形状和 list 接口不同：关联字段只有 {link_record_ids}，没有显示文本。
+   */
+  async searchRecords(input: {
+    appToken: string;
+    tableId: string;
+    fieldNames: string[];
+    filter: SearchFilter;
+  }): Promise<FeishuRecord[]> {
+    const records: FeishuRecord[] = [];
+    let pageToken: string | undefined;
+    do {
+      const search = new URLSearchParams({ page_size: "500" });
+      if (pageToken) search.set("page_token", pageToken);
+      const page = await this.request<FeishuPage<FeishuRecord>>(
+        `/open-apis/bitable/v1/apps/${encodeURIComponent(input.appToken)}/tables/${encodeURIComponent(input.tableId)}/records/search?${search}`,
+        { method: "POST", body: JSON.stringify({ field_names: input.fieldNames, filter: input.filter, automatic_fields: true }) },
+      );
+      records.push(...(page.items ?? []));
+      pageToken = page.has_more ? page.page_token : undefined;
+      if (page.has_more && !pageToken) throw new FeishuApiError("飞书分页响应声明还有数据，但没有返回下一页游标");
+    } while (pageToken);
+    return records;
+  }
+
+  /** 读单条记录；记录不存在时返回 null（飞书错误码 1254043 RecordIdNotFound）。 */
+  async getRecord(input: { appToken: string; tableId: string; recordId: string }): Promise<FeishuRecord | null> {
+    try {
+      const data = await this.request<{ record: FeishuRecord }>(
+        `/open-apis/bitable/v1/apps/${encodeURIComponent(input.appToken)}/tables/${encodeURIComponent(input.tableId)}/records/${encodeURIComponent(input.recordId)}?automatic_fields=true`,
+      );
+      return data.record;
+    } catch (error) {
+      if (error instanceof FeishuApiError && error.code === 1254043) return null;
+      throw error;
+    }
+  }
+
+  async updateRecord(input: {
+    appToken: string;
+    tableId: string;
+    recordId: string;
+    fields: Record<string, unknown>;
+  }): Promise<FeishuRecord> {
+    const data = await this.request<{ record: FeishuRecord }>(
+      `/open-apis/bitable/v1/apps/${encodeURIComponent(input.appToken)}/tables/${encodeURIComponent(input.tableId)}/records/${encodeURIComponent(input.recordId)}`,
+      { method: "PUT", body: JSON.stringify({ fields: input.fields }) },
+    );
+    return data.record;
+  }
+
+  async createRecord(input: { appToken: string; tableId: string; fields: Record<string, unknown> }): Promise<FeishuRecord> {
+    const data = await this.request<{ record: FeishuRecord }>(
+      `/open-apis/bitable/v1/apps/${encodeURIComponent(input.appToken)}/tables/${encodeURIComponent(input.tableId)}/records`,
+      { method: "POST", body: JSON.stringify({ fields: input.fields }) },
+    );
+    return data.record;
+  }
+
+  /** 机器人发消息；receiveIdType 为 open_id（私聊）或 chat_id（群）。 */
+  async sendMessage(input: {
+    receiveIdType: "open_id" | "chat_id";
+    receiveId: string;
+    msgType: "text" | "interactive";
+    content: Record<string, unknown>;
+  }): Promise<void> {
+    await this.request<unknown>(`/open-apis/im/v1/messages?receive_id_type=${input.receiveIdType}`, {
+      method: "POST",
+      body: JSON.stringify({ receive_id: input.receiveId, msg_type: input.msgType, content: JSON.stringify(input.content) }),
+    });
+  }
+
+  /** 多维表格附件的临时下载链接（24 小时有效，无需鉴权即可访问），一次最多 5 个 token。 */
+  async tmpDownloadUrls(fileTokens: string[]): Promise<Map<string, string>> {
+    const urls = new Map<string, string>();
+    for (let i = 0; i < fileTokens.length; i += 5) {
+      const search = new URLSearchParams();
+      for (const token of fileTokens.slice(i, i + 5)) search.append("file_tokens", token);
+      const data = await this.request<{ tmp_download_urls?: Array<{ file_token: string; tmp_download_url: string }> }>(
+        `/open-apis/drive/v1/medias/batch_get_tmp_download_url?${search}`,
+      );
+      for (const item of data.tmp_download_urls ?? []) urls.set(item.file_token, item.tmp_download_url);
+    }
+    return urls;
   }
 
   async listAllFields(input: { appToken: string; tableId: string }): Promise<FeishuField[]> {

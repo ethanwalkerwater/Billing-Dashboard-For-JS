@@ -38,7 +38,11 @@ export interface TeacherRow {
   teacher: string;
   base_salary: number | null;
   unit_price: number | null;
+  extra_income: number | null;
+  custom_rate: number | null;
   note: string;
+  /** 排除：不参与预警统计、默认不显示、不导出 */
+  is_excluded: boolean;
   updated_at: string;
 }
 
@@ -46,4 +50,6 @@ export interface SettingsRow {
   id: number;
   min_rate: number;
   max_rate: number;
+  /** 预警线 = 基础薪水 × 这个倍数（默认 1.2） */
+  base_multiplier: number;
 }

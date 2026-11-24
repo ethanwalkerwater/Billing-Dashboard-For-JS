@@ -12,6 +12,10 @@ export interface StoredFeedbackTask extends FeedbackTaskDraft {
   /** 家长那份答卷 */
   parentResponseId?: string;
   boundBy?: BoundBy;
+  /** 负责教务：工作台按 feedback_owner_assignments 解析出来的（ownerResolver），不存在任务表里 */
+  owner?: string;
+  /** 负责人设定来自哪个课程月份；和 courseMonth 不同就是沿用之前的 */
+  ownerFromMonth?: string;
   responseRecordIds: string[];
   validationIssues: string[];
   createdAt: string;
@@ -22,6 +26,10 @@ export interface TaskSyncPlan {
   create: StoredFeedbackTask[];
   update: StoredFeedbackTask[];
   unchanged: StoredFeedbackTask[];
+  /** 课表里已经不是课程（或课被删了）、且还没人填过的任务：删掉 */
+  remove: StoredFeedbackTask[];
+  /** 同上但已经有人填了：保留不删，列出来给教务看 */
+  orphaned: StoredFeedbackTask[];
 }
 
 export type ResponseIdentity = "student" | "parent";
@@ -37,7 +45,7 @@ export type ResponseSyncStatus = "matched" | "duplicate" | "unlinked" | "excepti
 export interface ResponseOutcome {
   responseRecordId: string;
   submittedAt: string;
-  /** 按提交时间（上海时区）归属的收集月份 */
+  /** 属于哪一轮：按「反馈课程月份」，没填的按提交时间，见 responseCollectionMonth */
   collectionMonth: string;
   /** 问卷里的原始写法，"对不上的答卷"列表靠它显示 */
   studentName: string;

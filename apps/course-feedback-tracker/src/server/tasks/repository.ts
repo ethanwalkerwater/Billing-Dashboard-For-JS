@@ -5,10 +5,21 @@ export interface FeedbackTaskRepository {
   findByTaskIds(taskIds: string[]): Promise<StoredFeedbackTask[]>;
   findByPublicToken(publicToken: string): Promise<StoredFeedbackTask | null>;
   applySyncPlan(plan: TaskSyncPlan): Promise<void>;
+  /** 这些答卷在库里记在哪几轮（飞书里删掉或改了月份的答卷，要回原来那一轮腾位置） */
+  listResponseMonths(responseRecordIds: string[]): Promise<string[]>;
+  /** 「课程类型」页的手动设定：课程类型 → 是否课程 */
+  listCourseTypeOverrides(): Promise<Map<string, boolean>>;
   /** 问卷写法 → 课表规范名 */
   listAliases(): Promise<NameAlias[]>;
   /** 教务手动绑定过的答卷，重新同步时保留 */
   listManualBindings(collectionMonth: string): Promise<ManualBinding[]>;
+  /** 库里这个收集月份已记录的答卷 ID，用来找出飞书里已删除的 */
+  listResponseIds(collectionMonth: string): Promise<string[]>;
+  deleteResponses(responseRecordIds: string[]): Promise<void>;
+  /** 写回任务的学生/家长位置、状态和提交时间（删除答卷后腾位置用） */
+  updateTaskSlots(tasks: StoredFeedbackTask[]): Promise<void>;
+  /** 存评分用的数据源快照：课程月份的课表 CSV / 收集月份的答卷 CSV */
+  saveSnapshot(kind: "schedule" | "feedback", month: string, csv: string, rowCount: number): Promise<void>;
   /** 写答卷引用，并把绑定成功的答卷填进任务的学生/家长位置、推进到"已填写"。 */
   applyResponseOutcomes(outcomes: ResponseOutcome[]): Promise<void>;
 }

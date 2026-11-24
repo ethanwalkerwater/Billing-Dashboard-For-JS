@@ -1,0 +1,173 @@
+# 菁仕课堂（classroom-recorder）设计与接口约定
+
+UI / UX 唯一依据：`docs/MVP.html`（老师端，含「随时录制」三步演示）与 `docs/classroom-report.html`（完整报告网页）。
+产品规则依据：`docs/课堂录制.html`。云端流程参考 jingshi-vocal v1.3（腾讯云录音文件识别 + 大模型）。
+
+## 选型
+
+- **桌面端：Tauri 2**（一套代码出 macOS `.dmg` 与 Windows `.msi/.exe`，安装包约 10 MB）。
+  - 录音、切段、上传、课表轮询、状态机全部在 **Rust** 里跑，窗口关掉 / 隐藏都不影响录音；
+    规避了方案文档里担心的「Mac WebView 后台录音受限」。
+  - 录音：`cpal` 采集 → 单声道 → 线性重采样 16 kHz → `mp3lame-encoder` 32 kbps MP3，每 30 秒一段（约 120 KB，一小时约 14 MB）。
+    MP3 帧可直接按字节拼接，云端不需要 ffmpeg。
+  - Web 层（Vite + 原生 TS，无框架）只负责渲染三个窗口：`main`（主窗口）、`pill`（顶部胶囊）、`toast`（右上角通知）。
+  - 菜单栏 / 托盘用 Tauri 原生托盘菜单；macOS 菜单栏标题显示录制计时。
+- **云端：CloudBase（环境 `jingshi-test-d5gp401i44a0fa7a7`）**
+  - HTTP 云函数 `classroom-api`（路径 `https://app.jsjy.asia/classroom-api`）+ 腾讯云转写完成回调推进处理流水线，北京时间 03:00、22:45 定时兜底，录课请求到来时也会顺带推进待办。
+  - PostgreSQL 表 `classroom_lessons`、`classroom_segments`、`classroom_sessions`、`classroom_auth`（本环境没有文档型数据库）；Storage 私有桶 `classroom` 放直传的整段 MP3、保险录音和旧版分段。
+  - 静态托管 `https://app.jsjy.asia/classroom/report.html?t=<token>` 承载完整报告。
+- **登录：飞书网页授权**（应用 = 机器人「课表分析」`cli_a93a4faca0f8dcb6`，与老师档案「飞书账号」同一应用，open_id 一致）。
+
+## 登录流程（无需 deep link / 本地端口）
+
+1. App `GET /auth/start` → `{ state, url }`，用系统浏览器打开 `url`（飞书授权页，redirect_uri = `/classroom-api/auth/callback`）。
+2. 飞书回调 `/auth/callback?code&state`：云函数换 user_access_token → 取 open_id/姓名 → 在老师档案表按「飞书账号」找老师（课表名优先，否则姓名）→ 生成 session token 写库，页面显示「登录成功，可以回到菁仕课堂」。
+3. App 每 2 秒 `GET /auth/poll?state=` 直到拿到 `{ token, teacher }`（state 10 分钟过期）。token 存本机 app 数据目录。0.1.12 起使用有效期 30 天的签名令牌，距过期 7 天内有成功请求就续期。升级时旧令牌首次请求换成签名令牌。
+
+## HTTP 接口（除 auth/* 与 report 外均需 `Authorization: Bearer <token>`）
+
+所有响应 JSON；错误 `{ error: "CODE", message }`，401 = 需要重新登录。
+
+| 方法 路径 | 说明 |
+|---|---|
+| `GET /auth/start` | `{ state, url }` |
+| `GET /auth/callback?code&state` | HTML 页面 |
+| `GET /auth/poll?state` | 202 `{ pending: true }` / 200 `{ token, teacher: { name } }` |
+| `GET /me` | `{ teacher: { name } }` |
+| `GET /schedule` | 同一时间范围的飞书课表，不取录音或报告状态，签名会话无需查库 |
+| `GET /lessons` | 这位老师最近 7 天 + 明天的课及录音、报告状态，见下方 `Lesson` |
+| `POST /lessons/:id/part-url?n=&first=1?&fails=&last=` | 0.1.14 起分块：给第 n 块（分段 n*10+1…n*10+10）签发 60 秒 PUT 地址 `{url}`，对象名 `{id}/p-{sha256(openId\|device) 前 16 位}/{n:03}.mp3`。第一块带 `first=1`：认课、认电脑、记 `partsAt`，云端已接手时返回 `{done:true}`；之后的块只验签名令牌、不查库 |
+| `POST /lessons/:id/upload-url?kind=final\|early` | 给本人的课签发 60 秒 PUT 地址。返回 `{url}`；云端已接手时返回 `{done:true}`；随时录制只有 final |
+| `POST /lessons/:id/segments/:seq` | body = 原始 MP3 字节（HTTP 访问层以 base64 传入），header `x-sha256`；重复上传覆盖 → `{ ok: true }` |
+| `POST /lessons/:id/finish` | `{ startedAt, endedAt, audio: { sha256, bytes }, topic?, kind?, pauses? }`。旧版用 `segments: [{ seq, sha256, bytes }]`（ISO 时间；`topic` / `kind = adhoc \| meeting` 只对随时录制有效；`pauses = [{ start, end }]` 是老师点了暂停的时段，0.1.9 起）→ `{ missing: number[] }`；为空即开始处理。直传对象大小不符时还会返回 `reupload: true`。0.1.14 起分块的课另带 `parts: [{ n, bytes }]`，`audio` 是整节的校验值：云端按块大小核对，`missing` 是要补传的块号；齐了马上拼（拼好的 sha256 必须对上），缺块等到 endedAt 后 2 小时再用已到的块出报告 |
+| `PUT /lessons/:id/summary` | `{ text }` 保存老师改过的总结 |
+| `POST /lessons/:id/copied` | 标记已复制 |
+| `POST /lessons/:id/discard` | 老师在 App 里删了这节课：没出报告的不再处理（标失败、次数用满）；合并反馈直接删掉那一行 |
+| `POST /merges/:id` | `{ lessonIds }` 合并反馈：最近 7 天、已出报告的 2–8 节课（课表课只能是同一个学生，随时录制的课程不限），编号 `merged-<16 位十六进制>` 由 App 生成；同一编号再提交 = 重新选课程。在请求里生成完（约 15 秒）→ `{ ok }`；失败 502，云端定时重试 |
+| `GET /report?t=<token>` | 公开，报告网页数据 `ReportData` |
+
+后台接口（`/admin/*`，`Authorization: Bearer <后台 token>`；`GET /admin/login` 跳飞书授权，回调后带 `#token=` 跳回 `/classroom/admin/`（旧地址 admin.html 自动跳过去））：
+
+| 方法 路径 | 说明 |
+|---|---|
+| `GET /admin/lessons?q&stage&kind&teacher&student&before` | 课程列表，按上课时间倒序每页 50；`stage` = done / processing / recording / failed；`kind` = lesson（含随时录制的课）/ meeting，`teacher` / `student` 精确匹配；有课堂时间档案的课另带 `stats`（第一句 / 最后一句、学习、课间、闲聊秒数、学习占比），时长显示实际上课（第一句到最后一句）、学习占比低于 70% 标黄；其余用 `audioSec`（合并时按分段字节数算的实际录音秒数） |
+| `GET /admin/people` | 表头筛选候选：视图 `classroom_lesson_people`（老师 × 学生去重） |
+| `GET /admin/lessons/:id` | 详情：转写、总结、`audioUrl`（6 小时签名链接）、`reportUrl` |
+| `GET /admin/me` | `{name, role}`；role = admin（超级管理员）/ teacher。老师调用的课程类接口只返回 `teacherOpenId` 是自己的，提示词、试生成、管理员名单返回 403 |
+| `GET /admin/report?t=` · `PUT /admin/report?t=` | 报告编辑：GET 取原文和 `rev`（报告 JSON 的 sha256）；PUT `{rev, report}` 只合并文字（`applyReportEdits`：必填项清空保留原文，列表项清空即删除，章节标题可改，知识点改名同步章节），版本对不上 409；会议同时重写纪要文字版 |
+| `GET /admin/admins` · `PUT/DELETE /admin/admins/:openId` | 超级管理员名单（创建者来自 `ADMIN_OPEN_IDS`，不能移除）；候选 = 登录过 App 或后台的人 |
+| `PUT /admin/lessons/:id/summary` | 后台改家长总结 / 会议纪要文字（页面上直接改、划词全部替换，停手 1 秒自动保存），写 `editedSummary`，和 App 里改的是同一份；body `{text, base}`，base = 当前文字的 sha256，对不上 409 |
+| 请求头 `x-view-as: <open_id>` | 超级管理员切到某位老师的视角：之后的请求按这位老师的权限（只看、只改他的课） |
+| `PUT /admin/lessons/:id/transcript` | 后台改转写（错字、划词全部替换、说话人改名）。body `{transcript, base}`，`base` 是打开编辑时转写的 sha256，对不上返回 409；第一次改时机器原文存进 `rawTranscript`；会议按新名字重算发言占比 |
+| `POST /admin/lessons/:id/retry` | 失败的课把 `attempts` 清零并立刻重跑 |
+| `POST /asr/callback?lesson=` | 腾讯云录音识别转完的回调（不鉴权，只按编号推进，实际状态以 DescribeTaskStatus 为准）。腾讯云的回调带整份转写（1～4 MB），超过 HTTP 访问服务 100 KB 的文本请求体上限会被网关直接拒掉，所以 CallbackUrl 填官网 `https://jsjy.asia/api/asr-callback`（菁仕官网仓库），由它丢掉请求体再转到这里 |
+| `GET /admin/prompts` | 最近 30 个版本，第一个是线上 |
+| `POST /admin/prompts` | `{ prompts, base }`，`base` 不是当前线上版本号时 409 |
+| `POST /admin/preview` | `{ prompts, lessonId }` 或 `{ prompts, transcript }` → `{ parentSummary, reportData }`，不写库 |
+| `POST /admin/uploads/:uid/:n`、`POST /admin/uploads/:uid/finish`、`GET /admin/asr/:taskId` | 测试音频分块上传（每块 ≤ 2 MB）→ 拼回 → 腾讯云识别 → 轮询转写 |
+
+学情报告预览复用 `report.html`：后台把 `reportData` 写进同域 localStorage（`classroom-preview:draft|live`），用 `report.html#preview=draft` 打开。
+
+随时录制：课程编号 `adhoc-<16 位 hex>` 由 App 生成，`:id` 同样接受。第一次申请上传地址或上传分段时按当前老师建档（不查课表），finish 时写入主题、类型和真实起止时间。
+`kind = meeting` 的整理成结构化会议纪要（`MeetingReport`：板块 → 议题、决定、待办、待跟进、发言占比；提示词是后台第四栏「会议纪要」，不套通用规则），纯文本【决定】【待办】【待跟进】由程序从同一份数据拼出，纪要网页同样走 `report.html?t=`（版式见 `docs/meeting-report.html`）；不判断老师 / 学生，不出家长总结和学情报告；`adhoc` 与课表课一样出家长总结和学情报告。
+录音保留 30 天。转写入库后删分段和未使用的保险音频；过期后删本课剩余的录音并记 `audioDeletedAt`，转写和总结一直保留。
+
+```ts
+type LessonStatus = "upcoming" | "recording" | "processing" | "done" | "cancelled" | "failed" | "empty"; // failed、empty 从 0.1.10 起
+interface Lesson {
+  id: string;          // 飞书课表 record_id
+  date: string;        // "2026-10-15"（上海时区）
+  start: string;       // "16:00"
+  end: string;         // "17:00"
+  startAt: number;     // epoch ms
+  endAt: number;
+  title: string;       // "IG 物理 · 小雨"  = 课程类型 · 学生
+  topic: string;       // 云端整理出的主题 · 上课地点，可为空
+  status: LessonStatus;// 服务端视角；recording = 已签发上传地址或收到旧版分段，尚未 finish
+  copied: boolean;
+  summary?: string;    // done 时给出（老师改过的版本优先）
+  reportUrl?: string;  // done 时给出
+  kind?: "adhoc" | "meeting"; // 随时录制；课表课没有
+  needsName?: boolean; // 只在本机快照：随时录制已结束、等老师填主题
+}
+```
+
+云端处理状态（`classroom_lessons.stage`）：`recording → queued → transcribing → summarizing → done | failed | empty`，对外映射为 `processing / done`；重试 3 次用完的 failed 对外是 `failed`（App 显示「没能生成」）。录音不到 5 分钟且转写里说的话不到 100 字的记 `empty`（不算录制）：转写后直接停，不调模型、不发通知，App 里课表的课显示「未录制」、随时录制不显示，后台标「未计入」。
+下课 2 小时后仍缺段：用已有分段出报告，并在报告中注明「录音缺失约 X 分钟」。
+
+## Rust ↔ Web 约定（Tauri）
+
+Rust 是唯一状态源，每次状态变化 emit 全局事件 `app-state`（完整快照），声波电平单独 emit `level`（约 8 Hz，0–1）。
+Web 端启动时 `invoke("get_state")` 拿首帧。
+托盘「设置…」会打开主窗口并 emit 事件 `open-settings`（无载荷），主窗口收到后打开设置面板。
+`selectedLessonId` 只随一次快照发出（下一次快照即回到 null），Web 收到非空值时选中即可。
+
+```ts
+type RecMode = "idle" | "pre" | "recording" | "paused" | "confirm" | "warn" | "quiet" | "ending" | "processing" | "naming" | "gone"; // naming = 随时录制刚结束，胶囊变成填主题卡片
+interface AppState {
+  teacher: { name: string } | null;       // null = 未登录，main 窗口显示登录页
+  loggingIn: boolean;
+  lessons: Lesson[];                       // 已合并本机录制状态
+  rec: {
+    mode: RecMode;
+    lessonId: string | null;               // 胶囊/菜单栏所指的那节课（pre 时是下一节）
+    sec: number;                           // 已录秒数（不含暂停）
+    paused: boolean;                       // 暂停着（confirm 时靠它知道底下是不是暂停）
+    pausedSec: number;                     // 这次暂停了多久
+    nudge: "" | "long" | "voice";          // 暂停提醒：满 10 分钟 / 连续 1 分钟听到有人说话
+    endLeft: number;                       // ending 模式下剩余秒数
+    autoStopAt: string;                    // "17:10"
+    autoStartAt: string;                   // "15:57"（pre 模式）
+    savedSegments: number;
+    uploading: boolean;
+    online: boolean;
+  };
+  mics: string[]; mic: string;             // 当前麦克风
+  autostart: boolean;
+  fab: boolean;                            // 设置里「悬浮录制按钮」开着
+  toast: { lessonId: string; title: string; body: string; kind?: "pause" } | null; // pause = 暂停满 10 分钟的提醒
+  selectedLessonId: string | null;         // 托盘/通知「查看」时让主窗口选中
+}
+```
+
+Commands（`invoke(name, args)`）：
+`get_state`、`login`、`logout`、`start_recording { lessonId }`、`request_stop`（菜单栏「结束录制…」→ 胶囊 confirm）、`resume_recording`（收起确认 / 暂停后继续）、`cancel_stop`（暂停着收起确认）、
+`pause_recording`、`still_chatting`（暂停提醒里点「还在聊」）、`merge_lessons { mergeId, lessonIds }`（合并反馈，完了重拉课表）、
+`end_recording`、`keep_recording`（问「是否结束」时继续录）、`switch_mic { name }`、`save_summary { lessonId, text }`、
+`copy_summary { lessonId, text }`（写剪贴板 + 保存 + 标记已复制）、`open_report { lessonId }`（系统浏览器）、
+`open_main { lessonId? }`、`hide_toast`、`start_adhoc`（随时录制）、`name_adhoc { lessonId, topic, kind }`、`set_fab { enabled }`、`resize_fab { width, height }`、`set_autostart { enabled }`、`resize_pill { width, height }`、`start_level_preview` / `stop_level_preview`（设置页试音）。
+
+## 录制规则（来自产品方案）
+
+- 随时录制：屏幕右侧悬浮按钮（`fab` 窗口，4 秒不碰淡成 25% 透明，悬停恢复，可拖动，设置里可关）或菜单栏「随时录制」，点一下开录，不需要课表、不参与自动开录，最长 3 小时。
+  结束后胶囊（和主窗口详情）请老师填主题、选「课程 / 会议」，停止后先传完整录音，填好才提交 finish；10 分钟不填或又开始新的录制，按「课程 · 随时录制 HH:MM」处理。连堂的课到点自动开录时会先停掉随时录制。
+
+- 后台启动和每天北京时间 7:00 只拉飞书课表。登录、打开主窗口（10 分钟内不重复）和手动刷新会同时拉报告状态；报告好了云端飞书私信老师。老师可在 App 里删除某节课（只本机隐藏，录音丢弃并通知云端放弃）。开课前 10 分钟 → `pre`（胶囊出现，试音电平）；开课前 3 分钟自动开录；可提前最多 30 分钟手动开录。
+- 课表课下课后按声音停：下课时间后连续 3 分钟没人说话（麦克风电平约 -40 dBFS 以下）→ `quiet`，胶囊问「要结束录制吗」并倒计时 1 分钟，没人理就停，点「继续录」或又有人说话就接着按声音判断。上限下课后 30 分钟（最后 1 分钟 `ending` 倒计时，只能「现在停止」），连堂时下一节开录先到就先停。手动结束需二次确认（`confirm`）。
+- 结束要两步：胶囊上「暂停」是实心按钮、「结束」是文字按钮；确认卡片写清已录多久、结束后不能再接着录，红色按钮要按住 1 秒（松手取消），白色「继续录」在原来「结束」的位置，另有「改成暂停」。窗口里点「结束录制」，确认框就出在窗口里。「好像下课了」「下课后 30 分钟」这两个系统提醒仍是一键结束。
+- 暂停：胶囊、窗口、菜单栏都能暂停 / 继续。暂停时录音线程照常每 30 秒切段，但写的是静音（时间轴不断，云端流程不变），「已录」停表；继续时把暂停时段记进 `lesson.json`，finish 时报给云端，档案里挖成「暂停 N 分钟」（算上课时间、不算学习时间，同闲聊）。一次暂停最多提醒两次：满 10 分钟（胶囊 + 通知）、连续 1 分钟听到有人说话（只看音量），点「还在聊」就不再提醒；不会自动继续录。暂停到最晚停止时间照常自动结束。
+- 合盖睡眠：睡着期间不录；睡醒时已过了该停的时间就立刻停，结束时间记成睡着那一刻；没过就接着录。0.1.14 起上课时已经边录边传，一直不开电脑的：课表课计划下课 2 小时后（随时录制最后一块传上来 2 小时后），后续录课请求或定时兜底用已到的块出报告并通知管理员。0.1.12–0.1.13 仍用保险录音，更早的版本用分段收尾。
+- 开录 2 分钟仍几乎无声 → `warn`，给出可切换的麦克风；录音不中断。麦克风断开 → 自动切到系统默认。
+- 「临时取消」的课不自动录。连堂：下一节自动开录时间点先停上一节再开下一节。
+- 录制中阻止系统睡眠；关窗只隐藏到菜单栏 / 托盘；App 崩溃重启后若仍在上课时间内自动续录。
+- 录制时分段落盘（app 数据目录 `recordings/<lessonId>/<seq>.mp3` 和 `lesson.json`），每满 10 段拼成一块直传，`lesson.json` 的 `parts` 记已传的块（字节数对不上就重传）；有块没一次传上记 `partTrouble`，下课后就不再整段直传。退出 App 时正在录或还有没传完的，弹窗确认（「仍然退出」/「先不退出」）。失败退避 1s→2s→…→5min；云端确认后本机保留 7 天。
+
+## 课堂时间档案与家长报告的时间（2026-10-27）
+
+方案与 Demo：`~/Downloads/课堂时间档案_第一性原理方案.html`。
+
+- 第一步：整节课一次交给模型，抽出档案 `archive`：`segments`（10 类：课前 / 讲解 / 讲题 / 练习 / 答疑 / 复习总结 / 学习规划 / 课堂交流 / 课间休息 / 课后，首尾相接）、`moments`（答对 / 答错 / 提问 / 老师纠正）、`facts`（作业 / 下节课 / 考试成绩 / 选课规划）。程序排序、截断重叠、空当并进前一段；有人说话的空当超过 2 分钟（或 5%）算漏切，带原因重试一次。超过 12 万字才切开分段抽。
+- 第二步只拿学习环节和其中的课堂瞬间：A 写家长总结和报告（不写作业、下节课、时间）；B 用 A 的知识点名归 8–12 章，每章带类别（新知讲解 / 例题精讲 / 错题讲评 / 当堂练习 / 方法总结 / 学习规划，按学生在做什么分）和 20–32 字的一句说明。程序检查章数、编号、类别、不跨课间，不合格重试一次，仍不合格由程序修正。
+- 程序算：作业 = 档案里的「作业」事项；下节课只认最后 30 分钟里说的，没有就写「具体内容待老师安排」；主动提问只收 6 字以上、带问号或疑问词的。
+- 家长页（`reportData.clock`）：课堂时长 = 第一句到最后一句；学习时间占「去掉课间的上课时间」≥ 70% 时，各类别和知识点的分钟数按课堂时长摊开（课间、闲聊都摊进去），否则合计只写学习时间 + 课间，章节时间也只写学习环节的真实起止；「比计划多 N 分钟」要比计划多 3 分钟以上且占比 ≥ 70%。课间不单列。
+- 后台课程详情「时间档案」：真实时钟时间条、全部环节（闲聊灰色）、晚开始、学习占比，低于 70% 黄色提示。
+
+## 合并反馈（2026-10-28）
+
+同一个学生一天几节课（常是早上一节、晚上一节）或一周几节，老师想给家长一份反馈。单节课照常出、完全不动；老师在课程详情点「合并反馈」，勾选这位学生最近 7 天已出报告的课（当前这节和同一天的默认勾上），另外生成一份。
+
+- 云端是 `classroom_lessons` 里 `kind = merged` 的一行，`sources` = 课程编号；日期、时间跟最后一节，所以 App 列表里排在它后面。没有录音和转写。
+- 生成不重新转写、不重抽档案：`mergeArchives` 把各节档案去掉课前课后、按上课先后接成一条时间线（两节之间插 5 分钟「两节之间」，章节不会跨节），`parts` 记下每节在新时间线上的位置、真实时刻和计划时长；之后和单节一样只跑第二步（总结 + 章节）。档案上线前的旧课没有档案，先补抽一次存回那节课。
+- 报告：课堂时长 = 各节相加（中间隔多久都不算），「比计划多」按各节计划之和算；时间分布按「第 N 节」分组；不跨天时总结开头写「今天」，跨天写「这两次课（10月22日、10月24日）」。
+- 随时录制（选「课程」的）也能合并（2026-11-01）：它没有学生名，跟谁都能合；课表课仍只能是同一个学生（`mergeStudent`）。从随时录制点开，列出最近 7 天已出报告的随时录制和课表课，勾了某个学生的课表课后别的学生的课变灰；全是随时录制时标题用最后一节的主题（如「雅思口语 · 合并反馈」）。会议不能合并。
+- 老师自己点的，不发飞书通知、App 不弹通知。「重新选课程」用同一编号重出（报告链接不变，老师改过的总结清掉）；删除只删这一行，单节不受影响。

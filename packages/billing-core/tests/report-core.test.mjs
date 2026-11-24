@@ -32,6 +32,7 @@ test("parseCancellationRate supports configured labels", () => {
   assert.equal(parseCancellationRate("0h-70%"), 0.7);
   assert.equal(parseCancellationRate("2h-50%"), 0.5);
   assert.equal(parseCancellationRate("6h-30%"), 0.3);
+  assert.equal(parseCancellationRate("提前取消-0%"), 0);
   assert.equal(parseCancellationRate("请假"), null);
 });
 

@@ -1,0 +1,1392 @@
+import { reminderText } from "../lesson-reminder";
+/**
+ * 菁仕课堂云端的纯逻辑（不碰飞书 / 数据库 / 腾讯云），云函数 classroom-api 负责 IO。
+ * 课表字段名与 jingshi-vocal、取消课程模块一致；「老师课程ID」公式 = [请假前缀｜]HH:MM-HH:MM｜学生｜课程类型｜授课类型。
+ */
+
+export const HOUR = 3_600_000;
+export const DAY = 24 * HOUR;
+export const SEGMENT_SECONDS = 30;
+/** App 录音是 MP3 32 kbps 恒定码率：4000 字节 = 1 秒 */
+export const AUDIO_BYTES_PER_SEC = 4000;
+export const MAX_ATTEMPTS = 3;
+/** 下课（finish 里的 endedAt）2 小时后仍缺段，就用已有分段出报告 */
+export const MISSING_GRACE_MS = 2 * HOUR;
+/**
+ * 没发 finish 的课（合盖睡着、关机、退出 App）：云端按分段停传判断已经下课。
+ * 课表里的课：过了下课时间、且 15 分钟没收到分段；上课中途断网时 App 会先存本机再补传，下课前不判断。
+ * 随时录制：没有计划下课时间，30 分钟没收到分段就算结束。
+ * ponytail: 下课后断网超过这个时长的，App 之后补传的那段不会再进报告；真碰上了再按 finish 重出
+ */
+export const ORPHAN_QUIET_MS = 15 * 60_000;
+export const ADHOC_QUIET_MS = 30 * 60_000;
+export const DIRECT_QUIET_MS = 20 * 60_000;
+export const AUDIO_FILE = "merged.mp3";
+export const EARLY_FILE = "early.mp3";
+/**
+ * 0.1.14 起 App 上课时每 5 分钟（10 个 30 秒分段）直传一块录音到 `{id}/p-{老师和电脑}/{序号}.mp3`，云端整节到齐才拼起来转写。
+ * 下课（课表课按计划下课时间，随时录制按最后一块）2 小时后还没到齐，就用已到的块出报告并通知管理员。
+ */
+export const PART_SECONDS = 300;
+export const PARTS_GRACE_MS = 2 * HOUR;
+/** 还能收整节课录音的课：没开始处理的，或者收尾时什么录音都没找到（empty 且没有转写）的 */
+export const acceptsAudio = (doc: { stage: Stage; transcript?: string | null }) =>
+  doc.stage === "recording" || (doc.stage === "empty" && doc.transcript == null);
+/** 不算录制：录音不到 5 分钟，且转写里说的话不到 100 个字（约 25 秒的话；线上 5 分钟内的真课都有几百字） */
+export const EMPTY_MAX_SEC = 5 * 60;
+export const EMPTY_MAX_CHARS = 100;
+export const CHUNK_CHARS = 12_000;
+/** 课堂时间档案一次交给模型的上限；线上最长的课约 6 万字，超过才切开 */
+export const ARCHIVE_CHARS = 120_000;
+
+export const SCHEDULE_FIELDS = ["老师", "学生", "上课时间", "下课时间", "课程时长", "课程类型", "上课地点", "临时取消", "老师课程ID"];
+
+/** empty = 录音太短又没人说话，不算录制：不调模型、不出总结，App 里当作没录 */
+export type Stage = "recording" | "queued" | "transcribing" | "summarizing" | "done" | "failed" | "empty";
+/** failed = 重试用完了还没成；empty 见 Stage。0.1.9 及以前的 App 不认这两个，会显示成空白总结 */
+export type LessonStatus = "upcoming" | "recording" | "processing" | "done" | "cancelled" | "failed" | "empty";
+/** lesson = 课表里的课；adhoc = 随时录制选「课程」；meeting = 随时录制选「会议」；merged = 老师选几节课合并的一份反馈 */
+export type LessonKind = "lesson" | "adhoc" | "meeting" | "merged";
+/** 随时录制的课程编号由 App 生成，不在飞书课表里 */
+export const isAdhocId = (id: string) => /^adhoc-[0-9a-f]{16}$/.test(id);
+/** 合并反馈的编号也由 App 生成；它没有录音，只引用几节已出报告的课 */
+export const isMergedId = (id: string) => /^merged-[0-9a-f]{16}$/.test(id);
+/** 合并反馈最多选几节 */
+export const MERGE_MAX = 8;
+/** 合并反馈的学生：课表里的课只能是同一个学生；随时录制没有学生名，跟谁都能合。全是随时录制时为空，课表课不止一个学生时为 null */
+export function mergeStudent(rows: Array<{ kind?: LessonKind; student?: string }>): string | null {
+  const names = new Set(rows.filter((r) => (r.kind ?? "lesson") === "lesson").map((r) => r.student ?? ""));
+  return names.size > 1 ? null : ([...names][0] ?? "");
+}
+/** 随时录制最长 3 小时（App 到点自动停）；建档时先按这个占位下课时间，finish 时改成真实时间 */
+export const ADHOC_MAX_MS = 3 * HOUR;
+/** 录音（分段 + merged.mp3）保留 30 天，转写和总结一直保留 */
+export const AUDIO_KEEP_MS = 30 * DAY;
+export const MASTERY_STATUSES = ["本课已学习", "开始运用", "基本掌握", "需要巩固"] as const;
+/** 课堂时间档案的环节类别（内部用，家长看不到） */
+export const KINDS = ["课前", "讲解", "讲题", "练习", "答疑", "复习总结", "学习规划", "课堂交流", "课间休息", "课后"] as const;
+export type Kind = (typeof KINDS)[number];
+/** 算学习时间、交给第二步写报告的环节；课前、课后、课间、闲聊不交给模型，家长报告里永远不会出现 */
+export const LEARN_KINDS: readonly Kind[] = ["讲解", "讲题", "练习", "答疑", "复习总结", "学习规划"];
+/** 家长看到的章节类别（按「学生这段时间在做什么」分）；顺序 = 报告配色 .k0–.k5 */
+export const CHAPTER_CATS = {
+  新知讲解: "老师讲新的概念、公式、原理",
+  例题精讲: "老师拿一道新题带着学生一步步做、讲思路",
+  错题讲评: "讲学生考试、作业里已经做过的题：逐题看错在哪、为什么扣分、怎么改",
+  当堂练习: "学生自己动手做题，老师批改、点评",
+  方法总结: "归纳方法、题型和易错点",
+  学习规划: "试卷分析、定目标、选课、学习方法",
+} as const;
+export type ChapterCat = keyof typeof CHAPTER_CATS;
+/** 学习时间占「去掉课间的上课时间」不到 70%：不显示「比计划多」，家长页时长只算学习时间，后台标黄 */
+export const LEARN_SHARE = 0.7;
+export const PLAN_POINT = "试卷分析与学习规划";
+
+export interface Lesson {
+  id: string;
+  date: string;
+  start: string;
+  end: string;
+  startAt: number;
+  endAt: number;
+  title: string;
+  topic: string;
+  status: LessonStatus;
+  copied: boolean;
+  summary?: string;
+  reportUrl?: string;
+  kind?: "adhoc" | "meeting" | "merged";
+  /** 课表里的课有学生；App 按它找同一个学生的课来合并 */
+  student?: string;
+  /** 合并反馈由哪几节课合并（按上课时间） */
+  sources?: string[];
+}
+
+export interface ClassReport {
+  topic: string;
+  lead: string;
+  content: string[];
+  mastery: Array<{ name: string; status: (typeof MASTERY_STATUSES)[number]; evidence: string }>;
+  performance: string;
+  issue: { title: string; fix: string };
+  reminder?: string;
+  homework: string;
+  review: string;
+  next: string;
+  /** 家长看的章节，时间为录音里的秒；real = 章里学习环节的真实秒数；point = mastery 里的知识点名或「试卷分析与学习规划」 */
+  chapters?: Chapter[];
+  /** 学生主动提的问题，time 为秒 */
+  questions?: Array<{ time: number | null; text: string; answer: string }>;
+  gapMinutes?: number;
+}
+
+export interface Chapter { start: number; end: number; real: number; cat: ChapterCat; title: string; point: string }
+
+export interface Segment { start: number; end: number; kind: Kind; title: string; detail: string }
+/**
+ * 合并反馈里的一节：几节课按顺序接成一条时间线（中间隔 5 分钟「两节之间」），start / end 是这一节在合并时间线上的第一句、最后一句；
+ * 合并时间线上的秒 t 对应真实时刻 clock0 + t × 1000；plan = 这节课表上的时长（秒）
+ */
+export interface ArchivePart { lessonId: string; start: number; end: number; clock0: number; plan: number }
+/** 课堂时间档案：整节课从第一个环节到最后一个环节首尾相接；时间为录音里的秒。含闲聊，只在后台看 */
+export interface Archive {
+  /** 合并反馈才有 */
+  parts?: ArchivePart[];
+  segments: Segment[];
+  moments: Array<{ time: number; type: string; text: string }>;
+  facts: Array<{ time: number; type: string; text: string }>;
+  /** first / last = 第一句、最后一句（不含课前、课后）；learn / brk / chat 秒；share = learn ÷ (last − first − brk) */
+  stats: { first: number; last: number; learn: number; brk: number; chat: number; share: number };
+}
+
+export interface ScheduleLesson {
+  id: string;
+  teacher: string;
+  student: string;
+  course: string;
+  location: string;
+  startAt: number;
+  endAt: number;
+  cancelled: boolean;
+}
+
+export interface FinishSegment { seq: number; sha256: string; bytes: number }
+export interface FinishPart { n: number; bytes: number }
+
+/** classroom_lessons 文档，_id = 飞书课表 record_id */
+export interface LessonDoc {
+  _id: string;
+  teacherOpenId: string;
+  teacherName: string;
+  student: string;
+  course: string;
+  location: string;
+  startAt: number;
+  endAt: number;
+  stage: Stage;
+  failedStage?: Stage;
+  attempts: number;
+  error?: string;
+  lockedUntil: number;
+  /** 第一台上传的电脑；同一节课只收这台的分段 */
+  device?: string | null;
+  segments: Record<string, { sha256: string; bytes: number; fileId: string }>;
+  earlyAt?: number | null;
+  finalUploadAt?: number | null;
+  /** 0.1.14 起：App 第一次申请分块上传地址的时间（之后的块不查库） */
+  partsAt?: number | null;
+  /**
+   * pauses 是录制中暂停的时段；audio 是整段直传的清单，此时 segments 为空。
+   * parts 是分块清单：有它就按块拼（audio 这时是整节的校验值，拼完核对）；没有就是整段直传。
+   */
+  finish?: { startedAt: string; endedAt: string; segments: FinishSegment[]; pauses?: Array<{ start: string; end: string }>; audio?: { sha256: string; bytes: number }; parts?: FinishPart[] };
+  mergedFileId?: string;
+  asrTaskId?: number | null;
+  transcript?: string;
+  /** 后台第一次改转写前的机器原文 */
+  rawTranscript?: string | null;
+  /** 网页上第一次改报告前的 AI 原稿 */
+  rawReport?: ClassReport | MeetingReport | null;
+  gapMinutes?: number;
+  /** 实际收到的录音时长（秒），合并时按分段字节数算 */
+  audioSec?: number | null;
+  summary?: string;
+  editedSummary?: string;
+  /** 课 = 学情报告；会议 = 结构化会议纪要 */
+  report?: ClassReport | MeetingReport;
+  /** 课堂时间档案（会议没有） */
+  archive?: Archive | null;
+  reportToken?: string;
+  /** 生成总结时用的提示词版本（classroom_prompts.version，0 = 代码里的默认） */
+  promptVersion?: number;
+  copied?: boolean;
+  kind?: LessonKind;
+  /** 录音过了保留期被删掉的时间 */
+  audioDeletedAt?: number | null;
+  /** 合并反馈由哪几节课合并 */
+  sources?: string[] | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+// ---------- 飞书字段读取（search 接口：公式是 {type, value:[…]}，数字可能是字符串） ----------
+
+export function text(value: unknown): string {
+  if (value == null) return "";
+  if (typeof value === "string" || typeof value === "number") return String(value).trim();
+  if (Array.isArray(value)) return value.map(text).join("").trim();
+  if (typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    if ("value" in record) return text(record.value);
+    if (typeof record.text === "string") return record.text.trim();
+    if (typeof record.name === "string") return record.name.trim();
+  }
+  return "";
+}
+
+export function readNumber(value: unknown): number | null {
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value.trim());
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  if (Array.isArray(value)) return readNumber(value[0]);
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    if ("value" in record) return readNumber(record.value);
+    if ("text" in record) return readNumber(record.text);
+  }
+  return null;
+}
+
+function readMs(value: unknown): number | null {
+  const number = readNumber(value);
+  if (number != null) return number < 10_000_000_000 ? number * 1000 : number;
+  const parsed = typeof value === "string" ? Date.parse(value) : NaN;
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
+/** 「15:30-16:30｜张浩然｜IG数学｜1v1」→ 张浩然；会议（无时间段）→ "" */
+export function studentFromLabel(label: string): string {
+  const parts = label.split(/[｜│|]/).map((part) => part.trim());
+  const index = parts.findIndex((part) => /^\d{1,2}:\d{2}-\d{1,2}:\d{2}$/.test(part));
+  return index >= 0 ? parts[index + 1] ?? "" : "";
+}
+
+export function parseScheduleRecord(record: { record_id: string; fields: Record<string, unknown> }): ScheduleLesson | null {
+  const f = record.fields;
+  const startAt = readMs(f["上课时间"]);
+  if (startAt == null) return null;
+  const hours = readNumber(f["课程时长"]);
+  return {
+    id: record.record_id,
+    teacher: text(f["老师"]),
+    student: studentFromLabel(text(f["老师课程ID"])) || text(f["学生"]),
+    course: text(f["课程类型"]),
+    location: text(f["上课地点"]),
+    startAt,
+    endAt: readMs(f["下课时间"]) ?? startAt + (hours && hours > 0 ? hours : 1) * HOUR,
+    cancelled: text(f["临时取消"]) !== "",
+  };
+}
+
+// ---------- 上海时区 ----------
+
+const shanghai = (ms: number) => new Date(ms + 8 * HOUR).toISOString();
+export const shDate = (ms: number) => shanghai(ms).slice(0, 10);
+export const shTime = (ms: number) => shanghai(ms).slice(11, 16);
+export const shMonthDay = (ms: number) => `${Number(shanghai(ms).slice(5, 7))}月${Number(shanghai(ms).slice(8, 10))}日`;
+/** 家长总结抬头用的完整日期：「2026年10月28日」 */
+export const shFullDate = (ms: number) => {
+  const s = shanghai(ms);
+  return `${s.slice(0, 4)}年${Number(s.slice(5, 7))}月${Number(s.slice(8, 10))}日`;
+};
+/**
+ * 家长总结抬头的「🕐 时间」。随时录制的起止是录音时间、不是上课时间；不到 5 分钟的多半是误触或课没录全，
+ * 这两种情况都不写时间行，绝不编。
+ */
+export const timeRangeOf = (startAt: number, endAt: number, kind?: LessonKind) =>
+  !startAt || !endAt || endAt - startAt < 5 * 60_000 || kind === "adhoc" ? undefined : `${shTime(startAt)}–${shTime(endAt)}`;
+export const dayStart = (ms: number) => Math.floor((ms + 8 * HOUR) / DAY) * DAY - 8 * HOUR;
+
+/** 最近 7 天 + 今天 + 明天：[今天 0 点 - 7 天, 后天 0 点) */
+export function lessonWindow(now: number) {
+  const today = dayStart(now);
+  return { from: today - 7 * DAY, to: today + 2 * DAY };
+}
+
+/** search 接口条件：ExactDate 只精确到天，前后各放宽一天，精确边界由 lessonWindow 再判 */
+export function scheduleFilter(scheduleName: string, from: number, to: number) {
+  return {
+    conjunction: "and" as const,
+    conditions: [
+      { field_name: "老师", operator: "is", value: [scheduleName] },
+      { field_name: "上课时间", operator: "isGreater", value: ["ExactDate", String(from - DAY)] },
+      { field_name: "上课时间", operator: "isLess", value: ["ExactDate", String(to + DAY)] },
+    ],
+  };
+}
+
+// ---------- 课表 + 数据库 → Lesson ----------
+
+type StageOf = Pick<LessonDoc, "stage" | "attempts">;
+/** 失败但还会自动重试的仍算「整理中」 */
+const stageStatus = ({ stage, attempts }: StageOf): LessonStatus =>
+  stage === "recording" || stage === "done" || stage === "empty" ? stage
+  : stage === "failed" && (attempts ?? 0) >= MAX_ATTEMPTS ? "failed"
+  : "processing";
+
+export function lessonStatus(schedule: ScheduleLesson, doc?: StageOf): LessonStatus {
+  if (doc) return stageStatus(doc);
+  return schedule.cancelled ? "cancelled" : "upcoming";
+}
+
+/** 随时录制的行 → 老师端列表里的一节；标题 = 老师填的主题 */
+export function adhocLesson(doc: LessonDoc, reportBaseUrl: string): Lesson {
+  const lesson: Lesson = {
+    id: doc._id, date: shDate(doc.startAt), start: shTime(doc.startAt), end: shTime(doc.endAt), startAt: doc.startAt, endAt: doc.endAt,
+    title: doc.course || "随时录制", topic: "", status: stageStatus(doc), copied: Boolean(doc.copied), kind: doc.kind === "meeting" ? "meeting" : "adhoc",
+  };
+  if (lesson.status === "done") {
+    lesson.summary = doc.editedSummary || doc.summary || "";
+    if (doc.reportToken) lesson.reportUrl = `${reportBaseUrl}?t=${doc.reportToken}`;
+  }
+  return lesson;
+}
+
+/** 合并反馈 → 老师端列表里的一项：日期、时间跟最后一节，排在它后面 */
+export function mergedLesson(doc: LessonDoc, reportBaseUrl: string): Lesson {
+  const lesson: Lesson = {
+    id: doc._id, date: shDate(doc.startAt), start: shTime(doc.startAt), end: shTime(doc.endAt), startAt: doc.startAt, endAt: doc.endAt,
+    title: `${doc.student || doc.course || "随时录制"} · 合并反馈`, topic: doc.course, status: stageStatus(doc), copied: Boolean(doc.copied),
+    kind: "merged", student: doc.student, sources: doc.sources ?? [],
+  };
+  if (lesson.status === "done") {
+    lesson.summary = doc.editedSummary || doc.summary || "";
+    if (doc.reportToken) lesson.reportUrl = `${reportBaseUrl}?t=${doc.reportToken}`;
+  }
+  return lesson;
+}
+
+export function toLesson(schedule: ScheduleLesson, doc: LessonDoc | undefined, reportBaseUrl: string): Lesson {
+  const status = lessonStatus(schedule, doc);
+  const lesson: Lesson = {
+    id: schedule.id,
+    date: shDate(schedule.startAt),
+    start: shTime(schedule.startAt),
+    end: shTime(schedule.endAt),
+    startAt: schedule.startAt,
+    endAt: schedule.endAt,
+    title: [schedule.course, schedule.student].filter(Boolean).join(" · ") || "未命名课程",
+    topic: [(doc?.report as ClassReport | undefined)?.topic, schedule.location].filter(Boolean).join(" · "),
+    status,
+    copied: Boolean(doc?.copied),
+    student: schedule.student,
+  };
+  if (status === "done" && doc) {
+    lesson.summary = doc.editedSummary || doc.summary || "";
+    if (doc.reportToken) lesson.reportUrl = `${reportBaseUrl}?t=${doc.reportToken}`;
+  }
+  return lesson;
+}
+
+/** 按比例把 total 分给各项，整数加起来正好等于 total（最大余数法） */
+export function apportion(items: Array<[string, number]>, total: number): Array<[string, number]> {
+  const sum = items.reduce((a, [, v]) => a + v, 0);
+  if (!sum) return items.map(([k]) => [k, 0]);
+  const raw = items.map(([k, v]) => ({ k, x: (v / sum) * total, n: Math.floor((v / sum) * total) }));
+  let left = total - raw.reduce((a, r) => a + r.n, 0);
+  for (const r of [...raw].sort((a, b) => b.x - b.n - (a.x - a.n))) if (left-- > 0) r.n++;
+  return raw.map((r) => [r.k, r.n]);
+}
+
+/**
+ * 家长页的时间：课堂时长 = 第一句到最后一句；分钟数按比例摊开（课间总是摊开，闲聊只在学习占比够 70% 时摊开），
+ * 合计 = 时间条下的「共 N 分钟」。没有档案的报告（会议、档案上线前的旧报告）返回 undefined。
+ */
+export function lessonClock(doc: Pick<LessonDoc, "archive" | "report" | "finish" | "startAt" | "endAt">) {
+  const a = doc.archive?.stats;
+  const parts = doc.archive?.parts;
+  const chapters = (doc.report as ClassReport | undefined)?.chapters;
+  if (!a || !chapters?.length) return undefined;
+  // 合并反馈：课堂时长 = 各节相加，中间隔多久都不算；计划 = 各节课表时长之和
+  const span = parts ? parts.reduce((sum, p) => sum + p.end - p.start, 0) : a.last - a.first;
+  const full = a.share >= LEARN_SHARE;
+  const total = Math.max(1, Math.round((full ? span : a.learn + a.brk) / 60));
+  const over = span - (parts ? parts.reduce((sum, p) => sum + p.plan, 0) : (doc.endAt - doc.startAt) / 1000);
+  const sum = (key: (c: Chapter) => string) => {
+    const m = new Map<string, number>();
+    for (const c of chapters) m.set(key(c), (m.get(key(c)) ?? 0) + c.real);
+    return [...m];
+  };
+  const order = Object.keys(CHAPTER_CATS);
+  const started = Date.parse(doc.finish?.startedAt ?? "");
+  return {
+    /** 录音开始的时刻（毫秒）：章节时间 = 它 + 秒数 */
+    recStart: parts ? parts[0].clock0 : Number.isFinite(started) ? started : doc.startAt,
+    /** 合并反馈各节：秒数 t 落在哪一节，真实时刻就是那一节的 recStart + t × 1000 */
+    parts: parts?.map((p) => ({ start: p.start, end: p.end, recStart: p.clock0 })),
+    first: a.first,
+    last: a.last,
+    full,
+    total,
+    over: full && over >= 180 ? Math.round(over / 60) : 0,
+    cats: apportion(sum((c) => c.cat).sort((x, y) => order.indexOf(x[0]) - order.indexOf(y[0])), total),
+    points: apportion(sum((c) => c.point), total).sort((x, y) => y[1] - x[1]),
+  };
+}
+
+export function reportData(doc: LessonDoc) {
+  const started = Date.parse(doc.finish?.startedAt ?? "");
+  const ended = Date.parse(doc.finish?.endedAt ?? "");
+  const recorded = Number.isFinite(started) && Number.isFinite(ended) && ended > started ? ended - started : doc.endAt - doc.startAt;
+  const clock = lessonClock(doc);
+  const parts = doc.archive?.parts;
+  return {
+    student: doc.student,
+    course: doc.course,
+    teacher: doc.teacherName,
+    kind: doc.kind ?? "lesson",
+    date: parts ? shDate(parts[0].clock0 + parts[0].start * 1000) : shDate(doc.startAt),
+    // 有档案：实际上课的起止和时长（第一句到最后一句）；否则课表时间和录音时长。合并反馈列出各节，跨天时带日期
+    time: parts ? partLabels(parts, false).join("、")
+      : clock ? `${shTime(clock.recStart + clock.first * 1000)}–${shTime(clock.recStart + clock.last * 1000)}` : `${shTime(doc.startAt)}–${shTime(doc.endAt)}`,
+    mins: parts ? Math.round(parts.reduce((sum, p) => sum + p.end - p.start, 0) / 60)
+      : clock ? Math.round((clock.last - clock.first) / 60) : doc.audioSec != null ? Math.round(doc.audioSec / 60) : Math.round(recorded / 60_000),
+    report: doc.report,
+    gapMinutes: doc.gapMinutes ?? 0,
+    clock,
+  };
+}
+
+/** 合并反馈各节的时间，如「13:05–14:35」；跨天（或 withDay）时前面带日期「10.24 」/「10月24日 」 */
+export function partLabels(parts: ArchivePart[], cn: boolean, withDay = false): string[] {
+  const real = (p: ArchivePart, t: number) => p.clock0 + t * 1000;
+  const days = new Set(parts.map((p) => shDate(real(p, p.start))));
+  return parts.map((p) => {
+    const day = withDay || days.size > 1 ? `${cn ? shMonthDay(real(p, p.start)) : shDate(real(p, p.start)).slice(5).replace("-", ".")} ` : "";
+    return `${day}${shTime(real(p, p.start))}–${shTime(real(p, p.end))}`;
+  });
+}
+
+// ---------- 处理流水线的状态推进 ----------
+
+export function missingSeqs(expected: FinishSegment[], stored: LessonDoc["segments"]): number[] {
+  return expected
+    .filter((segment) => stored[String(segment.seq)]?.sha256 !== segment.sha256)
+    .map((segment) => segment.seq)
+    .sort((a, b) => a - b);
+}
+
+export type Step =
+  | { action: "none" | "wait" | "poll" | "summarize" }
+  | { action: "retry"; stage: Stage }
+  | { action: "merge"; seqs: number[]; gapMinutes: number }
+  /** 直传的整段录音：按顺序找第一个存在的对象（{id}/文件名），直接提交转写，不下载不重传 */
+  | { action: "direct"; files: string[] }
+  /** 分块上传的课：列出云端的块，到齐（或过了 2 小时）就拼起来转写，见 planParts */
+  | { action: "parts" };
+
+/**
+ * 分块上传的课能不能拼、用哪几块。manifest = App 下课时报的清单；没有（App 没回来）就用云端现有的全部块。
+ * 缺块时等到 graceFrom + 2 小时；到点后用已到的块，按缺的字节（没有清单时按中间的空洞）估算缺了几分钟。
+ */
+export function planParts(manifest: FinishPart[] | undefined, stored: Map<number, number>, now: number, graceFrom: number) {
+  const have = [...stored.keys()].sort((a, b) => a - b);
+  const missing = manifest
+    ? manifest.filter((p) => stored.get(p.n) !== p.bytes).map((p) => p.n)
+    : Array.from({ length: (have.at(-1) ?? -1) + 1 }, (_, n) => n).filter((n) => !stored.has(n));
+  const use = manifest ? manifest.map((p) => p.n).filter((n) => !missing.includes(n)).sort((a, b) => a - b) : have;
+  const missingSec = manifest
+    ? manifest.filter((p) => missing.includes(p.n)).reduce((sum, p) => sum + p.bytes / AUDIO_BYTES_PER_SEC, 0)
+    : missing.length * PART_SECONDS;
+  return {
+    ready: !missing.length || now >= graceFrom + PARTS_GRACE_MS,
+    use, missing,
+    gapMinutes: missing.length ? Math.max(1, Math.round(missingSec / 60)) : 0,
+  };
+}
+
+/** App 没回来的分块课：课表课从计划下课算 2 小时，随时录制从第一块算（再看最后一块，见 classroom-api） */
+export const partsOrphanFrom = (doc: Pick<LessonDoc, "kind" | "endAt" | "partsAt">) =>
+  doc.kind === "adhoc" || doc.kind === "meeting" ? (doc.partsAt ?? 0) : doc.endAt;
+
+/** 转写里实际说了多少字（去掉 [说话人 时间] 标签、标点和空白） */
+export const spokenChars = (transcript: string) => transcript.replace(/\[[^\]]*\]/g, "").replace(/[\s\p{P}]/gu, "").length;
+export const isEmptyRecording = (audioSec: number, transcript: string) => audioSec < EMPTY_MAX_SEC && spokenChars(transcript) < EMPTY_MAX_CHARS;
+
+/** 没发 finish 的 recording 行：App 是不是已经不会再传了（见 ORPHAN_QUIET_MS） */
+export function orphanEnded(doc: Pick<LessonDoc, "kind" | "endAt" | "updatedAt" | "earlyAt" | "finalUploadAt">, now: number): boolean {
+  if (doc.earlyAt || doc.finalUploadAt) return now >= Math.max(doc.earlyAt ?? 0, doc.finalUploadAt ?? 0) + DIRECT_QUIET_MS;
+  // 随时录制建档时 kind = adhoc，finish 才可能改成 meeting
+  if (doc.kind === "adhoc" || doc.kind === "meeting") return now >= doc.updatedAt + ADHOC_QUIET_MS;
+  return now >= doc.endAt && now >= doc.updatedAt + ORPHAN_QUIET_MS;
+}
+
+export function nextStep(doc: Pick<LessonDoc, "stage" | "failedStage" | "attempts" | "finish" | "segments" | "kind" | "endAt" | "updatedAt" | "earlyAt" | "finalUploadAt" | "partsAt">, now: number): Step {
+  if (doc.stage === "failed") {
+    return doc.attempts < MAX_ATTEMPTS && doc.failedStage ? { action: "retry", stage: doc.failedStage } : { action: "none" };
+  }
+  if (doc.stage === "transcribing") return { action: "poll" };
+  if (doc.stage === "summarizing") return { action: "summarize" };
+  if (doc.stage === "recording" && !doc.finish && doc.partsAt) {
+    return now >= partsOrphanFrom(doc) + PARTS_GRACE_MS ? { action: "parts" } : { action: "none" };
+  }
+  if (doc.stage === "recording" && !doc.finish && orphanEnded(doc, now)) {
+    const seqs = Object.keys(doc.segments).map(Number).sort((a, b) => a - b);
+    if (doc.earlyAt || doc.finalUploadAt) {
+      return { action: "direct", files: [...(doc.finalUploadAt ? [AUDIO_FILE] : []), ...(doc.earlyAt ? [EARLY_FILE] : [])] };
+    }
+    return { action: "merge", seqs, gapMinutes: 0 };
+  }
+  if (doc.stage !== "queued" || !doc.finish) return { action: "none" };
+  if (doc.finish.parts) return { action: "parts" };
+  if (doc.finish.audio) return { action: "direct", files: [AUDIO_FILE] };
+  const missing = missingSeqs(doc.finish.segments, doc.segments);
+  const endedAt = Date.parse(doc.finish.endedAt);
+  if (missing.length && Number.isFinite(endedAt) && now < endedAt + MISSING_GRACE_MS) return { action: "wait" };
+  return {
+    action: "merge",
+    seqs: Object.keys(doc.segments).map(Number).sort((a, b) => a - b),
+    gapMinutes: missing.length ? Math.max(1, Math.round((missing.length * SEGMENT_SECONDS) / 60)) : 0,
+  };
+}
+
+// ---------- 转写 ----------
+
+export interface AsrSentence { StartMs?: number; EndMs?: number; SpeakerId?: number; FinalSentence?: string; SliceSentence?: string }
+
+const mmss = (ms: number) => {
+  const seconds = Math.max(0, Math.floor(ms / 1000));
+  return `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
+};
+
+/** 腾讯云 ResultDetail → 「[说话人N mm:ss-mm:ss] 文本」；ResultDetail 缺失时解析文本格式 [0:1.020,0:3.500,0] 文本 */
+export function formatTranscript(detail: AsrSentence[] | undefined | null, fallback = ""): string {
+  let sentences = detail ?? [];
+  if (!sentences.length && fallback) {
+    sentences = fallback.split("\n").flatMap((line) => {
+      const m = line.trim().match(/^\[(\d+):(\d+(?:\.\d+)?),(\d+):(\d+(?:\.\d+)?)(?:,(\d+))?\]\s*(.*)$/);
+      return m ? [{ StartMs: (Number(m[1]) * 60 + Number(m[2])) * 1000, EndMs: (Number(m[3]) * 60 + Number(m[4])) * 1000, SpeakerId: Number(m[5] ?? 0), FinalSentence: m[6] }] : [];
+    });
+  }
+  return sentences
+    .map((s) => ({ s, words: (s.FinalSentence || s.SliceSentence || "").trim() }))
+    .filter(({ words }) => words)
+    .map(({ s, words }) => `[说话人${(s.SpeakerId ?? 0) + 1} ${mmss(s.StartMs ?? 0)}-${mmss(s.EndMs ?? 0)}] ${words}`)
+    .join("\n");
+}
+
+// ---------- 区分老师 / 学生：腾讯云只给「说话人N」，由大模型按内容判断谁是老师 ----------
+
+const SPEAKER_LINE = /^\[说话人(\d+) (\d+):(\d{2})-(\d+):(\d{2})\] (.*)$/;
+
+/** 各说话人的发言秒数、句数（按出现顺序） */
+export function speakerStats(transcript: string) {
+  const stats = new Map<number, { secs: number; lines: number }>();
+  for (const line of transcript.split("\n")) {
+    const m = line.match(SPEAKER_LINE);
+    if (!m) continue;
+    const s = stats.get(+m[1]) ?? { secs: 0, lines: 0 };
+    s.secs += Math.max(0, +m[4] * 60 + +m[5] - (+m[2] * 60 + +m[3]));
+    s.lines += 1;
+    stats.set(+m[1], s);
+  }
+  return stats;
+}
+
+/** 只给大模型看开头一段（够判断角色），省 token */
+export function teacherPrompt(transcript: string, max = 6000): string {
+  const stats = [...speakerStats(transcript)].map(([id, s]) => `说话人${id}：${s.lines} 句，约 ${Math.round(s.secs / 60)} 分钟`).join("；");
+  return `下面是一节课外辅导课录音转写的开头部分，「说话人N」由机器自动区分，同一个人偶尔会被拆成两个编号。
+请判断哪些编号是老师：负责讲解知识、提问、纠错、布置任务的是老师；回答问题、做题、提问求助的是学生。不要按谁说得多来判断——口语课上学生往往比老师说得多。
+各说话人统计：${stats}
+
+${transcript.slice(0, max)}
+
+只输出 JSON：{"teacher":[老师的编号数字]}，判断不出来就输出 {"teacher":[]}。`;
+}
+
+/** 解析大模型回复，只保留转写里真实存在的编号；所有人都被判成老师等于没判断 */
+export function parseTeacher(raw: string, transcript: string): number[] {
+  const ids = new Set(speakerStats(transcript).keys());
+  let value: unknown;
+  try {
+    value = JSON.parse(raw.replace(/^```(?:json)?\s*|\s*```$/g, "")).teacher;
+  } catch {
+    return [];
+  }
+  const teacher = [...new Set(Array.isArray(value) ? value.map(Number).filter((n) => ids.has(n)) : [])];
+  return teacher.length && teacher.length < ids.size ? teacher : [];
+}
+
+/**
+ * 登录认人：先按老师档案的「飞书账号」；没绑过飞书账号的，按飞书姓名对「姓名 / 课表名」。
+ * 名字只在全表唯一、且那一行还没绑人时才认（同名不猜，已绑的行不让别人顶替），认上后由调用方写回「飞书账号」。
+ */
+export function matchTeacher<T extends { name: string; scheduleName: string; openId: string | null }>(
+  teachers: T[],
+  openId: string,
+  feishuName: string,
+): { teacher: T; bind: boolean } | null {
+  const bound = teachers.find((row) => row.openId === openId);
+  if (bound) return { teacher: bound, bind: false };
+  const key = feishuName.trim();
+  if (!key) return null;
+  const hits = teachers.filter((row) => row.name.trim() === key || row.scheduleName.trim() === key);
+  return hits.length === 1 && !hits[0].openId ? { teacher: hits[0], bind: true } : null;
+}
+
+/** 「[说话人N 」→「[老师 」/「[学生 」；没判断出来就原样返回 */
+export function labelSpeakers(transcript: string, teacher: number[]): string {
+  if (!teacher.length) return transcript;
+  return transcript.replace(/^\[说话人(\d+) /gm, (_, id: string) => (teacher.includes(+id) ? "[老师 " : "[学生 "));
+}
+
+export function chunkTranscript(transcript: string, max = CHUNK_CHARS): string[] {
+  const chunks: string[] = [];
+  let current = "";
+  for (const line of transcript.split("\n")) {
+    if (current && current.length + line.length + 1 > max) {
+      chunks.push(current);
+      current = "";
+    }
+    current = current ? `${current}\n${line}` : line;
+  }
+  if (current) chunks.push(current);
+  return chunks;
+}
+
+// ---------- 大模型提示词 ----------
+
+const ROLE_RULE =
+  "转写里的「老师」「学生」是 AI 根据说话内容预先判断的，个别句子可能标错；仍是「说话人N」的说明没能判断。负责讲解知识、提问、纠错和布置任务的是老师，其余是学生。不要按谁说得多来判断——口语课上学生往往比老师说得多。";
+
+const SAMPLE = `【浩然 · 数学学习反馈】
+
+📅 日期：2026年10月15日
+🕐 时间：17:30–19:30
+👨‍🏫 授课老师：王老师
+
+1️⃣ 本节学习内容
+学习 quadratic function 的三种形式 standard form、vertex form 和 factored form，以及三种形式之间的互相转换；练习用 completing the square 求 turning point 和 line of symmetry，并做了两道真题里的作图题。
+
+2️⃣ 课堂表现与掌握情况
+浩然能够熟练完成 completing the square 的每一步，并能自己写出 vertex form；在提示下，可以根据图像判断开口方向和 turning point 的位置，并解释 factored form 的两个根和 x 轴交点的关系。目前在审题时容易漏看 x > 0 这类取值范围条件，有一题因此多写了一个解；另外在把图像信息转成表达式时，还需提示先确认 a 的正负。
+
+3️⃣ 后续建议
+建议做题前先用笔圈出题目里的取值范围和其他附加条件，做完再对照一遍。整理三种形式的转换步骤，每道题先写出 a、h、k，再画图核对。`;
+
+export interface PromptMeta {
+  student: string; course: string; teacher: string; monthDay: string;
+  /** 抬头用的完整日期（2026年10月28日）和起止时间（14:00–16:00）；拿不到就不写 */
+  fullDate?: string; timeRange?: string;
+  /** 合并反馈：各节的日期时间（如「10月24日 13:05–14:35」）、涉及的日期（不止一天时写各天）、各节老师（去重） */
+  merged?: { labels: string[]; days: string[]; teachers?: string[] };
+}
+
+/** 后台可编辑的四段提示词；JSON 结构与 status 取值写死在代码里（parseSummary / parseMeetingReport 依赖它们）。meeting 只给会议用，不套 rules */
+export interface Prompts { rules: string; parent: string; report: string; meeting: string }
+
+export const DEFAULT_PROMPTS: Prompts = {
+  rules: `${ROLE_RULE}
+
+可信原则：只使用转写里有依据的内容，不编造学生的表现、分数或没讲过的知识点。某一项在转写里找不到足够依据时，直接写「本课数据不足」，不要硬凑。
+
+英文术语：课上老师用英文讲的学科术语、考试用语和题型名（如 turning point、completing the square、Part 2、Task Response、Paper 1），直接写英文原词，不要翻译成中文，也不要写成「中文（英文）」；转写可能把英文识别错，按学科标准写法纠正拼写。课上本来就用中文讲的概念照常写中文。`,
+  parent: `parentSummary 写作要求（纯文字，老师会复制到微信直接发给家长；不要 markdown）：
+- 第一行：【{学生} · {课程}学习反馈】。
+- 空一行，照抄下面三行（日期、时间、老师），一行一行连着写，不要空行，不要改动：
+  📅 日期：{日期}
+  🕐 时间：{时间}
+  👨‍🏫 授课老师：{老师}
+  课程信息里没有给时间的，这一行就不要写。
+- 再空一行，依次写 1️⃣ 本节学习内容、2️⃣ 课堂表现与掌握情况、3️⃣ 后续建议；转写里老师明确布置了作业，再加 4️⃣ 课后任务。段与段之间空一行。
+- 不要写开头的称呼和结尾的客套话。
+
+1️⃣ 本节学习内容：一段话，动词开头，写学了什么概念、练了什么题型或步骤，用分号串起来。不编号，不评价。
+
+2️⃣ 课堂表现与掌握情况：一段话，按三档写，每档都要有课堂里的具体题目、步骤、方法或原话作证据：
+- 学生自己做到的，用「能够…」「可以…」+ 具体动作；老师讲过什么、学生问过什么，都不算。
+- 需要提示才做到的，用「在提示下…」「在引导下…」「跟随…步骤…」，写清提示的是什么；跟着老师的步骤做出来属于这一档。
+- 现在还卡住的，用「目前…需要分步提示」「还需提示…」「需要加强核对」，点到具体概念、审题点或英文关键词，并写出他会怎么错。
+三档顺序固定；本课确实没有某一档就如实不写；没有卡点时写「本课没有出现需要提示的环节」。不要在「能够独立」的地方又写「需要提示」。
+
+3️⃣ 后续建议：2–3 条。每条对应 2️⃣ 里的同一个卡点，只针对这个卡点写「怎么做」，不能引入新问题；先做什么、再核对什么，或整理什么清单、先画什么图。一条一个动作，能当天照着做。不新增作业；不写「多练习」「注意审题」这种没有动作的话。转写说了下节课讲什么，可以在最后补一句，但下节课的内容不计为一条建议。
+
+4️⃣ 课后任务：只有老师明确布置了作业才写，按老师说的原意，不添加。
+英文术语保留原词，括号中文最多 3 处。不写分数、正确率、百分比和优秀/良好这类等级，不写专注度。
+
+范例（只学写法和语气，不要照抄内容）：
+${SAMPLE}`,
+  report: `- topic：本课主题，12 字以内，如「二次函数」「Part 2 难忘的旅行」
+- lead：一句话总结，35 字以内：已经能做到什么，下一步重点是什么
+- content：本课学习内容，2–4 条，每条一句话，不要编号
+- mastery：本课真实讲到的 3–6 个知识点；evidence 是判断依据，一句话，写课堂里的具体表现
+- performance：学生课堂表现，2–3 句：先写具体的进步，再写一个需要改进的地方
+- issue：最主要的一个易错点（title 15 字以内）和改进方法（fix 1–2 句，可直接照做）
+- review：复习方法，1–2 句
+- questions：学生主动提出的问题（不是回答老师的提问，也不是「听不清」「什么意思」这类），按时间顺序最多 5 个，没有就写 []。time 照抄时间；text 尽量保留学生原话，去掉口头语；answer 一句话，写老师怎么解答或学生由此弄懂了什么`,
+  meeting: `只写转写里有依据的内容，不编造人名、日期和数字；听不清、没结论的不要替它下结论，放进 followups。转写由机器识别，同音错字按上下文理解，不要照抄明显的错字。
+
+字段要求：
+- title：会议主题，15 字以内；lead：一句话总结，40 字以内，写最重要的结论或下一步
+- sections：先把整场会分成 2–6 个板块（如「学生近况」「申请进度」「招聘」「制度与政策」）；每个板块下按时间顺序列出具体议题 items，每个 item 是一件具体的事（一个学生、一个岗位、一条政策），整场最多 40 个；start / end 照抄转写里的时间（mm:ss）；conclusion 一句话、30 字以内，没有结论写「未定」
+- decisions：会上明确拍板的事，最多 15 条，挑最重要的；只是讨论、没拍板的不算
+- todos：明确有人要去做的事，最多 20 条；owner 用转写里的称呼（如「郭老师」），听不出就留空；due 转写里说了才写
+- followups：提出了但没有结论、需要会后确认的问题，最多 8 条`,
+};
+
+const SKELETON = `{
+  "parentSummary": "给家长的课堂总结",
+  "report": {
+    "topic": "", "lead": "", "content": [""],
+    "mastery": [{"name": "知识点", "status": "${MASTERY_STATUSES.join(" / ")} 四选一", "evidence": ""}],
+    "performance": "", "issue": {"title": "", "fix": ""}, "review": "", "reminder": "",
+    "questions": [{"time": "mm:ss", "text": "学生原话", "answer": ""}]
+  }
+}`;
+
+/** 提示词里的 {学生} {课程} {日期} {时间} {老师} 换成本课信息；{称呼} 这类留给模型 */
+function fill(template: string, meta: PromptMeta): string {
+  const values: Record<string, string> = {
+    学生: meta.student || "学生", 课程: meta.course, 老师: meta.teacher,
+    日期: meta.fullDate || meta.monthDay, 时间: meta.timeRange ?? "",
+  };
+  // 没有真实起止时间时，提示词和范例里的时间行整行删掉，不把占位符或范例时间留给模型
+  const text = meta.timeRange ? template : template.replace(/^[^\n]*(?:\{时间\}|🕐)[^\n]*\n?/gm, "");
+  return text.replace(/\{(学生|课程|日期|时间|老师)\}/g, (_, key: string) => values[key]);
+}
+
+/** 提示词里的段名：行首「1️⃣ 本节学习内容」，冒号后面的说明和范例里的重复行都不要 */
+const EMOJI_HEADING = /^([1-9]️⃣)[ \t]*([^：:\n]{1,20})/gm;
+/** 生效的家长总结提示词用的是新 1️⃣ 段名吗？只有这种才做抬头规范化，旧【】模板和历史行为保持原样 */
+export const usesEmojiHeadings = (prompts: Prompts) => new RegExp(EMOJI_HEADING.source, "m").test(prompts.parent);
+
+/**
+ * 家长总结提示词里的段名，生成结果必须都有：有 1️⃣ 段名就只认 1️⃣；旧格式认【…】但跳过总标题；
+ * 两种都没有（老的自定义提示词）返回空数组、只 warn，不拦生成。
+ */
+export const promptHeadings = (prompts: Prompts): string[] => {
+  const emoji = [...prompts.parent.matchAll(EMOJI_HEADING)].map((m) => `${m[1]} ${m[2].trim()}`);
+  if (emoji.length) return [...new Set(emoji)];
+  const brackets = [...new Set(prompts.parent.match(/【[^】\n]{1,12}】/g) ?? [])].filter((h) => !/学习反馈】$/.test(h));
+  if (!brackets.length) console.warn("自定义提示词没有可识别的段落标题，跳过 parentSummary 标题校验");
+  return brackets;
+};
+
+// ---------- 第一步：整节课 → 课堂时间档案（结构写死在代码里，程序要靠它检查） ----------
+
+export function archivePrompt(transcript: string, rules = DEFAULT_PROMPTS.rules, retry = ""): string {
+  return `下面是一节课录音的完整转写。${rules}${retry ? `\n注意：${retry}` : ""}
+把整节课按时间顺序切成环节：前后相接，从第一句到最后一句每一分钟都要落在某个环节里；一个环节通常 1–6 分钟，换了一道题或一个话题就切开。转写里时间跳过去的地方是没人说话（学生安静做题、课间），也要归进环节：前后在做题就算练习，否则算课间休息。
+kind 从这几类选一个：课前（第一句正式上课之前）/ 讲解（老师讲概念、方法）/ 讲题（师生一起做某道题）/ 练习（学生自己做、老师看）/ 答疑（学生提问、分析错题）/ 复习总结 / 学习规划（试卷分析、选课升学、学习方法与心态）/ 课堂交流（和学习无关的闲聊）/ 课间休息 / 课后。
+只输出 JSON：
+{"segments":[{"start":"mm:ss","end":"mm:ss","kind":"","title":"12 字以内","detail":"一句具体说明：哪道题、什么方法、学生怎么答的，60 字以内"}],
+"moments":[{"time":"mm:ss","type":"答对 / 答错 / 提问 / 老师纠正","text":"尽量保留学生原话"}],
+"facts":[{"time":"mm:ss","type":"作业 / 下节课 / 课后约定 / 考试成绩 / 选课规划","text":""}]}
+moments 里「提问」只算学生自己主动提出的问题（不是回答老师，也不是「听不清」「什么意思」），text 写学生原话。
+facts 里「作业」指老师让学生课后做的任何事（包括「回去再做一遍」「把过程写一遍」）；「下节课」只算明确说下次上课讲什么，「下半堂课」不算。「课后约定」记明确约定的资料发送或准备事项，即使在临下课时提到也保留，写清谁做什么；不要把老师要做的事记作学生作业。没有的写空列表。start / end / time 照抄转写里的时间。
+
+${transcript}`;
+}
+
+const list = (value: unknown): any[] => (Array.isArray(value) ? value : []);
+function jsonOf(raw: string): Record<string, any> {
+  const start = raw.indexOf("{");
+  const end = raw.lastIndexOf("}");
+  if (start < 0 || end <= start) throw new Error("输出里没有 JSON");
+  return JSON.parse(raw.slice(start, end + 1));
+}
+
+/**
+ * 程序检查档案：按开始排序，重叠从前一段结束处截断，空当并进前一段。
+ * 空当里没人说话（转写里没有句子）是正常的；有人说话的空当加起来太多，说明模型漏切了，报错让调用方重试。
+ */
+export function parseArchive(raw: string | string[], transcript = ""): Archive {
+  const spoken = [...transcript.matchAll(/^\[\S+ (\d+):(\d{2})-/gm)].map((m) => Number(m[1]) * 60 + Number(m[2]));
+  // 超长的课分几段抽，各段时间都是整节录音里的时间，直接拼起来再一起检查
+  const parts = (Array.isArray(raw) ? raw : [raw]).map(jsonOf);
+  const d = Object.fromEntries(["segments", "moments", "facts"].map((k) => [k, parts.flatMap((x) => list(x[k]))]));
+  const segs = list(d.segments)
+    .flatMap((s): Segment[] => {
+      const start = seconds(s?.start);
+      const end = seconds(s?.end);
+      const kind = (KINDS as readonly string[]).includes(s?.kind) ? (s.kind as Kind) : "课堂交流";
+      return end > start ? [{ start, end, kind, title: plain(s.title) || kind, detail: plain(s.detail) }] : [];
+    })
+    .sort((a, b) => a.start - b.start);
+  const segments: Segment[] = [];
+  let gap = 0;
+  for (const s of segs) {
+    const prev = segments.at(-1);
+    if (prev && s.end <= prev.end) continue;
+    if (prev && s.start > prev.end) {
+      const [a, b] = [prev.end, s.start];
+      if (!transcript || spoken.some((t) => t > a + 5 && t < b - 5)) gap += b - a;
+      prev.end = b;
+    }
+    segments.push({ ...s, start: prev ? prev.end : s.start });
+  }
+  if (!segments.length) throw new Error("segments 里没有带合法时间的环节");
+  const span = segments.at(-1)!.end - segments[0].start;
+  if (gap > Math.max(120, span * 0.05)) throw new Error(`环节之间有 ${Math.round(gap / 60)} 分钟没有归进任何环节，请从第一句到最后一句前后相接地切`);
+  const items = (value: unknown) => list(value).flatMap((x) => {
+    const time = seconds(x?.time);
+    return Number.isFinite(time) && plain(x.type) ? [{ time, type: plain(x.type), text: plain(x.text) }] : [];
+  });
+  return { segments, moments: items(d.moments), facts: items(d.facts), stats: archiveStats(segments) };
+}
+
+export function archiveStats(segments: Segment[]): Archive["stats"] {
+  const secs = (kinds: readonly Kind[]) => segments.filter((s) => kinds.includes(s.kind)).reduce((a, s) => a + s.end - s.start, 0);
+  const speech = segments.filter((s) => s.kind !== "课前" && s.kind !== "课后");
+  const first = speech[0]?.start ?? 0;
+  const last = speech.at(-1)?.end ?? 0;
+  const learn = secs(LEARN_KINDS);
+  const brk = secs(["课间休息"]);
+  return { first, last, learn, brk, chat: secs(["课堂交流"]), share: learn / Math.max(1, last - first - brk) };
+}
+
+/**
+ * 老师点了暂停的时段（录音里的秒）从档案里挖出来，标成「暂停 N 分钟」：算上课时间、不算学习时间（同闲聊）。
+ * 暂停期间录的是静音，模型多半把它并进了前后环节；不到 30 秒的不单列。
+ */
+export function applyPauses(a: Archive, pauses: Array<[number, number]>): Archive {
+  let segs = a.segments;
+  for (const [ps, pe] of pauses) {
+    // 只挖第一句到最后一句之间：课前等学生、课后和家长单聊时的暂停不能把课堂时长撑长
+    const start = Math.max(ps, a.stats.first);
+    const end = Math.min(pe, a.stats.last);
+    if (end - start < 30) continue;
+    const pause: Segment = { start, end, kind: "课堂交流", title: `暂停 ${Math.max(1, Math.round((end - start) / 60))} 分钟`, detail: "老师暂停了录制，这段没有录音" };
+    segs = [
+      ...segs.flatMap((s) => [...(s.start < start ? [{ ...s, end: Math.min(s.end, start) }] : []), ...(s.end > end ? [{ ...s, start: Math.max(s.start, end) }] : [])]),
+      pause,
+    ].sort((x, y) => x.start - y.start);
+  }
+  return segs === a.segments ? a : { ...a, segments: segs, stats: archiveStats(segs) };
+}
+
+/** 合并时两节之间空出的秒数：够 5 分钟，章节就不会跨节（同课间休息） */
+const PART_GAP = 300;
+
+/**
+ * 几节课的档案 → 合并反馈的档案：去掉课前、课后，按上课先后接成一条时间线，两节之间插一段 5 分钟的「两节之间」（课间休息）。
+ * 统计按各节相加，两节之间不算；parts 记下每节在新时间线上的位置和真实时刻。
+ */
+export function mergeArchives(items: Array<{ lessonId: string; archive: Archive; recStart: number; plan: number }>): Archive {
+  const out: Archive = { parts: [], segments: [], moments: [], facts: [], stats: { first: 0, last: 0, learn: 0, brk: 0, chat: 0, share: 0 } };
+  let cursor = 0;
+  let base = 0;
+  for (const [k, { lessonId, archive: a, recStart, plan }] of items.entries()) {
+    const { first, last } = a.stats;
+    if (k) {
+      out.segments.push({ start: cursor, end: cursor + PART_GAP, kind: "课间休息", title: "两节之间", detail: "" });
+      cursor += PART_GAP;
+    }
+    const shift = cursor - first;
+    const clamp = (t: number) => Math.min(last, Math.max(first, t)) + shift;
+    out.segments.push(...a.segments
+      .filter((s) => s.kind !== "课前" && s.kind !== "课后")
+      .map((s) => ({ ...s, start: clamp(s.start), end: clamp(s.end) }))
+      .filter((s) => s.end > s.start));
+    out.moments.push(...a.moments.filter((m) => m.time >= first && m.time <= last).map((m) => ({ ...m, time: m.time + shift })));
+    out.facts.push(...a.facts.map((f) => ({ ...f, time: clamp(f.time) }))); // 下课后才说的作业也算进来
+    out.parts!.push({ lessonId, start: cursor, end: cursor + last - first, clock0: recStart - shift * 1000, plan });
+    for (const key of ["learn", "brk", "chat"] as const) out.stats[key] += a.stats[key];
+    base += last - first - a.stats.brk;
+    cursor += last - first;
+  }
+  out.stats.last = cursor;
+  out.stats.share = out.stats.learn / Math.max(1, base);
+  return out;
+}
+
+/** 秒数 t 在合并反馈的第几节（从 0 起）；不是合并反馈都算第 0 节 */
+const partOf = (a: Archive, t: number) => Math.max(0, (a.parts ?? []).filter((p) => p.start <= t).length - 1);
+
+const learnSegments = (a: Archive) => a.segments.filter((s) => LEARN_KINDS.includes(s.kind));
+const segLine = (s: Segment, i: number) => `${i}. ${mmss(s.start * 1000)}–${mmss(s.end * 1000)} ${s.kind}｜${s.title}｜${s.detail}`;
+/** 合并反馈：每一节开头加一行「—— 第 N 节 ——」 */
+const partHead = (a: Archive, list: Segment[], i: number) =>
+  a.parts && (i === 0 || partOf(a, list[i - 1].start) !== partOf(a, list[i].start)) ? `—— 第 ${partOf(a, list[i].start) + 1} 节 ——\n` : "";
+
+/** 作业、下节课由程序从档案的「事项」取：下节课只认最后 30 分钟里说的（前面说的多半是「下半堂课」） */
+export function archiveFacts(a: Archive) {
+  const pick = (type: string, from = -Infinity) => a.facts.filter((f) => f.type === type && f.time >= from && f.text).map((f) => f.text);
+  return { homework: pick("作业"), next: pick("下节课", a.stats.last - 1800) };
+}
+
+/** 第二步两次调用的结果 + 档案 → 完整报告：作业、下节课、章节都由程序填 */
+export function assembleReport(report: Omit<ClassReport, "homework" | "next">, archive: Archive, chapterRaw: string): ClassReport {
+  const { homework, next } = archiveFacts(archive);
+  return {
+    ...report,
+    reminder: report.reminder || homework.map(reminderText).find(Boolean) || "",
+    homework: homework.join("；") || "课上没有明确布置作业",
+    next: next.join("；") || "具体内容待老师安排",
+    chapters: buildChapters(chapterRaw, archive, report.mastery.map((m) => m.name)),
+  };
+}
+
+// ---------- 第二步 A：只拿学习环节写家长总结和报告（闲聊、课前课后模型根本看不到） ----------
+
+export function reportMessages(meta: PromptMeta, archive: Archive, prompts: Prompts = DEFAULT_PROMPTS) {
+  const learn = learnSegments(archive);
+  const inLearn = (t: number) => learn.some((s) => t >= s.start && t < s.end);
+  const { homework, next } = archiveFacts(archive);
+  const system = `你是菁仕教育的资深教研老师，根据一节课的课堂时间档案（由程序从录音整理，已去掉课前、课间和闲聊），同时写两份内容：给家长的课堂总结、给老师和教研看的结构化课堂报告。
+${fill(prompts.rules, meta)}
+只输出一个 JSON 对象，不要 markdown 代码块，不要任何其他文字。`;
+  const m = meta.merged;
+  const merged = m
+    ? `\n这是 ${m.labels.length} 节课合并的一份反馈（${m.labels.join("、")}），把它们当成一次汇报来写，不要逐节分开写。\n`
+    : "";
+  const user = `课程信息：学生 ${meta.student || "学生"}；课程 ${meta.course || "本课"}；日期 ${meta.fullDate || meta.monthDay}${meta.timeRange ? `；时间 ${meta.timeRange}` : ""}；老师 ${meta.teacher}。
+${merged}
+JSON 结构：
+${SKELETON}
+
+report 各字段要求：
+${fill(prompts.report, meta)}
+- reminder（课后提醒）是可选项。给学生写最值得带走的一件事，1–2 句。优先从下方“作业”“课后约定”或“下节课”提取明确要做或准备的事，保留谁负责，写清材料和动作。题号、数量、截止时间只有原文明确时才写。
+  没有明确任务时，只有课堂记录里出现了具体卡点或未完成的步骤，且能给出一个学生自己能检查结果的小动作，才用“可以……”提出建议。不要把建议写成老师布置的作业。
+  只有下节课讲什么、泛泛的复习建议、或只能重复 issue.fix 时，写空字符串 ""。不要输出“暂无”“本课数据不足”。
+
+${fill(prompts.parent, meta)}
+
+parentSummary 与 report 的内容必须一致。作业和下节课只用下面「作业」「下节课」里写的，没有就不要编。
+
+学习环节（[编号. 开始–结束 类别｜标题｜说明]）：
+${learn.map((s, i) => partHead(archive, learn, i) + segLine(s, i)).join("\n") || "无"}
+
+课堂瞬间：
+${archive.moments.filter((m) => inLearn(m.time)).map((m) => `${mmss(m.time * 1000)} ${m.type}：${m.text}`).join("\n") || "无"}
+
+课后约定：${archive.facts.filter(f => f.type === "课后约定").map(f => f.text).join("；") || "无"}
+作业：${homework.join("；") || "无"}
+下节课：${next.join("；") || "无"}`;
+  return [
+    { role: "system", content: system },
+    { role: "user", content: user },
+  ];
+}
+
+// ---------- 第二步 B：学习环节归成章节（单独一次调用：和写报告混在一起会归成 30 多章） ----------
+
+/** 课间后的第一个学习环节编号：章节不能跨过课间 */
+function breakCuts(a: Archive): number[] {
+  const learn = learnSegments(a);
+  return a.segments
+    .filter((s) => s.kind === "课间休息" && s.end - s.start >= 300)
+    .map((b) => learn.findIndex((s) => s.start >= b.end - 1))
+    .filter((k) => k > 0);
+}
+
+export function chapterPrompt(archive: Archive, points: string[], retry = ""): string {
+  const learn = learnSegments(archive);
+  const cuts = breakCuts(archive);
+  return `下面是一节课里的学习环节（程序已去掉课前、课间、闲聊），按时间排好，前面是编号；后面附课堂里学生作答、提问的记录。
+共 ${learn.length} 个环节，请归成 ${chapterRange(learn.length).join("–")} 个章节给家长看（平均每章约 ${Math.max(1, Math.round(learn.length / 10))} 个环节）：每个章节是连续的若干环节，用 from / to 写起止编号，所有编号都要用上，不重叠。
+- cat：这一章的类别，按「这段时间学生主要在做什么」判断，从下面选一个：
+${Object.entries(CHAPTER_CATS).map(([k, v]) => `  ${k}：${v}`).join("\n")}
+  学生先自己做、老师再讲的算「当堂练习」；说到试卷或作业的第几题、错因、扣分的算「错题讲评」，不算例题精讲。夹在讲题中间的几句鼓励、闲谈，并进所在章节，不单独成章。课间休息前后的环节不能放在同一章。
+- title：一句话 20–32 字，先写知识点或题目，再写关键方法或结论，让家长看得懂这段具体学了什么。例如「第 15 题判别式求参数：唯一实数解令 Δ=0，解出 M=±√10」。不要写评价，不要用省略号。
+- point：从这几个知识点里选这一章主要讲的一个：${points.join(" / ")}；学习规划章写「${PLAN_POINT}」。
+只输出 JSON：{"chapters":[{"from":0,"to":0,"cat":"","title":"","point":""}]}${retry ? `\n${retry}` : ""}
+
+环节：
+${learn.map((s, i) => `${partHead(archive, learn, i) || (cuts.includes(i) ? "—— 课间休息 ——\n" : "")}${segLine(s, i)}`).join("\n")}
+
+学生作答与提问：
+${archive.moments.map((m) => `${mmss(m.time * 1000)} ${m.type}：${m.text}`).join("\n") || "无"}`;
+}
+
+/** 章节数：8–12；环节本来就少的短课按环节数来 */
+const chapterRange = (n: number) => [Math.min(8, n), Math.min(12, n)];
+
+/** 检查章节：数量、首尾相接覆盖全部编号、类别合法、不跨课间。返回问题描述，没问题返回空串 */
+export function chapterProblem(raw: string, archive: Archive): string {
+  const n = learnSegments(archive).length;
+  const cuts = breakCuts(archive);
+  const [min, max] = chapterRange(n);
+  let cs: any[];
+  try {
+    cs = list(jsonOf(raw).chapters);
+  } catch {
+    return "输出不是合法 JSON";
+  }
+  if (cs.length < min || cs.length > max) return `上次你给了 ${cs.length} 章，必须是 ${min}–${max} 章${cs.length > max ? "：同一道题或同一个知识点的连续环节放进一章，学习规划和鼓励的话并进相邻章节" : ""}。`;
+  if (!cs.every((c, i) => Number.isInteger(c?.from) && Number.isInteger(c?.to) && c.to >= c.from && c.from === (i ? cs[i - 1].to + 1 : 0)) || cs.at(-1)?.to !== n - 1) return `编号要首尾相接覆盖 0–${n - 1}。`;
+  if (!cs.every((c) => c.cat in CHAPTER_CATS)) return "cat 必须在列表里。";
+  if (cs.some((c) => cuts.some((k) => c.from < k && k <= c.to))) return "课间休息前后的环节不能在同一章。";
+  return "";
+}
+
+/**
+ * 模型的章节 → 家长看的章节。先修正（重试后仍不合格时兜底，不让整节课失败）：编号排好接上、跨课间的拆开、类别不认识的算例题精讲、
+ * 多于 12 章把最短的并进相邻较长的一章；再算时间：首尾相接（闲聊并进前一章），跨过课间的那一章停在课间开始，课间不单列。
+ * 闲聊多（学习占比不到 70%）的课不并闲聊，每章就是它学习环节的真实起止，免得一章挂着半小时闲聊。
+ */
+export function buildChapters(raw: string, archive: Archive, points: string[]): Chapter[] {
+  const learn = learnSegments(archive);
+  const n = learn.length;
+  if (!n) return [];
+  const cuts = breakCuts(archive);
+  let cs: Array<{ from: number; to: number; cat: ChapterCat; title: string; point: string }> = [];
+  try {
+    cs = list(jsonOf(raw).chapters)
+      .filter((c) => Number.isInteger(c?.from) && Number.isInteger(c?.to) && plain(c.title))
+      .sort((a, b) => a.from - b.from)
+      .map((c) => ({ from: c.from, to: c.to, cat: c.cat in CHAPTER_CATS ? c.cat : "例题精讲", title: plain(c.title), point: plain(c.point) }));
+  } catch { /* 下面按一章兜底 */ }
+  cs = cs.flatMap((c, i) => {
+    const from = i ? cs[i - 1].to + 1 : 0; // 前一章已按修正后的 to 改过
+    const to = i === cs.length - 1 ? n - 1 : Math.min(n - 1, Math.max(from, c.to));
+    if (from > n - 1) return [];
+    c.from = from;
+    c.to = to;
+    return [c];
+  });
+  if (!cs.length) cs = [{ from: 0, to: n - 1, cat: "例题精讲", title: learn[0].title, point: points[0] ?? PLAN_POINT }];
+  cs = cs.flatMap((c) => {
+    const inside = cuts.filter((k) => c.from < k && k <= c.to);
+    return [c.from, ...inside].map((from, i, all) => ({ ...c, from, to: i < all.length - 1 ? all[i + 1] - 1 : c.to }));
+  });
+  const secs = (c: { from: number; to: number }) => learn.slice(c.from, c.to + 1).reduce((a, s) => a + s.end - s.start, 0);
+  const crosses = (a: { from: number; to: number }, b: { from: number; to: number }) => cuts.some((k) => Math.min(a.from, b.from) < k && k <= Math.max(a.to, b.to));
+  while (cs.length > 12) {
+    const i = cs.reduce((m, c, k) => (secs(c) < secs(cs[m]) ? k : m), 0);
+    const j = [i - 1, i + 1].filter((k) => cs[k] && !crosses(cs[i], cs[k])).sort((a, b) => secs(cs[b]) - secs(cs[a]))[0];
+    if (j === undefined) break;
+    cs[j] = { ...cs[j], from: Math.min(cs[i].from, cs[j].from), to: Math.max(cs[i].to, cs[j].to) };
+    cs.splice(i, 1);
+  }
+  const breaks = archive.segments.filter((s) => s.kind === "课间休息");
+  let lastPoint = points[0] ?? PLAN_POINT;
+  const full = archive.stats.share >= LEARN_SHARE;
+  return cs.map((c, i) => {
+    if (points.includes(c.point)) lastPoint = c.point;
+    const point = c.cat === "学习规划" ? PLAN_POINT : lastPoint;
+    if (!full) return { start: learn[c.from].start, end: learn[c.to].end, real: secs(c), cat: c.cat, title: c.title, point };
+    const start = i ? learn[c.from].start : archive.stats.first;
+    const next = i < cs.length - 1 ? learn[cs[i + 1].from].start : archive.stats.last;
+    const brk = breaks.find((b) => b.start >= learn[c.to].end - 1 && b.end <= next + 1);
+    return { start, end: brk ? brk.start : next, real: secs(c), cat: c.cat, title: c.title, point };
+  });
+}
+
+// ---------- 会议纪要（随时录制选「会议」）：结构化纪要 + 纪要网页，不出家长总结和学情报告 ----------
+
+export interface MeetingReport {
+  title: string;
+  lead: string;
+  /** 板块 → 具体议题；时间为秒 */
+  sections: Array<{ title: string; items: Array<{ title: string; start: number; end: number; conclusion: string }> }>;
+  decisions: Array<{ text: string; time: number | null }>;
+  todos: Array<{ task: string; owner: string; due: string; time: number | null }>;
+  followups: string[];
+  /** 各说话人发言秒数，程序按转写算 */
+  speakers: Array<[string, number]>;
+}
+
+const MEETING_SKELETON = `{
+  "title": "", "lead": "",
+  "sections": [{"title": "板块", "items": [{"title": "议题", "start": "mm:ss", "end": "mm:ss", "conclusion": ""}]}],
+  "decisions": [{"text": "", "time": "mm:ss"}],
+  "todos": [{"task": "", "owner": "", "due": "", "time": "mm:ss"}],
+  "followups": [""]
+}`;
+
+export function meetingChunkPrompt(chunk: string, index: number, total: number): string {
+  return `下面是一场会议录音转写的第 ${index + 1}/${total} 段，「说话人N」由机器自动区分。
+按时间顺序整理这一段（纯文字，1000 字以内）：先按议题列出时间线，每个议题写起止时间（mm:ss，照抄转写里的时间）、讨论了什么、结论是什么；再单独列出这一段里的决定、待办（谁做什么、什么时候）、没讨论出结论的问题。只写转写里有的内容，不要推测。
+
+${chunk}`;
+}
+
+export function meetingMessages(meta: { topic: string; monthDay: string }, material: string, isNotes: boolean, prompt = DEFAULT_PROMPTS.meeting) {
+  return [
+    { role: "system", content: `你是会议记录员，根据会议录音转写写一份结构化的会议纪要。\n只输出一个 JSON 对象，不要 markdown 代码块，不要任何其他文字。` },
+    { role: "user", content: `会议：${meta.topic || "会议"}；日期：${meta.monthDay}。
+
+JSON 结构：
+${MEETING_SKELETON}
+
+${prompt}
+
+${isNotes ? "会议要点（由完整转写按时间分段整理）" : "会议转写（[说话人 开始-结束] 文本）"}：
+${material}` },
+  ];
+}
+
+const plain = (value: unknown) => (typeof value === "string" ? value.trim() : "");
+const timeOrNull = (value: unknown) => {
+  const t = seconds(value);
+  return Number.isFinite(t) ? t : null;
+};
+
+/** 大模型输出 → MeetingReport：至少要有一个带合法时间的议题；条数上限防止长会把页面撑爆 */
+export function parseMeetingReport(raw: string, speakers: MeetingReport["speakers"] = []): MeetingReport {
+  const start = raw.indexOf("{");
+  const end = raw.lastIndexOf("}");
+  if (start < 0 || end <= start) throw new Error("输出里没有 JSON");
+  const d = JSON.parse(raw.slice(start, end + 1)) as Record<string, any>;
+  const list = (value: unknown) => (Array.isArray(value) ? value : []);
+  const sections = list(d.sections)
+    .map((s: Record<string, unknown>) => ({
+      title: plain(s?.title),
+      items: list(s?.items).flatMap((it: Record<string, unknown>) => {
+        const a = seconds(it?.start);
+        const b = seconds(it?.end);
+        const title = plain(it?.title);
+        return b > a && title ? [{ title, start: a, end: b, conclusion: plain(it.conclusion) || "未定" }] : [];
+      }),
+    }))
+    .filter((s) => s.title && s.items.length);
+  if (!sections.length) throw new Error("sections 里没有带合法时间的议题");
+  return {
+    title: str(d.title, "title"),
+    lead: str(d.lead, "lead"),
+    sections,
+    decisions: list(d.decisions).flatMap((x: Record<string, unknown>) => (plain(x?.text) ? [{ text: plain(x.text), time: timeOrNull(x.time) }] : [])).slice(0, 15),
+    todos: list(d.todos).flatMap((x: Record<string, unknown>) => (plain(x?.task) ? [{ task: plain(x.task), owner: plain(x.owner), due: plain(x.due), time: timeOrNull(x.time) }] : [])).slice(0, 30),
+    followups: list(d.followups).map(plain).filter(Boolean).slice(0, 10),
+    speakers,
+  };
+}
+
+/** App 卡片、飞书私信、「复制纪要」用的纯文本，从同一份 MeetingReport 拼出来 */
+export function meetingText(r: MeetingReport, monthDay: string): string {
+  const numbered = (rows: string[]) => (rows.length ? rows.map((row, i) => `${i + 1}. ${row}`).join("\n") : "无");
+  return [
+    `${r.title} · ${monthDay} 会议纪要`,
+    r.lead,
+    `【决定】\n${numbered(r.decisions.map((x) => x.text))}`,
+    `【待办】\n${numbered(r.todos.map((x) => `${x.owner ? `${x.owner}：` : ""}${x.task}${x.due ? `（${x.due}）` : ""}`))}`,
+    `【待跟进】\n${numbered(r.followups)}`,
+  ].join("\n\n");
+}
+
+/** 发言占比：按转写里的标签（「说话人N」，后台测试时也可能是「老师 / 学生」）累计发言秒数，从多到少 */
+export function meetingSpeakers(transcript: string): MeetingReport["speakers"] {
+  const secs = new Map<string, number>();
+  for (const m of transcript.matchAll(/^\[(\S+) (\d+):(\d{2})-(\d+):(\d{2})\]/gm)) {
+    secs.set(m[1], (secs.get(m[1]) ?? 0) + Math.max(0, +m[4] * 60 + +m[5] - (+m[2] * 60 + +m[3])));
+  }
+  return [...secs].sort((a, b) => b[1] - a[1]);
+}
+
+// ---------- 大模型输出校验 ----------
+
+/** "mm:ss" 或 "h:mm:ss" → 秒；分钟可以超过 59（转写不按小时回绕）。不合法返回 NaN */
+function seconds(value: unknown): number {
+  const m = String(value ?? "").trim().match(/^(?:(\d+):)?(\d+):(\d{2})$/);
+  return m ? Number(m[1] ?? 0) * 3600 + Number(m[2]) * 60 + Number(m[3]) : NaN;
+}
+
+/** 像一个问题：6 个字以上，带问号或疑问词。挡掉「选 dog」「为什么」这类把回答、口头语当成提问的 */
+export const isQuestion = (text: string) => text.length >= 6 && /[？?]|什么|为什么|怎么|哪|吗|呢|是不是|几|啥|多少/.test(text);
+
+function parseQuestions(raw: unknown): NonNullable<ClassReport["questions"]> {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .flatMap((q: Record<string, unknown>) => {
+      const text = typeof q?.text === "string" ? q.text.trim() : "";
+      const time = seconds(q?.time);
+      return isQuestion(text) ? [{ time: Number.isFinite(time) ? time : null, text, answer: typeof q.answer === "string" ? q.answer.trim() : "" }] : [];
+    })
+    .slice(0, 5);
+}
+
+function str(value: unknown, name: string): string {
+  if (typeof value !== "string" || !value.trim()) throw new Error(`缺少 ${name}`);
+  return value.trim();
+}
+
+// ---------- 家长总结：抬头三行由程序写死（模型写的日期/时间/老师一律覆盖） ----------
+
+export interface SummaryContext {
+  title: string;
+  date: string;
+  timeRange?: string;
+  /** 已拼好「老师」；合并反馈是「张三老师、李四老师」 */
+  teacher: string;
+  homework: string[];
+  /** 本课有老师纠正的瞬间、或学习环节里写了提示/引导/纠正/提醒 → 2️⃣ 必须写出「在提示下」那一档 */
+  needsHint: boolean;
+}
+
+const teacherText = (names: string[]) => [...new Set(names.filter(Boolean))].map((n) => (/老师$/.test(n) ? n : `${n}老师`)).join("、");
+
+export function summaryContext(meta: PromptMeta, archive: Archive): SummaryContext {
+  // 学生和课程之间用「·」隔开，英文和中文粘一起太难读；缺一个就不留分隔符
+  const who = [(meta.student || "").trim(), (meta.course || "").trim()].filter(Boolean).join(" · ");
+  return {
+    title: `【${who}学习反馈】`,
+    date: meta.fullDate || meta.monthDay,
+    timeRange: meta.timeRange,
+    teacher: teacherText(meta.merged?.teachers?.length ? meta.merged.teachers : [meta.teacher]),
+    homework: archiveFacts(archive).homework,
+    // 老师纠正过、或环节说明里写了提示/引导/纠正/提醒，才要求 2️⃣ 写出提示下完成的部分
+    needsHint: archive.moments.some((m) => m.type === "老师纠正")
+      || archive.segments.some((s) => LEARN_KINDS.includes(s.kind) && /提示|引导|纠正|提醒/.test(s.detail || "")),
+  };
+}
+
+/** 正文各段字数（去掉空白），只写日志给上线后抽看，不作任何标准 */
+export function summaryCharCounts(text: string): Record<string, number> {
+  const heads = [...text.matchAll(/^([1-4]️⃣)[^\n]*$/gm)];
+  const out: Record<string, number> = {};
+  heads.forEach((h, i) => { out[h[1]] = text.slice(h.index! + h[0].length, i + 1 < heads.length ? heads[i + 1].index : undefined).replace(/\s/g, "").length; });
+  return out;
+}
+
+/** 纯文字：去掉 **、行首 #、行首「- 」；其它 markdown 排版不常见，真出现再加 */
+const plainText = (raw: string) =>
+  raw.replace(/\r\n/g, "\n").replace(/\*\*/g, "").replace(/^[ \t]*#{1,6}[ \t]*/gm, "").replace(/^[ \t]*-[ \t]+/gm, "");
+/** 模型自己写的标题、抬头、结尾客套：都由程序重写，整行丢掉 */
+const dropLine = (t: string) => /^【.*学习反馈】$/.test(t) || /^(📅|🕐|👨‍🏫|👨🏫)/.test(t) || /^有任何问题/.test(t);
+
+/** 4️⃣ 只认档案里的作业事实：有作业漏写就按原句补，没作业硬写就整段删（4️⃣ 在文末，删尾安全） */
+function alignHomework(text: string, homework: string[]): string {
+  const at = text.search(/^4️⃣/m);
+  if (!homework.length) return at < 0 ? text : text.slice(0, at).replace(/\n+$/, "");
+  return at < 0 ? `${text}\n\n4️⃣ 课后任务\n${homework.join("；")}` : text;
+}
+
+export function normalizeParentSummary(raw: string, ctx: SummaryContext): string {
+  const lines = plainText(raw).split("\n").filter((line) => !dropLine(line.trim()));
+  const start = lines.findIndex((line) => /^[1-9]️⃣|^【[^】\n]{1,12}】$/.test(line.trim()));
+  const body = alignHomework(
+    (start < 0 ? lines : lines.slice(start)).join("\n").replace(/^\n+|\n+$/g, "").replace(/\n{3,}/g, "\n\n"),
+    ctx.homework,
+  );
+  assertSections(body);
+  const header = [ctx.title, "", `📅 日期：${ctx.date}`, ...(ctx.timeRange ? [`🕐 时间：${ctx.timeRange}`] : []), ...(ctx.teacher ? [`👨‍🏫 授课老师：${ctx.teacher}`] : [])].join("\n");
+  const n = summaryCharCounts(body);
+  const [a, b, c, d] = ["1️⃣", "2️⃣", "3️⃣", "4️⃣"].map((k) => n[k] ?? 0);
+  console.log(`[parentSummary] 字数 1️⃣=${a} 2️⃣=${b} 3️⃣=${c} 4️⃣=${d} 标题=${ctx.title}`);
+  return `${header}\n\n${body}`;
+}
+
+/**
+ * A7：不出现没有依据的分数、正确率、百分比、等级和专注度。
+ * 「20 分钟」「第 15 题」「2 道真题」「1.5 小时」不算；「7/10」「85 分」只有在成绩、答题统计的语境里才算（数学里的 1/2、3/4、10 点 30 分放行）。
+ */
+const A7_WORD = /得分|满分|正确率|百分比|专注度|优秀|良好|中等|\d+(?:\.\d+)?%/;
+const A7_NUMBER = /\d+(?:\.\d+)?\s*\/\s*\d+(?:\.\d+)?|(?<!\d+\s*点\s*)(?<![\d.])\d+(?:\.\d+)?\s*分(?!钟|秒)/;
+const A7_CONTEXT = /得分|满分|成绩|测验|考试|测试|答题|评分|总分|考了|得了|拿到|获得|正确率|百分比|对了|做对|答对|答了|共\s*\d+\s*[道题]/;
+const isA7 = (sentence: string) => A7_WORD.test(sentence) || (A7_NUMBER.test(sentence) && A7_CONTEXT.test(sentence));
+/** A3：「在提示下」这一档的说法 */
+const HINTED = /在提示下|在引导下|跟随[^。；\n]{0,10}步骤|经老师提醒|在提醒下/;
+
+/** strict 拦不拦、strict:false 剥不剥，用的是同一套按句判断 */
+const A7_SENTENCE = /(?<=[。；])/;
+const hasA7 = (text: string) => text.split("\n").some((line) => line.split(A7_SENTENCE).some(isA7));
+/**
+ * A7 兜底：按句（。；换行）剥掉含分数、正确率、百分比、等级、专注度的句子，无依据的评价不能发给家长。
+ * 整句删：同一句里「十道题对了八道，正确率八成」只删后半句会把「八道」留下，也是没依据的数字。
+ */
+function stripA7(text: string): string {
+  return text.split("\n")
+    .map((line) => line.split(A7_SENTENCE).filter((sentence) => !isA7(sentence)).join(""))
+    .join("\n");
+}
+
+/** 1️⃣2️⃣3️⃣ 剥空即失败：不补模型没写的内容，也不能给家长一段只有标题的空段 */
+function assertSections(text: string): void {
+  const heads = [...text.matchAll(/^([1-4]️⃣)[^\n]*$/gm)];
+  heads.forEach((h, i) => {
+    if (!/^[1-3]️⃣/.test(h[1])) return;
+    const at = h.index! + h[0].length;
+    const body = text.slice(at, i + 1 < heads.length ? heads[i + 1].index : text.length);
+    if (!body.replace(/\s/g, "")) throw new Error(`parentSummary 的 ${h[1]} 正文为空，请重写这一段`);
+  });
+}
+
+/** 第二步 A 的输出；作业、下节课、章节不归模型写，由调用方按档案填 */
+export function parseSummary(raw: string, headings = promptHeadings(DEFAULT_PROMPTS), ctx?: SummaryContext, { strict = true } = {}): { parentSummary: string; report: Omit<ClassReport, "homework" | "next"> } {
+  const data = jsonOf(raw);
+  let parentSummary = str(data.parentSummary, "parentSummary").replace(/\*\*/g, "").replace(/\r\n/g, "\n");
+  if (ctx) {
+    // 抬头、4️⃣、markdown 由程序收拾；清不掉的和 A7 的分数等级让调用方重试一次
+    if (strict && /```/.test(parentSummary)) throw new Error("parentSummary 里还有 markdown 代码块，请只输出纯文字");
+    if (strict && hasA7(parentSummary)) throw new Error("parentSummary 里出现了分数、百分比、等级或专注度，这些没有依据，请删掉");
+    // 重试还带 A7：程序按句剥掉，剥空 1️⃣2️⃣3️⃣ 才算失败（A3 的「在提示下」只放行不剥内容）
+    if (!strict) parentSummary = stripA7(parentSummary);
+    parentSummary = normalizeParentSummary(parentSummary, ctx);
+  }
+  const flat = parentSummary.replace(/\s+/g, "");
+  for (const heading of headings) {
+    if (!ctx?.homework.length && heading.startsWith("4️⃣")) continue; // 没作业就不要求 4️⃣，写了也会被删
+    if (!flat.includes(heading.replace(/\s+/g, ""))) throw new Error(`parentSummary 缺少 ${heading}`);
+  }
+  if (strict && ctx?.needsHint && !HINTED.test(parentSummary)) throw new Error("本课有老师提示、引导或纠正的环节，2️⃣ 里要写出学生「在提示下」「在引导下」做到的部分");
+  const r = data.report;
+  if (!r || typeof r !== "object") throw new Error("缺少 report");
+  if (!Array.isArray(r.content) || !r.content.length) throw new Error("report.content 应为非空数组");
+  if (!Array.isArray(r.mastery)) throw new Error("report.mastery 应为数组");
+  const mastery = r.mastery.slice(0, 6).map((item: Record<string, unknown>, index: number) => {
+    const status = str(item?.status, `mastery[${index}].status`);
+    if (!(MASTERY_STATUSES as readonly string[]).includes(status)) throw new Error(`mastery[${index}].status 不在 ${MASTERY_STATUSES.join("/")} 中`);
+    return { name: str(item.name, `mastery[${index}].name`), status: status as ClassReport["mastery"][number]["status"], evidence: str(item.evidence, `mastery[${index}].evidence`) };
+  });
+  return {
+    parentSummary,
+    report: {
+      topic: str(r.topic, "report.topic"),
+      lead: str(r.lead, "report.lead"),
+      content: r.content.map((line: unknown, index: number) => str(line, `content[${index}]`).replace(/^\d+[.、]\s*/, "")),
+      mastery,
+      performance: str(r.performance, "report.performance"),
+      issue: { title: str(r.issue?.title, "report.issue.title"), fix: str(r.issue?.fix, "report.issue.fix") },
+      review: str(r.review, "report.review"),
+      reminder: reminderText(r.reminder),
+      questions: parseQuestions(r.questions),
+    },
+  };
+}
+
+// ---------- 老师在网页上改报告：只改文字，结构、时间、掌握程度、发言统计都不变 ----------
+
+const clean = (v: unknown, max = 2000) => (typeof v === "string" ? v.replace(/\r/g, "").trim().slice(0, max) : undefined);
+/** 必填文字：没传或清空就保留原文 */
+const keep = (v: unknown, old: string) => clean(v) || old;
+/** 可删的列表项：没传保留原文，清空 = 删掉这一条（返回 null） */
+const drop = (v: unknown, old: string) => { const s = clean(v); return s === undefined ? old : s || null; };
+/** 可留空的文字（如回答、负责人） */
+const free = (v: unknown, old: string) => clean(v) ?? old;
+const at = (list: unknown, i: number): any => (Array.isArray(list) ? (list[i] ?? {}) : {});
+
+export function applyReportEdits(kind: LessonKind | undefined, old: ClassReport | MeetingReport, edited: any): ClassReport | MeetingReport {
+  const e = edited && typeof edited === "object" ? edited : {};
+  if (kind === "meeting") {
+    const o = old as MeetingReport;
+    return {
+      ...o,
+      title: keep(e.title, o.title),
+      lead: keep(e.lead, o.lead),
+      // 议题带时间，撑着时间分布图：只改字，不删
+      sections: o.sections.map((s, i) => ({
+        ...s, title: keep(at(e.sections, i).title, s.title),
+        items: s.items.map((it, j) => ({ ...it, title: keep(at(at(e.sections, i).items, j).title, it.title), conclusion: keep(at(at(e.sections, i).items, j).conclusion, it.conclusion) })),
+      })),
+      decisions: o.decisions.flatMap((d, i) => { const text = drop(at(e.decisions, i).text, d.text); return text ? [{ ...d, text }] : []; }),
+      todos: o.todos.flatMap((t, i) => {
+        const x = at(e.todos, i);
+        const task = drop(x.task, t.task);
+        return task ? [{ ...t, task, owner: free(x.owner, t.owner), due: free(x.due, t.due) }] : [];
+      }),
+      followups: o.followups.flatMap((f, i) => { const v = drop(Array.isArray(e.followups) ? e.followups[i] : undefined, f); return v ? [v] : []; }),
+    };
+  }
+  const o = old as ClassReport;
+  const renamed = new Map<string, string | null>(); // 知识点改名跟着改章节归属；删掉的知识点，章节保留原名（知识点用时不丢时间）
+  const mastery = o.mastery.flatMap((m, i) => {
+    const x = at(e.mastery, i);
+    const name = drop(x.name, m.name);
+    if (name !== m.name) renamed.set(m.name, name);
+    return name ? [{ ...m, name, evidence: keep(x.evidence, m.evidence) }] : [];
+  });
+  return {
+    ...o,
+    topic: keep(e.topic, o.topic),
+    lead: keep(e.lead, o.lead),
+    content: o.content.flatMap((c, i) => { const v = drop(Array.isArray(e.content) ? e.content[i] : undefined, c); return v ? [v] : []; }),
+    mastery,
+    performance: keep(e.performance, o.performance),
+    issue: { title: keep(e.issue?.title, o.issue.title), fix: keep(e.issue?.fix, o.issue.fix) },
+    homework: keep(e.homework, o.homework),
+    review: keep(e.review, o.review),
+    reminder: clean(e.reminder) ?? o.reminder,
+    next: keep(e.next, o.next),
+    ...(o.chapters && {
+      chapters: o.chapters.map((c, i) => ({ ...c, title: keep(at(e.chapters, i).title, c.title), point: renamed.get(c.point) || c.point })),
+    }),
+    ...(o.questions && {
+      questions: o.questions.flatMap((q, i) => { const x = at(e.questions, i); const text = drop(x.text, q.text); return text ? [{ ...q, text, answer: free(x.answer, q.answer) }] : []; }),
+    }),
+  };
+}
