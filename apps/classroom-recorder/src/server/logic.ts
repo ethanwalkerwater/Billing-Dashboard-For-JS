@@ -179,7 +179,7 @@ export interface LessonDoc {
    * pauses 是录制中暂停的时段；audio 是整段直传的清单，此时 segments 为空。
    * parts 是分块清单：有它就按块拼（audio 这时是整节的校验值，拼完核对）；没有就是整段直传。
    */
-  finish?: { startedAt: string; endedAt: string; segments: FinishSegment[]; pauses?: Array<{ start: string; end: string }>; audio?: { sha256: string; bytes: number }; parts?: FinishPart[] };
+  finish?: { startedAt: string; endedAt: string; segments: FinishSegment[]; pauses?: Array<{ start: string; end: string }>; audio?: { sha256: string; bytes: number }; parts?: FinishPart[]; mic?: { name: string; os: string; rate: number; chDb: number[]; corr?: number } };
   mergedFileId?: string;
   asrTaskId?: number | null;
   transcript?: string;

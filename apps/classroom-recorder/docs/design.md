@@ -8,7 +8,8 @@ UI / UX 唯一依据：`docs/MVP.html`（老师端，含「随时录制」三步
 - **桌面端：Tauri 2**（一套代码出 macOS `.dmg` 与 Windows `.msi/.exe`，安装包约 10 MB）。
   - 录音、切段、上传、课表轮询、状态机全部在 **Rust** 里跑，窗口关掉 / 隐藏都不影响录音；
     规避了方案文档里担心的「Mac WebView 后台录音受限」。
-  - 录音：`cpal` 采集 → 单声道 → 线性重采样 16 kHz → `mp3lame-encoder` 32 kbps MP3，每 30 秒一段（约 120 KB，一小时约 14 MB）。
+  - 录音：`cpal` 采集 → 单声道 → `sonora`（WebRTC 声音处理的纯 Rust 移植：高通、低档降噪、AGC2 自动增益加限幅，同时降到 16 kHz） → `mp3lame-encoder` 32 kbps MP3，每 30 秒一段（约 120 KB，一小时约 14 MB）。
+    电平、「有人在说话」看的是处理前的原始音量，增益不影响自动结束和空录音判断。finish 里带 `mic`：设备名、系统、采样率、每个声道处理前的平均 dBFS（`chDb`）、前两路相关系数（`corr`，≈-1 为反相），排查 Windows 阵列麦空声道或反相用（0.1.15 起）。
     MP3 帧可直接按字节拼接，云端不需要 ffmpeg。
   - Web 层（Vite + 原生 TS，无框架）只负责渲染三个窗口：`main`（主窗口）、`pill`（顶部胶囊）、`toast`（右上角通知）。
   - 菜单栏 / 托盘用 Tauri 原生托盘菜单；macOS 菜单栏标题显示录制计时。

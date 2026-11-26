@@ -1,6 +1,6 @@
 [package]
 name = "classroom-recorder"
-version = "0.1.14"
+version = "0.1.15"
 edition = "2021"
 publish = false
 
@@ -24,6 +24,7 @@ cpal = "0.17"
 mp3lame-encoder = "0.2"
 sha2 = "0.10"
 keepawake = "0.5"
+sonora = "0.3"
 
 [profile.release]
 opt-level = "s"

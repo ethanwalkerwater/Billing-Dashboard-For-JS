@@ -339,6 +339,9 @@ async fn upload_lesson(core: &Arc<Core>, dir: &Path, id: &str) -> Result<(), Api
         }
         _ => body["segments"] = json!(lf.segments.iter().map(|s| json!({ "seq": s.seq, "sha256": s.sha256, "bytes": s.bytes })).collect::<Vec<_>>()),
     }
+    if let Some(m) = &lf.mic {
+        body["mic"] = json!(m);
+    }
     if let Some(m) = &lf.meta {
         body["topic"] = json!(m.topic);
         body["kind"] = json!(m.kind);
