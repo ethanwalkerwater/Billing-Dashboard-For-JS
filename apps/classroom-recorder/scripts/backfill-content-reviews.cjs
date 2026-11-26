@@ -1,5 +1,5 @@
 const assert = require("node:assert/strict");
-const { rest, processReview, TABLE } = require("../functions/classroom-api/review/jobs.cjs");
+const { rest, processReview, TABLE, VERSION } = require("../functions/classroom-api/review/jobs.cjs");
 const { parseTranscript, hash } = require("../functions/classroom-api/review/analyze.cjs");
 async function main() {
   const mode = process.argv[2];
@@ -14,7 +14,7 @@ async function main() {
   const existing =
     mode === "pilot"
       ? new Set(
-          (await rest(TABLE, "select=lesson_id&status=eq.done&version=eq.1&limit=1000")).map(
+          (await rest(TABLE, `select=lesson_id&status=eq.done&version=eq.${VERSION}&limit=1000`)).map(
             (r) => r.lesson_id,
           ),
         )
@@ -40,7 +40,7 @@ async function main() {
     const eq = encodeURIComponent(doc._id);
     const records = await rest(
       TABLE,
-      "lesson_id=eq." + eq + "&version=eq.1&status=eq.done&select=source_hash,findings,usage",
+      "lesson_id=eq." + eq + `&version=eq.${VERSION}&status=eq.done&select=source_hash,findings,usage`,
     );
     if (!records.length) throw Error("NOT_DONE");
     const [source] = await rest("classroom_lessons", "_id=eq." + eq + "&select=transcript");

@@ -1,4 +1,4 @@
-//! 麦克风 → 单声道 → 16 kHz → MP3 32 kbps，每 30 秒落盘一段；外加 lesson.json 读写。
+//! 麦克风 → 单声道 → WebRTC 声音处理（sonora：高通、低档降噪、自动增益、降到 16 kHz）→ MP3 32 kbps，每 30 秒落盘一段；外加 lesson.json 读写。
 //! cpal::Stream 不是 Send，所以整个录音器跑在一条专用线程里，用 channel 收命令和音频。
 //! cpal 0.16 在 release（opt-level s + lto）下枚举设备会在 CoreAudio 里段错误，必须 ≥ 0.17。
 //! 设备仍按 name() 匹配（设置里存的是名字）；0.17 起它被标为 deprecated，改用 id() 时要迁移已存的麦克风设置。
@@ -10,6 +10,8 @@ use cpal::{FromSample, SampleFormat, SizedSample};
 use mp3lame_encoder::{Bitrate, Builder, Encoder, FlushNoGap, MonoPcm, Quality};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use sonora::config::{GainController2, HighPassFilter, NoiseSuppression, NoiseSuppressionLevel};
+use sonora::{AudioProcessing, Config, StreamConfig};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
@@ -30,7 +32,8 @@ pub enum Msg {
     Stop { reply: Sender<()> },
     Mic(String),
     Preview(bool),
-    Audio(Vec<f32>, u32),
+    /// 交错的多声道采样、采样率、声道数
+    Audio(Vec<f32>, u32, usize),
     StreamError(String),
 }
 
@@ -61,7 +64,7 @@ pub fn spawn(app: AppHandle, shared: Arc<Shared>, mic: String) -> Sender<Msg> {
     let me = tx.clone();
     std::thread::Builder::new()
         .name("recorder".into())
-        .spawn(move || Rec { app, shared, tx: me, mic, stream: None, session: None, preview: false, rs: None, lvl: (0.0, 0), voiced: 0 }.run(rx))
+        .spawn(move || Rec { app, shared, tx: me, mic, stream: None, session: None, preview: false, lvl: (0.0, 0), voiced: 0 }.run(rx))
         .expect("spawn recorder thread");
     tx
 }
@@ -74,6 +77,8 @@ struct Session {
     enc: Encoder,
     mp3: Vec<u8>,
     samples: usize,
+    clean: Cleaner,
+    probe: Probe,
 }
 
 struct Rec {
@@ -84,7 +89,6 @@ struct Rec {
     stream: Option<cpal::Stream>,
     session: Option<Session>,
     preview: bool,
-    rs: Option<(u32, Resampler)>,
     lvl: (f64, usize),
     voiced: u32,
 }
@@ -95,7 +99,7 @@ impl Rec {
             match rx.recv_timeout(Duration::from_secs(2)) {
                 Ok(Msg::Start { dir, seq, reply }) => {
                     let awake = keepawake::Builder::default().idle(true).reason("正在录制课堂").app_name("菁仕课堂").app_reverse_domain("asia.jsjy.classroom").create();
-                    let r = new_encoder().map(|enc| Session { _awake: awake.ok(), dir, seq, enc, mp3: Vec::new(), samples: 0 });
+                    let r = new_encoder().map(|enc| Session { _awake: awake.ok(), dir, seq, enc, mp3: Vec::new(), samples: 0, clean: Cleaner::new(), probe: Probe::default() });
                     let r = r.and_then(|s| {
                         self.session = Some(s);
                         self.sync_stream()
@@ -121,7 +125,7 @@ impl Rec {
                     self.preview = on;
                     let _ = self.sync_stream();
                 }
-                Ok(Msg::Audio(buf, rate)) => self.on_audio(&buf, rate),
+                Ok(Msg::Audio(buf, rate, ch)) => self.on_audio(&buf, rate, ch),
                 Ok(Msg::StreamError(e)) => {
                     // 设备断开等：丢掉旧流，按名字重开，找不到就落到系统默认麦克风，录音会话不中断。
                     eprintln!("[recorder] stream error: {e}");
@@ -154,9 +158,10 @@ impl Rec {
         Ok(())
     }
 
-    fn on_audio(&mut self, buf: &[f32], rate: u32) {
-        // 电平：约 8 Hz 发一次 level，同时记录「听到声音」。
-        for &x in buf {
+    fn on_audio(&mut self, raw: &[f32], rate: u32, ch: usize) {
+        let buf: Vec<f32> = raw.chunks(ch).map(|f| f.iter().sum::<f32>() / ch as f32).collect();
+        // 电平：约 8 Hz 发一次 level，同时记录「听到声音」。看的是处理前的原始音量，自动结束、空录音判断不受增益影响。
+        for &x in &buf {
             self.lvl.0 += (x * x) as f64;
         }
         self.lvl.1 += buf.len();
@@ -173,11 +178,9 @@ impl Rec {
             let _ = self.app.emit("level", level_of(rms));
         }
         let Some(s) = self.session.as_mut() else { return };
-        if self.rs.as_ref().is_none_or(|(r, _)| *r != rate) {
-            self.rs = Some((rate, Resampler::new(rate, OUT_RATE)));
-        }
-        let mut out = Vec::with_capacity(buf.len() * OUT_RATE as usize / rate as usize + 2);
-        self.rs.as_mut().unwrap().1.process(buf, &mut out);
+        s.probe.add(raw, rate, ch);
+        let mut out = Vec::with_capacity(buf.len() * OUT_RATE as usize / rate as usize + 160);
+        s.clean.process(&buf, rate, &mut out);
         if self.shared.paused.load(Ordering::Relaxed) {
             out.fill(0.0);
         }
@@ -202,7 +205,8 @@ impl Rec {
         }
         let bytes = std::mem::take(&mut s.mp3);
         s.samples = 0;
-        match add_segment(&s.dir, s.seq, &bytes) {
+        let mic = s.probe.stats(&self.shared.mic.lock().unwrap());
+        match add_segment(&s.dir, s.seq, &bytes, mic) {
             Ok(()) => {
                 s.seq += 1;
                 self.shared.kick_upload.notify_one();
@@ -270,8 +274,7 @@ where
     dev.build_input_stream(
         cfg,
         move |data: &[T], _: &cpal::InputCallbackInfo| {
-            let mono = data.chunks(ch).map(|f| f.iter().map(|&s| s.to_sample::<f32>()).sum::<f32>() / ch as f32).collect();
-            let _ = tx.send(Msg::Audio(mono, rate));
+            let _ = tx.send(Msg::Audio(data.iter().map(|&s| s.to_sample::<f32>()).collect(), rate, ch));
         },
         move |e| {
             let _ = etx.send(Msg::StreamError(e.to_string()));
@@ -279,6 +282,108 @@ where
         None,
     )
     .map_err(|e| format!("无法打开麦克风：{e}"))
+}
+
+/// WebRTC 声音处理（Chrome 同款，sonora 是它的纯 Rust 移植）：高通去低频轰鸣、低档降噪只去风扇空调这类持续底噪、
+/// 自动增益 AGC2（RNN 判断有人说话时才调，默认最多 +50 dB、底噪不超过 -50 dBFS，自带限幅），同时降到 16 kHz。
+/// 每节课新建一个，增益从头适应。
+pub struct Cleaner {
+    apm: AudioProcessing,
+    rate: u32,
+    /// 采样率不是 100 的整数倍（如 22050）时，10 ms 凑不成整数个采样，先线性降到 16 kHz 再处理
+    pre: Option<Resampler>,
+    pend: Vec<f32>,
+}
+
+impl Cleaner {
+    pub fn new() -> Self {
+        let config = Config {
+            high_pass_filter: Some(HighPassFilter::default()),
+            noise_suppression: Some(NoiseSuppression { level: NoiseSuppressionLevel::Low, ..Default::default() }),
+            gain_controller2: Some(GainController2 { adaptive_digital: Some(Default::default()), ..Default::default() }),
+            ..Default::default()
+        };
+        let apm = AudioProcessing::builder().config(config).capture_config(StreamConfig::new(OUT_RATE, 1)).build();
+        Self { apm, rate: 0, pre: None, pend: Vec::new() }
+    }
+
+    /// 单声道 `rate` Hz 进，处理好的 16 kHz 出（追加到 out）；不满 10 ms 的尾巴留到下一次。
+    pub fn process(&mut self, input: &[f32], rate: u32, out: &mut Vec<f32>) {
+        if rate != self.rate {
+            self.rate = rate;
+            self.pend.clear();
+            self.pre = (rate % 100 != 0).then(|| Resampler::new(rate, OUT_RATE));
+        }
+        match &mut self.pre {
+            Some(r) => r.process(input, &mut self.pend),
+            None => self.pend.extend_from_slice(input),
+        }
+        let in_cfg = StreamConfig::new(if self.pre.is_some() { OUT_RATE } else { rate }, 1);
+        let out_cfg = StreamConfig::new(OUT_RATE, 1);
+        let (n, m) = (in_cfg.num_frames(), out_cfg.num_frames());
+        let mut done = 0;
+        while self.pend.len() - done >= n {
+            let at = out.len();
+            out.resize(at + m, 0.0);
+            if let Err(e) = self.apm.process_capture_f32_with_config(&[&self.pend[done..done + n]], &in_cfg, &out_cfg, &mut [&mut out[at..]]) {
+                eprintln!("[recorder] apm: {e}");
+            }
+            done += n;
+        }
+        self.pend.drain(..done);
+    }
+}
+
+/// 每个声道的原始音量和前两路的相关性，随 finish 报给云端：
+/// Windows 阵列麦有一路是空的（某路 dB 很低）或两路反相（corr≈-1）时，取平均会让声音变小甚至抵消。
+#[derive(Default)]
+struct Probe {
+    rate: u32,
+    sq: Vec<f64>,
+    cross: f64,
+    frames: u64,
+}
+
+impl Probe {
+    fn add(&mut self, raw: &[f32], rate: u32, ch: usize) {
+        if self.sq.len() != ch || self.rate != rate {
+            *self = Probe { rate, sq: vec![0.0; ch], ..Default::default() };
+        }
+        for f in raw.chunks_exact(ch) {
+            self.sq.iter_mut().zip(f).for_each(|(s, &x)| *s += (x * x) as f64);
+            if ch > 1 {
+                self.cross += (f[0] * f[1]) as f64;
+            }
+        }
+        self.frames += (raw.len() / ch) as u64;
+    }
+
+    fn stats(&self, name: &str) -> Option<MicStats> {
+        if self.frames == 0 {
+            return None;
+        }
+        let db = |s: f64| (10.0 * (s / self.frames as f64).log10()).max(-120.0) as f32;
+        let corr = (self.sq.len() > 1 && self.sq[0] > 0.0 && self.sq[1] > 0.0).then(|| (self.cross / (self.sq[0] * self.sq[1]).sqrt()) as f32);
+        Some(MicStats {
+            name: name.into(),
+            os: std::env::consts::OS.into(),
+            rate: self.rate,
+            ch_db: self.sq.iter().map(|&s| db(s)).collect(),
+            corr,
+        })
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct MicStats {
+    pub name: String,
+    pub os: String,
+    pub rate: u32,
+    /// 每个声道整节课的平均音量（dBFS，处理前）
+    pub ch_db: Vec<f32>,
+    /// 第 1、2 路的相关系数：≈1 两路一样，≈0 一路空/各录各的，≈-1 反相
+    pub corr: Option<f32>,
 }
 
 /// 线性插值重采样，跨块保持相位。
@@ -342,6 +447,8 @@ pub struct LessonFile {
     pub parts_registered: bool,
     /// 有块没能一次传上 = 网不好：下课后不再整段直传，直接让云端用块拼
     pub part_trouble: bool,
+    /// 麦克风各声道音量，每次切段刷新（0.1.15 起）
+    pub mic: Option<MicStats>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -470,12 +577,13 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
     Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect()
 }
 
-fn add_segment(dir: &Path, seq: u32, bytes: &[u8]) -> std::io::Result<()> {
+fn add_segment(dir: &Path, seq: u32, bytes: &[u8], mic: Option<MicStats>) -> std::io::Result<()> {
     write_atomic(&seg_path(dir, seq), bytes)?;
     let seg = Segment { seq, sha256: sha256_hex(bytes), bytes: bytes.len() as u64, uploaded: false };
     update(dir, |lf| {
         lf.segments.retain(|s| s.seq != seq);
         lf.segments.push(seg);
+        lf.mic = mic.or(lf.mic.take());
     })
 }
 

@@ -1331,6 +1331,15 @@ mod tests {
             assert!((out.len() as f64 - want).abs() <= 1.0, "{from}: {} vs {want}", out.len());
             assert!(out[10..].iter().all(|&x| (x - 0.5).abs() < 1e-6));
         }
+        // 声音处理：任意块大小、常见采样率（含凑不成 10 ms 的 22050）进，都按时长出 16 kHz
+        for (from, chunk) in [(48_000u32, 333usize), (44_100, 1024), (22_050, 512), (16_000, 160)] {
+            let mut c = recorder::Cleaner::new();
+            let mut out = Vec::new();
+            let pcm: Vec<f32> = (0..from as usize).map(|i| (i as f32 * 0.07).sin() * 0.01).collect();
+            pcm.chunks(chunk).for_each(|b| c.process(b, from, &mut out));
+            assert!((15_800..=16_000).contains(&out.len()), "{from}: {}", out.len());
+            assert!(out.iter().all(|x| x.is_finite() && x.abs() <= 1.0));
+        }
         // 30 秒 16 kHz 正弦 → 32 kbps MP3：约 120 KB，以 MPEG 帧同步字开头
         let mut enc = recorder::new_encoder().unwrap();
         let pcm: Vec<f32> = (0..480_000).map(|i| (i as f32 * 0.05).sin() * 0.3).collect();
@@ -1375,6 +1384,7 @@ mod tests {
             parts: vec![],
             parts_registered: false,
             part_trouble: false,
+            mic: None,
         };
         assert_eq!(recorder::read(&dir).unwrap(), want);
         // 损坏的 lesson.json 不能被当成空记录覆盖
