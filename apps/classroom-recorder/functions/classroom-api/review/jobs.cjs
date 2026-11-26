@@ -1,5 +1,6 @@
 const { randomUUID } = require("node:crypto");
 const { analyze, hash } = require("./analyze.cjs");
+const VERSION = 2;
 const TABLE = "classroom_content_reviews";
 const eq = (s) => "eq." + encodeURIComponent(s);
 async function rest(table, query, method = "GET", body) {
@@ -34,7 +35,7 @@ async function processReview(id) {
   if (!doc?.transcript || ["meeting", "merged"].includes(doc.kind)) return { status: "skip" };
   const h = hash(doc.transcript),
     now = new Date().toISOString();
-  const key = "lesson_id=" + eq(id) + "&source_hash=" + eq(h) + "&version=eq.1";
+  const key = "lesson_id=" + eq(id) + "&source_hash=" + eq(h) + "&version=eq." + VERSION;
   const [job] = await rest(TABLE, key + "&select=status,available_at,attempts");
   if (!job) return { status: "not_queued" };
   if (
@@ -92,4 +93,4 @@ async function processReview(id) {
     throw Error(code);
   }
 }
-module.exports = { rest, processReview, TABLE };
+module.exports = { rest, processReview, TABLE, VERSION };

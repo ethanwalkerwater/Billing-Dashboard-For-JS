@@ -48,15 +48,16 @@ export async function workflow(method: string, path: string, query: Record<strin
   }
   if (method === "POST" && path === "/decision") {
     const b = object(raw);
-    const action = matched(b.action, /^(confirm|refer|dismiss|close)$/, "请选择处理方式");
+    const action = matched(b.action, /^(confirm|refer|dismiss|close|resolve_confirm|resolve_dismiss)$/, "请选择处理方式");
     const expected = matched(b.expectedState, /^(open|follow)$/, "事项状态无效");
-    if ((action === "close") !== (expected === "follow")) return invalid("此操作不适用于当前状态");
+    const completesFollow = ["close", "resolve_confirm", "resolve_dismiss"].includes(action);
+    if (completesFollow !== (expected === "follow")) return invalid("此操作不适用于当前状态");
     if (!Number.isSafeInteger(b.version) || Number(b.version) < 1 || Number(b.version) > 2147483647) return invalid("分析版本无效");
     return write("fupan_decide", {
       p_lesson: lessonId(b.lessonId), p_hash: matched(b.sourceHash, /^[0-9a-f]{64}$/, "转写版本无效"),
-      p_version: b.version, p_finding: matched(b.findingId, /^(?:[0-9a-f]{20}|rule-(?:missing|overtime|offtopic|management))$/, "事项编号无效"),
+      p_version: b.version, p_finding: matched(b.findingId, /^(?:[0-9a-f]{20}|rule-(?:missing|overtime|offtopic|management|transcript-missing|audio-offset))$/, "事项编号无效"),
       p_action: action, p_expected: expected,
-      p_note: text(b.note, 4000, "请填写不超过 4000 字的处理说明", action === "dismiss" || action === "close"),
+      p_note: text(b.note, 4000, "请填写不超过 4000 字的处理说明", action === "dismiss" || completesFollow),
       p_owner: text(b.owner, 80, "请填写不超过 80 字的跟进负责人", action === "refer"),
       p_actor: actor.openId, p_by: actor.name,
     });

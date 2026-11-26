@@ -158,6 +158,9 @@ test("教学统计迁移、录音时间边界、课表和权限", { skip: hasPos
       env,
       stdio: "pipe",
     });
+    for (const file of ["../migrations/202611200006_fupan_history.sql", "../migrations/202611220003_fupan_signal_rules.sql", "./fupan-signal-rules.sql"]) {
+      execFileSync("psql", [...args, "-f", fileURLToPath(new URL(file, import.meta.url))], {env, stdio:"pipe"});
+    }
   } finally {
     if (started) execFileSync("pg_ctl", ["-D", data, "-m", "immediate", "-w", "stop"]);
     rmSync(dir, { recursive: true, force: true });

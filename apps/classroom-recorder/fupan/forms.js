@@ -2,6 +2,7 @@ import {
   esc,
   timestamp,
   badge,
+  relatedCourses,
   historicalEvidence,
   historicalStatus,
 } from "./ui.js";
@@ -49,13 +50,17 @@ function openForm(title, summary, fields, save, label = "保存") {
 }
 
 export function reviewForm(item, api, refresh, play) {
-  const follow = item.state === "follow",
-    missing = item.category === "录音缺失";
-  const options = missing
-    ? [
-        ["refer", "转办设备检查或提醒开录"],
-        ["dismiss", "排除（调课或停课）"],
-      ]
+  const follow = item.state === "follow";
+  const subject = item.category === "知识讲解与纠错";
+  const equipment = item.findingId === "rule-missing" || ["录音与转写", "录音缺失"].includes(item.category);
+  const options = follow
+    ? (subject && item.result === "refer"
+        ? [["resolve_confirm", "学科核对后确认"], ["resolve_dismiss", "学科核对后排除"]]
+        : [])
+    : subject
+    ? [["refer", "交学科老师核对"], ["dismiss", "排除"]]
+    : equipment
+    ? [["refer", "转办设备或转写检查"], ["dismiss", "排除"]]
     : [
         ["record", "确认，记录在案"],
         ["talk", "确认，安排跟进"],
@@ -63,9 +68,10 @@ export function reviewForm(item, api, refresh, play) {
         ["refer", "转办，暂不确认"],
       ];
   const summary = `<p>${item.historical ? badge("历史版本") + " " : ""}${badge(item.priority)} ${esc(item.category)} · ${esc(item.title)}</p>
-    ${item.check ? '<p class="sm muted">' + esc(item.check) + "</p>" : ""}
+    ${item.check ? '<p class="sm muted preserve">' + esc(item.check) + "</p>" : ""}
+    ${relatedCourses(item)}
     ${item.historical ? historicalEvidence(item) + '<p class="sm muted">' + historicalStatus(item) + "</p>" : (item.evidence || []).map((e, i) => '<div class="qline"><button class="ev" data-evidence="' + i + '">' + timestamp(e.start) + "</button><small>" + esc(e.speaker) + "</small><span>" + esc(e.text) + "</span></div>").join("")}`;
-  const choices = follow
+  const choices = !options.length
     ? ""
     : "<fieldset><legend>复核结果</legend>" +
       options
@@ -91,7 +97,7 @@ export function reviewForm(item, api, refresh, play) {
     summary,
     fields,
     async (data) => {
-      const choice = follow ? "close" : data.get("action");
+      const choice = options.length ? data.get("action") : "close";
       const action = ["record", "talk"].includes(choice) ? "confirm" : choice;
       await api("/decision", null, {
         lessonId: item.lessonId,
