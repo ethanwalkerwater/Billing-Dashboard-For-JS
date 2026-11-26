@@ -503,12 +503,20 @@ async function finishLesson(event: HttpEvent, session: Session, id: string) {
     .filter((p: any) => Number.isFinite(Date.parse(p?.start)) && Date.parse(p?.end) > Date.parse(p?.start))
     .slice(0, 200)
     .map((p: any) => ({ start: String(p.start), end: String(p.end) }));
+  // 麦克风各声道原始音量（0.1.15 起），排查 Windows 阵列麦空声道/反相用
+  const m = body.mic && typeof body.mic === "object" ? body.mic : null;
+  const mic = m && {
+    name: String(m.name ?? "").slice(0, 80), os: String(m.os ?? "").slice(0, 16), rate: Number(m.rate) || 0,
+    chDb: (Array.isArray(m.chDb) ? m.chDb : []).slice(0, 16).map(Number).filter(Number.isFinite),
+    ...(Number.isFinite(m.corr) ? { corr: m.corr } : {}),
+  };
   const finish = {
     startedAt: String(body.startedAt), endedAt: String(body.endedAt),
     segments: segments.map((s: any) => ({ seq: s.seq, sha256: String(s.sha256), bytes: Number(s.bytes) || 0 })),
     ...(pauses.length ? { pauses } : {}),
     ...(audio ? { audio: { sha256: String(audio.sha256), bytes: audio.bytes } } : {}),
     ...(parts ? { parts } : {}),
+    ...(mic ? { mic } : {}),
   };
   // 随时录制：老师结束时填的主题和类型，起止时间以 App 实际录制为准
   const adhoc = L.isAdhocId(id)
