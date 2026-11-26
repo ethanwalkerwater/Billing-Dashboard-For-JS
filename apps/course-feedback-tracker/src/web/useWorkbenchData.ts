@@ -3,7 +3,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { assertTaskStatusTransition, nameMatchKey, ownerResolver } from "@/domain";
 import type { OwnerAssignment, TaskStatus } from "@/domain";
 import type { StoredFeedbackTask } from "@/server/tasks/types";
-import { ALIASES_TABLE, EXCLUDED_TEACHERS_TABLE, OWNER_ASSIGNMENTS_TABLE, RESPONSES_TABLE, TASKS_TABLE } from "@/shared/rdb";
+import {
+  ALIASES_TABLE,
+  EXCLUDED_STUDENTS_TABLE,
+  EXCLUDED_TEACHERS_TABLE,
+  OWNER_ASSIGNMENTS_TABLE,
+  RESPONSES_TABLE,
+  TASKS_TABLE,
+} from "@/shared/rdb";
 import { db, taskRepository } from "./cloudbase";
 
 /** 对不上任务的答卷，顶部横幅和手动绑定都用它。 */
@@ -35,7 +42,7 @@ export interface MonthSummary {
   unlinked: number;
 }
 
-export type SortKey = "student" | "teacher" | "status" | "activity";
+export type SortKey = "student" | "teacher" | "status";
 
 export interface Filters {
   status: TaskStatus | "all";
@@ -75,26 +82,30 @@ export function useWorkbenchData(collectionMonth: string) {
   const [responses, setResponses] = useState<ResponseRow[]>([]);
   /** 不参与统计的老师（课表规范名），所有月份通用 */
   const [excludedTeachers, setExcludedTeachersState] = useState<string[]>([]);
+  /** 不参与统计的学生，所有月份通用 */
+  const [excludedStudents, setExcludedStudentsState] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const reload = useCallback(async () => {
+  const reload = useCallback(async (): Promise<StoredFeedbackTask[]> => {
     setLoading(true);
     try {
-      const [taskRows, responseRows, excludedRows, ownerRows] = await Promise.all([
+      const [taskRows, responseRows, excludedTeacherRows, excludedStudentRows, ownerRows] = await Promise.all([
         taskRepository.listByCollectionMonth(collectionMonth),
         db
           .from(RESPONSES_TABLE)
           .select<ResponseRow>("response_record_id,task_id,student_name,teacher_name,identity,submitted_at,sync_status")
           .eq("collection_month", collectionMonth),
         db.from(EXCLUDED_TEACHERS_TABLE).select<{ teacher_name: string }>("teacher_name"),
+        db.from(EXCLUDED_STUDENTS_TABLE).select<{ student_name: string }>("student_name"),
         // ponytail: 负责人设定整表读（只存手动设的那次，几百行）；上万行再按学生过滤
         db.from(OWNER_ASSIGNMENTS_TABLE).select<OwnerRow>("student_record_id,teacher_canonical_name,from_month,owner"),
       ]);
       if (responseRows.error) throw new Error(responseRows.error.message);
-      if (excludedRows.error) throw new Error(excludedRows.error.message);
+      if (excludedTeacherRows.error) throw new Error(excludedTeacherRows.error.message);
+      if (excludedStudentRows.error) throw new Error(excludedStudentRows.error.message);
       if (ownerRows.error) throw new Error(ownerRows.error.message);
-      if (currentMonth.current !== collectionMonth) return;
+      if (currentMonth.current !== collectionMonth) return [];
 
       setAllTasks(taskRows);
       setOwners(
@@ -106,10 +117,13 @@ export function useWorkbenchData(collectionMonth: string) {
         })),
       );
       setResponses(responseRows.data ?? []);
-      setExcludedTeachersState((excludedRows.data ?? []).map((row) => row.teacher_name));
+      setExcludedTeachersState((excludedTeacherRows.data ?? []).map((row) => row.teacher_name));
+      setExcludedStudentsState((excludedStudentRows.data ?? []).map((row) => row.student_name));
       setError(null);
+      return taskRows;
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
+      return [];
     } finally {
       setLoading(false);
     }
@@ -131,15 +145,22 @@ export function useWorkbenchData(collectionMonth: string) {
     });
   }, [storedTasks, owners]);
 
-  // 不参与统计的老师：任务、答卷都从工作台视图里拿掉，应发、完成率、对不上横幅都不算他们。
+  // 不参与统计的老师 / 学生：任务、答卷都从工作台视图里拿掉，应发、完成率、对不上横幅都不算他们。
   const { tasks, unlinked, duplicates, summary } = useMemo(() => {
-    const excludedKeys = new Set(excludedTeachers.map(nameMatchKey));
-    const isExcluded = (task: StoredFeedbackTask) => excludedKeys.has(nameMatchKey(task.teacherCanonicalName));
+    const excludedTeacherKeys = new Set(excludedTeachers.map(nameMatchKey));
+    const excludedStudentKeys = new Set(excludedStudents.map(nameMatchKey));
+    const isExcluded = (task: StoredFeedbackTask) =>
+      excludedTeacherKeys.has(nameMatchKey(task.teacherCanonicalName)) ||
+      excludedStudentKeys.has(nameMatchKey(task.studentName));
     const tasks = allTasks.filter((task) => !isExcluded(task));
     const hiddenTaskIds = new Set(allTasks.filter(isExcluded).map((task) => task.taskId));
-    const visible = responses.filter((row) =>
-      row.task_id ? !hiddenTaskIds.has(row.task_id) : !excludedKeys.has(nameMatchKey(row.teacher_name ?? "")),
-    );
+    const visible = responses.filter((row) => {
+      if (row.task_id) return !hiddenTaskIds.has(row.task_id);
+      return (
+        !excludedTeacherKeys.has(nameMatchKey(row.teacher_name ?? "")) &&
+        !excludedStudentKeys.has(nameMatchKey(row.student_name ?? ""))
+      );
+    });
     const unlinked: UnlinkedResponse[] = visible
       .filter((row) => row.sync_status === "unlinked")
       .map((row): UnlinkedResponse => ({
@@ -175,7 +196,7 @@ export function useWorkbenchData(collectionMonth: string) {
       unlinked: unlinked.length,
     };
     return { tasks, unlinked, duplicates, summary: loading && allTasks.length === 0 ? null : summary };
-  }, [allTasks, responses, excludedTeachers, loading]);
+  }, [allTasks, responses, excludedTeachers, excludedStudents, loading]);
 
   /** 改「不参与统计的老师」名单：多选框给出完整新名单，这里算出增删。 */
   const setExcludedTeachers = useCallback(
@@ -197,6 +218,28 @@ export function useWorkbenchData(collectionMonth: string) {
       setExcludedTeachersState(next);
     },
     [excludedTeachers],
+  );
+
+  /** 改「不参与统计的学生」名单：多选框给出完整新名单，这里算出增删。 */
+  const setExcludedStudents = useCallback(
+    async (next: string[]) => {
+      const current = new Set(excludedStudents);
+      const wanted = new Set(next);
+      const added = next.filter((name) => !current.has(name));
+      const removed = excludedStudents.filter((name) => !wanted.has(name));
+      if (added.length > 0) {
+        const result = await db
+          .from(EXCLUDED_STUDENTS_TABLE)
+          .upsert(added.map((student_name) => ({ student_name, created_by: "workbench" })), { onConflict: "student_name" });
+        if (result.error) throw new Error(`保存不统计学生失败：${result.error.message}`);
+      }
+      if (removed.length > 0) {
+        const result = await db.from(EXCLUDED_STUDENTS_TABLE).delete().in("student_name", removed);
+        if (result.error) throw new Error(`恢复统计学生失败：${result.error.message}`);
+      }
+      setExcludedStudentsState(next);
+    },
+    [excludedStudents],
   );
 
   /** 批量改状态。有答卷的任务不允许退回未完成，跳过而不是整批报错。 */
@@ -319,6 +362,8 @@ export function useWorkbenchData(collectionMonth: string) {
     summary,
     excludedTeachers,
     setExcludedTeachers,
+    excludedStudents,
+    setExcludedStudents,
     loading,
     error,
     reload,
@@ -332,10 +377,6 @@ export function useWorkbenchData(collectionMonth: string) {
 /** 一行任务的显示状态：有答卷即"已评"，与数据库 status 保持一致但更直白。 */
 export function respondedBy(task: StoredFeedbackTask): { student: boolean; parent: boolean } {
   return { student: Boolean(task.studentResponseId), parent: Boolean(task.parentResponseId) };
-}
-
-export function lastActivityAt(task: StoredFeedbackTask): string | undefined {
-  return task.submittedAt ?? task.sentAt;
 }
 
 export function filterTasks(tasks: StoredFeedbackTask[], filters: Filters): StoredFeedbackTask[] {
@@ -372,8 +413,6 @@ export function sortTasks(tasks: StoredFeedbackTask[], key: SortKey, asc: boolea
         return left.teacherCanonicalName.localeCompare(right.teacherCanonicalName, "zh-CN");
       case "status":
         return STATUS_ORDER[left.status] - STATUS_ORDER[right.status];
-      case "activity":
-        return (lastActivityAt(left) ?? "").localeCompare(lastActivityAt(right) ?? "");
     }
   };
   return [...tasks].sort((left, right) => {

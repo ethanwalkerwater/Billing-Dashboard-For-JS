@@ -1,0 +1,312 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>月度反馈 · 菁仕页面直接填写（方案 Demo）</title>
+<style>
+:root{color-scheme:light;--ink:#18181b;--muted:#52525b;--line:#e4e4e7;--blue:#1d4ed8;--bluebg:#eff6ff;--orange:#c2410c;--orangebg:#fff7ed;--bg:#fafafa}
+*{box-sizing:border-box}
+body{margin:0;background:#e9e9ec;color:var(--ink);font:15px/1.55 -apple-system,"PingFang SC","Helvetica Neue",sans-serif}
+.phone{width:393px;max-width:100%;min-height:100vh;margin:0 auto;background:var(--bg);position:relative;box-shadow:0 0 0 1px var(--line)}
+.wx{position:sticky;top:0;z-index:20;background:#ededed;height:44px;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:600;border-bottom:1px solid #ddd}
+.wx::before{content:"✕";position:absolute;left:16px;font-weight:400}
+.wx::after{content:"···";position:absolute;right:16px}
+header{position:sticky;top:44px;z-index:10;background:#fff;border-bottom:1px solid var(--line);padding:8px 16px 6px}
+.top{display:flex;justify-content:space-between;align-items:center;font-size:14px}
+.top h1{font-size:14px;margin:0}
+.top span{font-size:12px;font-variant-numeric:tabular-nums}
+.tabs{display:flex;gap:6px;overflow-x:auto;padding:6px 0 2px}
+.tab{flex:none;min-width:84px;min-height:44px;border:1px solid var(--line);border-radius:8px;background:#fff;font:inherit;font-size:12px;padding:4px 8px;display:flex;flex-direction:column;align-items:center;cursor:pointer}
+.tab b{font-size:13px}
+.tab[aria-selected=true]{border-color:var(--blue);background:var(--bluebg)}
+.tab .done{color:var(--blue)}
+main{padding:10px 16px 140px}
+h2{font-size:15px;margin:0 0 8px}
+.note{font-size:13px;color:var(--muted);margin:0 0 8px}
+.status{background:var(--bluebg);color:#1e3a8a;border-radius:8px;padding:8px 12px;font-size:14px;margin-bottom:10px}
+.alert{background:var(--orangebg);color:#7c2d12;border-radius:8px;padding:8px 12px;font-size:14px;margin-bottom:6px}
+.q{background:#fff;border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:10px;scroll-margin-top:150px}
+.q.miss{border:2px solid var(--orange)}
+.q .t{font-weight:600;margin-bottom:8px;display:flex;gap:6px}
+.q .t i{font-style:normal;color:var(--muted);font-weight:500;flex:none}
+.req{flex:none;align-self:flex-start;font-size:11px;font-weight:600;color:var(--orange);border:1px solid #fdba74;border-radius:4px;padding:0 4px;margin-top:2px}
+.miss-text{color:var(--orange);font-size:13px;font-weight:600;margin-top:6px}
+.miss-text::before{content:"▲ "}
+.opt{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border:1px solid var(--line);border-radius:8px;margin-top:6px;cursor:pointer;font-size:14px}
+.opt:has(input:checked){border-color:var(--blue);background:var(--bluebg)}
+.opt input{margin-top:3px;accent-color:var(--blue);flex:none}
+.opt:has(input:disabled){color:#a1a1aa;cursor:not-allowed}
+.ids{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.ids .opt{margin:0;justify-content:center;min-height:48px;align-items:center;font-weight:600}
+.other,textarea{width:100%;font:inherit;font-size:14px;border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin-top:6px}
+textarea{min-height:84px;resize:vertical}
+.bar{position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:393px;max-width:100%;background:var(--bg);border-top:1px solid var(--line);padding:8px 16px calc(10px + env(safe-area-inset-bottom));z-index:15}
+.btn{width:100%;min-height:46px;border:0;border-radius:8px;background:var(--ink);color:#fff;font:inherit;font-weight:600;cursor:pointer}
+.btn:disabled{opacity:.6}
+.btn.outline{background:#fff;color:var(--ink);border:1px solid var(--line)}
+.row{display:flex;gap:8px}
+.row .btn{flex:1}
+.done-list .q{display:flex;justify-content:space-between}
+/* 感谢礼弹窗（照 FeedbackThanksDialog） */
+.mask{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:40;display:flex;align-items:flex-end;justify-content:center}
+.sheet{width:393px;max-width:100%;background:#fff;border-radius:14px 14px 0 0;padding:18px 16px calc(16px + env(safe-area-inset-bottom))}
+.sheet h3{margin:0 0 4px;font-size:17px}
+.sheet p{margin:0 0 12px;color:var(--muted);font-size:14px}
+.gifts{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px}
+.gift{border:1px solid var(--line);border-radius:10px;padding:10px;text-align:left;background:#fff;font:inherit;cursor:pointer}
+.gift[aria-pressed=true]{border-color:var(--blue);background:var(--bluebg)}
+.gift b{display:block;font-size:14px}
+.gift span{font-size:12px;color:var(--muted)}
+/* 调场景 */
+.lab{position:fixed;left:12px;bottom:12px;z-index:50;font-size:13px}
+.lab summary{cursor:pointer;background:#fff;border:1px solid var(--line);border-radius:8px;padding:6px 12px;list-style:none;font-weight:600}
+.lab div{position:absolute;bottom:calc(100% + 6px);left:0;box-shadow:0 4px 16px rgba(0,0,0,.12);background:#fff;border:1px solid var(--line);border-radius:8px;padding:8px;margin-bottom:6px;display:grid;gap:4px;width:220px}
+.lab button{font:inherit;font-size:13px;text-align:left;border:1px solid var(--line);background:#fff;border-radius:6px;padding:6px 8px;cursor:pointer}
+.lab label{display:flex;gap:6px;align-items:center;padding:4px 2px}
+@media (max-width:700px){.lab{bottom:150px;left:auto;right:6px;opacity:.9}.lab summary{padding:4px 8px;font-size:12px}.lab div{left:auto;right:0}}
+</style>
+</head>
+<body>
+<div class="phone">
+  <div class="wx" id="wxTitle">11月 · 小禾 · 月度反馈</div>
+  <header>
+    <div class="top"><h1 id="title"></h1><span id="count"></span></div>
+    <div class="tabs" role="tablist" id="tabs"></div>
+  </header>
+  <main id="main"></main>
+</div>
+<div class="bar" id="bar" hidden></div>
+<div id="dialog"></div>
+
+<details class="lab" id="lab">
+  <summary>调场景</summary>
+  <div>
+    <button data-s="normal">① 本月 3 位老师，周老师家长已评</button>
+    <button data-s="draft">② 中途退出后重开（恢复草稿）</button>
+    <button data-s="closed">③ 本月反馈已结束</button>
+    <button data-s="all">④ 全部提交完</button>
+    <label><input type="checkbox" id="fail">下一次提交失败（网络断开）</label>
+    <label><input type="checkbox" id="nogift">本月没有启用感谢礼</label>
+  </div>
+</details>
+
+<script>
+// 题目和选项照线上飞书问卷「课程反馈问卷」（2026-11-25 读取）；只是文字去掉了（必填）（选填）前缀。
+const single = 1, multi = 2, text = 3;
+const ID_Q = { id: "身份", title: "您的身份", type: single, req: true, opts: ["学生本人", "家长/监护人"] };
+const BRANCH = {
+  "学生本人": [
+    { id: "【学生】学习提升效果", title: "这段时间的课程，对您的成绩提升帮助有多大？", type: single, req: true,
+      opts: ["帮助非常大，进步明显", "帮助较大，有一定提升", "帮助一般，提升有限", "帮助不大，收获较少"] },
+    { id: "【学生】责任心与服务态度", title: "在整个课程期间，老师是否始终认真负责、态度热情、服务周到？", type: single, req: true,
+      opts: ["是的，始终如此，非常满意", "大部分时候能做到，整体良好", "偶尔有所欠缺，但总体尚可", "有较明显的不足，希望改进"] },
+    { id: "【学生】个人魅力", title: "您觉得这位老师的个人教学魅力如何？", type: single, req: true,
+      opts: ["非常出色，深深吸引我投入学习", "较好，能够调动我的学习兴趣", "一般，课堂氛围较为平淡", "有待提升，较难引发我的学习热情"] },
+    { id: "【学生】改进方面", title: "在日常学习过程中，您希望老师可以在哪些方面进一步提升？", type: multi, req: false,
+      opts: ["已经很好了，没有需要提升的", "更得体的着装形象与职业气质", "更注重个人气味管理，保持清新的课堂气息", "更温和、鼓励性的语言表达方式", "更个性化地了解我的学习习惯与心理状态", "更灵活地调整教学节奏，适应我的学习状态", "更能激发我的学习主动性与自信心", "更加得体、更有分寸的谈吐", "其他"] },
+  ],
+  "家长/监护人": [
+    { id: "【家长】学习提升效果", title: "这段时间的课程，您认为对孩子的成绩提升帮助有多大？", type: single, req: true,
+      opts: ["帮助非常大，孩子进步明显", "帮助较大，孩子有一定提升", "帮助一般，提升较为有限", "帮助不大，收获较少"] },
+    { id: "【家长】责任心与服务态度", title: "在整个课程期间，您感受到老师是否始终认真负责、态度热情、服务周到？", type: single, req: true,
+      opts: ["是的，始终如此，非常满意", "大部分时候能做到，整体良好", "偶尔有所欠缺，但总体尚可", "有较明显的不足，希望改进"] },
+    { id: "【家长】个人魅力", title: "您认为这位老师对学生的教学影响力如何？", type: single, req: true,
+      opts: ["影响力非常显著，孩子在学习态度、思维方式和成绩上均有明显改变", "影响力较为积极，孩子的学习状态和兴趣有所提升", "影响力一般，孩子暂未呈现出明显的改变", "影响力有待加强，孩子的学习状态未见明显改善"] },
+    { id: "顾问", title: "顾问老师（Tinko）是否及时帮助学生优化课程安排？", type: single, req: true,
+      opts: ["已经很好了，不需要提升", "对沟通效率总体满意，但可以沟通更频繁", "基本满意，但可以更少打扰", "沟通稍有欠缺，建议多加反馈和沟通", "沟通太多，建议少打扰"] },
+    { id: "【家长】改进方面", title: "在孩子的日常学习过程中，您希望老师可以在哪些方面进一步提升？", type: multi, req: false,
+      opts: ["已经很好了，没有需要提升的", "更得体的着装形象与职业气质", "更温和、鼓励性的语言表达方式", "更个性化地了解孩子的学习习惯与心理状态", "课后能主动提供学习反馈和阶段性总结", "更灵活地调整教学节奏，适应孩子的学习状态", "更能激发孩子的学习主动性与自信心", "其他"] },
+  ],
+};
+const SHARED = [
+  { id: "上课风格", title: "您如何评价这位老师的整体授课风格？", type: single, req: false,
+    opts: ["风趣幽默型 — 课堂氛围轻松活跃，善于调动学习热情", "严谨专注型 — 讲解严密深入，注重知识的系统性与准确性，课堂专注高效", "其他"] },
+  { id: "教学节奏", title: "您如何评价这位老师的教学进度与节奏把控？", type: multi, req: false,
+    opts: ["高效紧凑型 — 知识点覆盖全面、推进迅速，适合基础扎实、学习节奏快的学生", "稳扎稳打型 — 讲解细致充分、循序渐进，注重每个知识点的理解与消化", "其他"] },
+  { id: "课堂互动", title: "您如何评价这位老师的课堂教学方式？", type: single, req: false,
+    opts: ["系统讲授型 — 以老师讲解为主，知识体系完整、逻辑清晰，内容输出充分", "互动引导型 — 注重师生双向交流，善于通过提问、讨论引导学生主动思考"] },
+  { id: "建议", title: "如果您可以对我们提一个最希望改进的建议，您最想说的是什么？", type: text, req: false },
+];
+const GIFTS = [["请老师喝一杯", "辛苦了，放松一下"], ["送老师一束花", "感谢您的用心"], ["给老师一点甜", "谢谢您的耐心陪伴"], ["为老师送上荣誉", "感谢您的专业指导"]];
+const NOTES = ["感谢老师的耐心与负责", "孩子最近进步很明显", "老师的教学方式很适合孩子", "感谢老师课后的及时反馈"];
+
+const fresh = () => ({
+  closed: false,
+  teachers: [
+    { id: "chen", name: "陈老师", courses: ["小学数学", "奥数思维"], student: false, parent: false },
+    { id: "xu", name: "许老师", courses: ["英语阅读"], student: false, parent: false },
+    { id: "zhou", name: "周老师", courses: ["语文"], student: false, parent: true },
+  ],
+});
+let S, sel, answers, missing = [], status = "", error = "", busy = false;
+const draftKey = id => "demo.v4.draft." + id;
+
+function load(scene) {
+  S = fresh(); status = error = ""; missing = [];
+  Object.keys(localStorage).filter(k => k.startsWith("demo.v4.")).forEach(k => localStorage.removeItem(k));
+  if (scene === "closed") S.closed = true;
+  if (scene === "all") S.teachers.forEach(t => { t.student = true; t.parent = t.id === "zhou"; });
+  if (scene === "draft") {
+    localStorage.setItem(draftKey("chen"), JSON.stringify({ "身份": "学生本人", "【学生】学习提升效果": "帮助较大，有一定提升" }));
+  }
+  sel = S.teachers.find(t => !t.student && !t.parent)?.id ?? S.teachers.find(t => !(t.student && t.parent))?.id ?? "";
+  openTeacher(sel, scene === "draft");
+}
+function openTeacher(id, announce) {
+  sel = id; missing = []; error = "";
+  answers = JSON.parse(localStorage.getItem(draftKey(id)) || "{}");
+  // 同一个人连着评几位老师：沿用上一次选的身份（这位老师该身份已提交时不沿用）
+  const t = S.teachers.find(x => x.id === id), last = localStorage.getItem("demo.v4.identity");
+  if (t && !answers["身份"] && last && !(last === "学生本人" ? t.student : t.parent)) answers = { "身份": last };
+  if (announce && Object.keys(answers).length) status = "已恢复上次填写的内容。";
+  render(); scrollTo(0, 0);
+}
+const save = () => localStorage.setItem(draftKey(sel), JSON.stringify(answers));
+const label = t => t.student && t.parent ? "双方已评" : t.student ? "学生已评" : t.parent ? "家长已评" : "待评价";
+const doneCount = () => S.teachers.filter(t => t.student || t.parent).length;
+const questions = () => answers["身份"] ? [ID_Q, ...BRANCH[answers["身份"]], ...SHARED] : [ID_Q];
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+function render() {
+  const t = S.teachers.find(x => x.id === sel);
+  document.getElementById("title").textContent = "11月 · 小禾 · 月度反馈";
+  document.getElementById("count").textContent = `已提交 ${doneCount()}/${S.teachers.length}`;
+  document.getElementById("tabs").innerHTML = S.teachers.map(x => {
+    const done = x.student || x.parent;
+    return `<button class="tab" role="tab" aria-selected="${x.id === sel}" data-t="${x.id}" ${busy ? "disabled" : ""}>
+      <b>${x.name}</b><span class="${done ? "done" : ""}">${done ? "✓" : "○"} ${label(x)}</span></button>`;
+  }).join("");
+  const main = document.getElementById("main"), bar = document.getElementById("bar");
+  const head = status ? `<p class="status" role="status">${status}</p>` : "";
+  if (!t) {
+    bar.hidden = true;
+    main.innerHTML = head + `<h2>本月反馈已全部提交</h2><div class="done-list">` +
+      S.teachers.map(x => `<div class="q"><b>${x.name}</b><span>✓ ${label(x)}</span></div>`).join("") + `</div>`;
+    return;
+  }
+  main.innerHTML = head + `<h2>${t.courses.join("、")}</h2>`;
+  if (t.student && t.parent) { bar.hidden = true; main.innerHTML += `<p class="note">学生和家长都已提交反馈。</p>`; return; }
+  if (S.closed) { bar.hidden = true; main.innerHTML += `<p class="note">本月反馈已结束。</p>`; return; }
+  if (t.student || t.parent) main.innerHTML += `<p class="note">${t.student ? "学生已提交，家长仍可填写。" : "家长已提交，学生仍可填写。"}</p>`;
+  main.innerHTML += questions().map((q, i) => card(q, i, t)).join("");
+  bar.hidden = false;
+  bar.innerHTML = (error ? `<p class="alert" role="alert">${error}</p>` : "") +
+    `<button class="btn" id="submit" ${busy ? "disabled" : ""}>${busy ? "正在提交…" : `提交对${t.name}的评价`}</button>`;
+}
+function card(q, i, t) {
+  const v = answers[q.id], miss = missing.includes(q.id);
+  let body;
+  if (q === ID_Q) {
+    body = `<div class="ids">` + q.opts.map(o => {
+      const done = o === "学生本人" ? t.student : t.parent;
+      return `<label class="opt"><input type="radio" name="${q.id}" value="${o}" ${v === o ? "checked" : ""} ${done ? "disabled" : ""}>${o}${done ? "（已提交）" : ""}</label>`;
+    }).join("") + `</div>`;
+  } else if (q.type === text) {
+    body = `<textarea data-q="${q.id}" maxlength="500" placeholder="请输入内容">${esc(v || "")}</textarea>`;
+  } else {
+    const kind = q.type === multi ? "checkbox" : "radio";
+    body = q.opts.map(o => {
+      const on = q.type === multi ? (v || []).includes(o) : v === o;
+      return `<label class="opt"><input type="${kind}" name="${q.id}" value="${esc(o)}" ${on ? "checked" : ""}><span>${o}</span></label>`;
+    }).join("");
+    const otherOn = q.type === multi ? (v || []).includes("其他") : v === "其他";
+    if (otherOn) body += `<input class="other" data-other="${q.id}" placeholder="请补充其他内容" value="${esc(answers[q.id + "-其他"] || "")}">`;
+  }
+  const num = q === ID_Q ? "" : `<i>${i}.</i>`;
+  return `<section class="q ${miss ? "miss" : ""}" id="q-${i}">
+    <div class="t">${num}<span style="flex:1">${q.title}</span>${q.req ? `<span class="req">必填</span>` : ""}</div>
+    ${body}${miss ? `<div class="miss-text">${q === ID_Q ? "请先选择身份" : "请选择一项"}</div>` : ""}</section>`;
+}
+
+document.addEventListener("change", e => {
+  const el = e.target;
+  if (el.closest(".lab")) return;
+  if (el.name === "身份") { answers = { "身份": el.value }; }
+  else if (el.type === "radio") answers[el.name] = el.value;
+  else if (el.type === "checkbox") {
+    const set = new Set(answers[el.name] || []);
+    el.checked ? set.add(el.value) : set.delete(el.value);
+    answers[el.name] = [...set];
+  } else return;
+  missing = missing.filter(m => m !== el.name);
+  status = ""; save(); render();
+});
+document.addEventListener("input", e => {
+  const el = e.target;
+  if (el.dataset.q) answers[el.dataset.q] = el.value;
+  else if (el.dataset.other) answers[el.dataset.other + "-其他"] = el.value;
+  else return;
+  save();
+});
+document.addEventListener("click", e => {
+  const tab = e.target.closest(".tab");
+  if (tab && !busy) { status = ""; openTeacher(tab.dataset.t); return; }
+  const s = e.target.closest("[data-s]");
+  if (s) { document.getElementById("fail").checked = false; load(s.dataset.s); return; }
+  if (e.target.id === "submit") submit();
+});
+
+async function submit() {
+  if (busy) return;
+  missing = questions().filter(q => q.req && !(answers[q.id] && answers[q.id].length)).map(q => q.id);
+  if (missing.length) {
+    error = ""; render();
+    const i = questions().findIndex(q => q.id === missing[0]);
+    document.getElementById("q-" + i).scrollIntoView({ behavior: "smooth", block: "start" });
+    return;
+  }
+  busy = true; error = ""; render();
+  await new Promise(r => setTimeout(r, 900));
+  busy = false;
+  const fail = document.getElementById("fail");
+  if (fail.checked) {
+    fail.checked = false;
+    error = "提交没有成功，填写的内容已保留，请再点一次提交。";
+    render(); return;
+  }
+  const t = S.teachers.find(x => x.id === sel), identity = answers["身份"];
+  identity === "学生本人" ? (t.student = true) : (t.parent = true);
+  localStorage.removeItem(draftKey(sel));
+  localStorage.setItem("demo.v4.identity", identity);
+  if (document.getElementById("nogift").checked) return finish(t, identity, false);
+  thanks(t, identity);
+}
+function next(identity, from) {
+  const order = S.teachers.slice(S.teachers.findIndex(x => x.id === from) + 1).concat(S.teachers);
+  const self = identity === "学生本人" ? "student" : "parent";
+  return order.find(x => !x[self] && !(x.student && x.parent))?.id ?? "";
+}
+function finish(t, identity, sent) {
+  document.getElementById("dialog").innerHTML = "";
+  status = sent ? `已登记给${t.name}的感谢礼，菁仕教育将为您转达。` : `${t.name}的反馈已提交。`;
+  openTeacher(next(identity, t.id));
+}
+function thanks(t, identity) {
+  const d = document.getElementById("dialog");
+  let gift = "", step = 0;
+  const draw = () => {
+    d.innerHTML = `<div class="mask"><div class="sheet" role="dialog" aria-modal="true">` + (step === 0
+      ? `<h3>给${t.name}一份小小的感谢</h3><p>这位老师的评价已提交。礼物我们来准备，您不用花钱。</p>
+         <div class="row"><button class="btn outline" data-a="skip">暂时不用</button><button class="btn" data-a="go">传递感谢</button></div>`
+      : step === 1
+      ? `<h3>选礼物</h3><div class="gifts">${GIFTS.map(([g, s]) => `<button class="gift" data-g="${g}" aria-pressed="${gift === g}"><b>${g}</b><span>${s}</span></button>`).join("")}</div>
+         <div class="row"><button class="btn outline" data-a="skip">暂时不用</button><button class="btn" data-a="note" ${gift ? "" : "disabled"}>选感谢语</button></div>`
+      : `<h3>留感谢语</h3><p>已选礼物：${gift}</p>${NOTES.map((n, i) => `<label class="opt"><input type="radio" name="note" ${i === 0 ? "checked" : ""}>${n}</label>`).join("")}
+         <div class="row" style="margin-top:12px"><button class="btn outline" data-a="back">上一步</button><button class="btn" data-a="send">确认送出</button></div>`) + `</div></div>`;
+  };
+  d.onclick = e => {
+    const g = e.target.closest("[data-g]"); if (g) { gift = g.dataset.g; draw(); return; }
+    const a = e.target.closest("[data-a]")?.dataset.a;
+    if (a === "skip") finish(t, identity, false);
+    if (a === "go") { step = 1; draw(); }
+    if (a === "note") { step = 2; draw(); }
+    if (a === "back") { step = 1; draw(); }
+    if (a === "send") finish(t, identity, true);
+  };
+  draw();
+}
+load(new URLSearchParams(location.search).get("s") || "normal");
+</script>
+</body>
+</html>

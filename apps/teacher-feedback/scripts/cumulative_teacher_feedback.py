@@ -29,7 +29,9 @@ from monthly_teacher_feedback import (
     apply_weights,
     build_teacher_summary,
     coerce_float,
+    filter_excluded_students,
     filter_excluded_teachers,
+    normalize_student,
     finalize_teacher_score_rows,
     generate_monthly_feedback_report,
     load_name_map,
@@ -215,6 +217,7 @@ def rebuild_historical_result_from_detail(
     max_duration_hours: float,
     exclude_course_type_keywords: List[str],
     excluded_teachers: set,
+    excluded_students: Optional[set] = None,
 ) -> Dict[str, object]:
     name_map = load_name_map(name_map_csv)
     (
@@ -240,6 +243,7 @@ def rebuild_historical_result_from_detail(
     # 历史明细里的老师名按当前姓名映射统一，才能和课表课时对上
     for record in feedback_records:
         record.teacher = normalize_teacher(record.teacher, name_map["teacher"])
+        record.student = normalize_student(record.student, name_map["student"])
     raw_feedback_records = [
         {
             "teacher": record.teacher,
@@ -254,6 +258,15 @@ def rebuild_historical_result_from_detail(
         teacher_student_hours=teacher_student_hours,
         raw_feedback_records=raw_feedback_records,
         excluded_teachers=excluded_teachers,
+    )
+    filtered = filter_excluded_students(
+        records=filtered["records"],
+        teacher_total_hours=filtered["teacher_total_hours"],
+        teacher_student_hours=filtered["teacher_student_hours"],
+        raw_feedback_records=filtered["raw_feedback_records"],
+        excluded_students={
+            normalize_student(name, name_map["student"]) for name in (excluded_students or set())
+        },
     )
     feedback_records = filtered["records"]
     teacher_total_hours = filtered["teacher_total_hours"]

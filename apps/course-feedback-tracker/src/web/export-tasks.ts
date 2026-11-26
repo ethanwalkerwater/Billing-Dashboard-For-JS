@@ -1,7 +1,8 @@
 import { TASK_STATUS_LABELS } from "../domain";
 import { toCsv } from "../server/export/csv";
 import type { StoredFeedbackTask } from "../server/tasks/types";
-import { taskFormUrl } from "./qr";
+import { monthlyUrl } from "./monthly-links";
+import type { MonthlyLinks } from "./monthly-links";
 
 const HEADERS = [
   "任务ID",
@@ -12,14 +13,14 @@ const HEADERS = [
   "课程",
   "负责人",
   "状态",
-  "问卷链接",
+  "学生月度反馈链接",
   "发送时间",
   "提交时间",
   "异常信息",
 ];
 
 /** 导出当前筛选范围的任务清单，字段与工作台一一对应，便于复算。 */
-export function buildTasksCsv(tasks: StoredFeedbackTask[]): string {
+export function buildTasksCsv(tasks: StoredFeedbackTask[], links: MonthlyLinks): string {
   return toCsv(
     HEADERS,
     tasks.map((task) => ({
@@ -31,7 +32,7 @@ export function buildTasksCsv(tasks: StoredFeedbackTask[]): string {
       课程: task.courseNames.join("、"),
       负责人: task.owner ?? "",
       状态: TASK_STATUS_LABELS[task.status],
-      问卷链接: taskFormUrl(task),
+      学生月度反馈链接: monthlyUrl(links, task),
       发送时间: task.sentAt ?? "",
       提交时间: task.submittedAt ?? "",
       异常信息: task.validationIssues.join("；"),

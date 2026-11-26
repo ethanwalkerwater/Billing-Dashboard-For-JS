@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import { LIVE_SCORES_FROM, isFinalMonth, recomputeMonth } from "../src/server/scores/recompute";
-import type { ScoreStore, StoredResult } from "../src/server/scores/recompute";
+import type { ScoreHistoryMonth, ScoreStore, StoredResult } from "../src/server/scores/recompute";
 
 function memoryStore(snapshots: Record<string, string>) {
   const results = new Map<string, StoredResult>();
@@ -13,8 +13,9 @@ function memoryStore(snapshots: Record<string, string>) {
     aliases: async () => [],
     teacherNames: async () => ["应雁心"],
     courseTypeOverrides: async () => new Map(),
-    detail: async () => undefined,
+    history: async () => [],
     frozenLessons: async () => [],
+    excludedStudents: async () => [],
   };
   return { store, results };
 }
@@ -54,10 +55,54 @@ describe("stored teacher scores", () => {
     assert.ok("2026-08" < LIVE_SCORES_FROM);
   });
 
+  it("publishes a month early and keeps it final through forced recomputes", async () => {
+    const { store, results } = memoryStore({ "schedule:2026-09": "s", "feedback:2026-10": "f" });
+    const compute = async () => ({ ok: true, teachers: [{ teacher: "应雁心" }], stats: {}, detail: [] });
+    const run = (options: { publish?: boolean; force?: boolean } = {}) =>
+      recomputeMonth({ store, compute, courseMonth: "2026-09", currentMonth: "2026-10", ...options });
+
+    assert.equal(await run(), "computed");
+    assert.equal(results.get("2026-09")?.status, "draft");
+    // 输入没变也要定稿
+    assert.equal(await run({ publish: true }), "computed");
+    assert.equal(results.get("2026-09")?.status, "final");
+    assert.equal(await run(), "final");
+    assert.equal(await run({ force: true }), "computed");
+    assert.equal(results.get("2026-09")?.status, "final");
+  });
+
   it("stores the reason when a month cannot be scored yet", async () => {
     const { store, results } = memoryStore({ "schedule:2026-09": "s", "feedback:2026-10": "f" });
     await recomputeMonth({ store, compute: async () => ({ ok: false, error: "反馈表在提交月份 2026-10 没有数据" }), courseMonth: "2026-09", currentMonth: "2026-10" });
     assert.match(results.get("2026-09")?.error ?? "", /没有数据/);
     assert.deepEqual(results.get("2026-09")?.teachers, []);
+  });
+
+  it("passes all raw historical scores, excludes this month and future, and hashes history changes", async () => {
+    const { store, results } = memoryStore({ "schedule:2026-09": "s", "feedback:2026-10": "f" });
+    const row = { student: "学生甲", teacher: "老师甲", matched: true, scores: { learning_effect_student: 4 } };
+    const history: ScoreHistoryMonth[] = [
+      { course_month: "2026-08", detail: [{ ...row, scores: { learning_effect_student: 5 } }] },
+      { course_month: "2026-01", detail: [row] },
+      { course_month: "2026-09", detail: [row] },
+      { course_month: "2026-10", detail: [row] },
+    ];
+    store.history = async (beforeMonth) => {
+      assert.equal(beforeMonth, "2026-09");
+      return history;
+    };
+    let calls = 0;
+    const run = () => recomputeMonth({ store, courseMonth: "2026-09", currentMonth: "2026-10", compute: async (request) => {
+      calls++;
+      assert.deepEqual(request.priorDetails.map((month) => month.course_month), ["2026-01", "2026-08"]);
+      assert.equal(request.priorDetails[1].detail[0].scores.learning_effect_student, history[0].detail[0].scores.learning_effect_student);
+      return { ok: true, detail: [row] };
+    } });
+    assert.equal(await run(), "computed");
+    assert.equal(await run(), "unchanged");
+    history[0].detail[0].scores.learning_effect_student = 4;
+    assert.equal(await run(), "computed");
+    assert.equal(calls, 2);
+    assert.deepEqual(results.get("2026-09")?.detail, [row]);
   });
 });

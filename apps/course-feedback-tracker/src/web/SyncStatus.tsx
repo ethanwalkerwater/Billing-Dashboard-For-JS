@@ -2,7 +2,7 @@ import { CircleCheck, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 import { cn } from "@/lib/utils";
-import { SNAPSHOTS_TABLE } from "@/shared/rdb";
+import { SYNC_TIMES_VIEW } from "@/shared/rdb";
 import { db } from "./cloudbase";
 import { formatMoment } from "./report-types";
 import type { SyncedAt } from "./report-types";
@@ -12,7 +12,7 @@ const STALE_MS = 10 * 60_000;
 
 /** 这一轮的答卷是不是很久没同步了（从没同步过也算）。 */
 export async function feedbackIsStale(collectionMonth: string): Promise<boolean> {
-  const result = await db.from(SNAPSHOTS_TABLE).select<{ synced_at: string }>("synced_at").eq("kind", "feedback").eq("month", collectionMonth);
+  const result = await db.from(SYNC_TIMES_VIEW).select<{ synced_at: string }>("synced_at").eq("kind", "feedback").eq("month", collectionMonth);
   const at = result.data?.[0]?.synced_at;
   return !at || Date.now() - Date.parse(at) > STALE_MS;
 }
@@ -22,7 +22,7 @@ export function useSyncTimes() {
   const [times, setTimes] = useState<SyncedAt[]>([]);
   const reload = useCallback(async () => {
     const result = await db
-      .from(SNAPSHOTS_TABLE)
+      .from(SYNC_TIMES_VIEW)
       .select<{ kind: SyncedAt["kind"]; month: string; row_count: number; synced_at: string }>("kind,month,row_count,synced_at");
     if (!result.error) {
       setTimes((result.data ?? []).map((row) => ({ kind: row.kind, month: row.month, rowCount: row.row_count, syncedAt: row.synced_at })));

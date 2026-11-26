@@ -6,10 +6,12 @@ import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/ca
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { TASK_STATUS_LABELS, collectionMonthToCourseMonth, shiftMonth } from "@/domain";
+import { monthlyTaskKey, uniqueStudentMonths } from "@/domain/monthly-feedback";
 import type { TaskStatus } from "@/domain";
 import { cn } from "@/lib/utils";
 import type { StoredFeedbackTask } from "@/server/tasks/types";
-import { PageHeader } from "./AppNav";
+import { canViewDetail } from "@/shared/roles";
+import { PageHeader, useRole } from "./AppNav";
 import type { Page } from "./AppNav";
 import { BulkBar } from "./BulkBar";
 import { DuplicateNotice } from "./DuplicateNotice";
@@ -23,8 +25,10 @@ import { TaskTable } from "./TaskTable";
 import { UnmatchedBanner } from "./UnmatchedBanner";
 import { callFeedbackApi } from "./cloudbase";
 import { buildTasksCsv } from "./export-tasks";
+import { loadMonthlyLinks } from "./monthly-links";
 import { downloadBlob, downloadQrZip } from "./qr";
 import type { BatchProgress } from "./qr";
+import { pinNewTasks } from "./task-list";
 import { EMPTY_FILTERS, filterTasks, sortTasks, useTaskCounts, useWorkbenchData } from "./useWorkbenchData";
 import type { SortKey } from "./useWorkbenchData";
 
@@ -96,11 +100,17 @@ export function Workbench({
   const [busy, setBusy] = useState<string | null>(null);
   const [sync, setSync] = useState<SyncSummary | null>(null);
   const [batch, setBatch] = useState<BatchProgress | null>(null);
+  /** 生成名单刚建出的任务：置顶 + 高亮，换月份清空 */
+  const [newTaskIds, setNewTaskIds] = useState<Set<string>>(() => new Set());
   const batchAbort = useRef<AbortController | null>(null);
 
+  const { role } = useRole();
   const data = useWorkbenchData(collectionMonth);
   const syncTimes = useSyncTimes();
-  const visible = useMemo(() => sortTasks(filterTasks(data.tasks, filters), sortKey, sortAsc), [data.tasks, filters, sortKey, sortAsc]);
+  const visible = useMemo(
+    () => pinNewTasks(sortTasks(filterTasks(data.tasks, filters), sortKey, sortAsc), newTaskIds),
+    [data.tasks, filters, sortKey, sortAsc, newTaskIds],
+  );
   // 统计永远基于全部任务：卡片是给教务看当前月份整体状况的指标，点击只筛下面的表格，数字不动。
   const { counts, total, studentDone, parentDone, completionRate } = useTaskCounts(data.tasks);
   const teachers = useMemo(
@@ -111,13 +121,20 @@ export function Workbench({
     () => [...new Set(data.tasks.map((task) => task.studentName))].sort((a, b) => a.localeCompare(b, "zh-CN")),
     [data.tasks],
   );
-  // 包含已排除的老师，即使他这个月没课也能在这里移出名单。
+  // 包含已排除的老师 / 学生，即使这个月没课也能在这里移出名单。
   const allTeachers = useMemo(
     () =>
       [...new Set([...data.allTasks.map((task) => task.teacherCanonicalName), ...data.excludedTeachers])].sort((a, b) =>
         a.localeCompare(b, "zh-CN"),
       ),
     [data.allTasks, data.excludedTeachers],
+  );
+  const allStudents = useMemo(
+    () =>
+      [...new Set([...data.allTasks.map((task) => task.studentName), ...data.excludedStudents])].sort((a, b) =>
+        a.localeCompare(b, "zh-CN"),
+      ),
+    [data.allTasks, data.excludedStudents],
   );
   const monthOptions = useMemo(() => {
     const latest = currentRound();
@@ -144,9 +161,13 @@ export function Workbench({
     }
   }
 
-  async function changeStatus(next: TaskStatus) {
+  async function changeStatus(next: TaskStatus, tasks = selectedTasks) {
     await run(`标记${TASK_STATUS_LABELS[next]}`, async () => {
-      const result = await data.updateStatus(selected, next);
+      const students = new Set(tasks.map(monthlyTaskKey));
+      const ids = next === "sent"
+        ? data.tasks.filter((task) => students.has(monthlyTaskKey(task)) && task.status === "unsent").map((task) => task.taskId)
+        : tasks.map((task) => task.taskId);
+      const result = await data.updateStatus(ids, next);
       setSelected(new Set());
       return `已把 ${result.updated} 份改为「${TASK_STATUS_LABELS[next]}」${result.skipped > 0 ? `，${result.skipped} 份已有答卷未改动` : ""}`;
     });
@@ -160,13 +181,23 @@ export function Workbench({
     });
   }
 
+  async function downloadTasksCsv(tasks: StoredFeedbackTask[], fileName: string) {
+    await run("导出任务清单", async () => {
+      const links = await loadMonthlyLinks(tasks);
+      downloadBlob(new Blob([buildTasksCsv(tasks, links)], { type: "text/csv;charset=utf-8" }), fileName);
+      return `已导出 ${fileName}`;
+    });
+  }
+
   /** 二维码批量生成：进度走弹窗，可中途取消，完成后弹窗明确提示下载好了。 */
   async function zipSelected() {
     const controller = new AbortController();
     batchAbort.current = controller;
     setBusy("下载二维码");
     try {
-      await downloadQrZip(selectedTasks, setBatch, controller.signal);
+      const students = uniqueStudentMonths(selectedTasks);
+      const links = await loadMonthlyLinks(students);
+      await downloadQrZip(students, links, setBatch, controller.signal);
     } catch (cause) {
       setNotice(`下载二维码失败：${cause instanceof Error ? cause.message : String(cause)}`);
       setBatch(null);
@@ -216,7 +247,7 @@ export function Workbench({
 
   return (
     <div className="bg-muted/40 min-h-screen">
-      <div className="mx-auto flex max-w-[1400px] flex-col gap-6 p-6 lg:p-8">
+      <div className="mx-auto flex max-w-[1400px] flex-col gap-5 p-4 sm:p-6 lg:p-8">
         <PageHeader
           page={page}
           onPageChange={onPageChange}
@@ -229,6 +260,7 @@ export function Workbench({
                 setCollectionMonth(value);
                 setSelected(new Set());
                 setSync(null);
+                setNewTaskIds(new Set());
               }}
             >
               <SelectTrigger className="w-52" aria-label="收集月份">
@@ -247,10 +279,14 @@ export function Workbench({
               disabled={busy !== null}
               onClick={() =>
                 void run("生成名单", async () => {
+                  const before = new Set(data.allTasks.map((task) => task.taskId));
                   const result = await callFeedbackApi<SyncSummary>({ action: "sync-tasks", collectionMonth });
                   setSync(result);
-                  await Promise.all([data.reload(), syncTimes.reload()]);
-                  return `名单已更新：新增 ${result.created} · 变更 ${result.updated} · 不变 ${result.unchanged}${result.removed ? ` · 移除 ${result.removed}` : ""}${result.studentsAddedToForm?.length ? ` · 问卷新增学生 ${result.studentsAddedToForm.length}` : ""}`;
+                  const [rows] = await Promise.all([data.reload(), syncTimes.reload()]);
+                  const fresh = new Set(rows.filter((task) => !before.has(task.taskId)).map((task) => task.taskId));
+                  setNewTaskIds(fresh);
+                  const pinned = fresh.size > 0 ? ` · ${fresh.size} 份新增已置顶高亮` : "";
+                  return `名单已更新：新增 ${result.created} · 变更 ${result.updated} · 不变 ${result.unchanged}${result.removed ? ` · 移除 ${result.removed}` : ""}${result.studentsAddedToForm?.length ? ` · 问卷新增学生 ${result.studentsAddedToForm.length}` : ""}${pinned}`;
                 })
               }
             >
@@ -317,7 +353,7 @@ export function Workbench({
                 value={filters.query}
                 onChange={(event) => setFilters((current) => ({ ...current, query: event.target.value }))}
                 placeholder="搜索学生、老师或课程"
-                className="h-8 w-64 pl-8"
+                className="h-8 w-56 pl-8"
               />
             </div>
             <MultiSelectFilter
@@ -325,17 +361,17 @@ export function Workbench({
               options={teachers}
               selected={filters.teachers}
               onChange={(next) => setFilters((current) => ({ ...current, teachers: next }))}
-              className="w-40"
+              className="w-36"
             />
             <MultiSelectFilter
               label="学生"
               options={students}
               selected={filters.students}
               onChange={(next) => setFilters((current) => ({ ...current, students: next }))}
-              className="w-40"
+              className="w-36"
             />
             <Select value={filters.respondent} onValueChange={(value) => setFilters((current) => ({ ...current, respondent: value as typeof current.respondent }))}>
-              <SelectTrigger size="sm" className="w-40">
+              <SelectTrigger size="sm" className="w-36">
                 <SelectValue placeholder="谁评了" />
               </SelectTrigger>
               <SelectContent>
@@ -359,7 +395,25 @@ export function Workbench({
                   return next.length === 0 ? "所有老师都参与统计" : `已排除 ${next.length} 位老师，应发和完成率已不含他们`;
                 })
               }
-              className="w-40"
+              className="w-44"
+            />
+            <MultiSelectFilter
+              label="学生"
+              summary={data.excludedStudents.length === 0 ? "不统计的学生" : `不统计 ${data.excludedStudents.length} 位学生`}
+              options={allStudents}
+              selected={data.excludedStudents}
+              onChange={(next) =>
+                void run("设置不统计学生", async () => {
+                  await data.setExcludedStudents(next);
+                  setSelected(new Set());
+                  // 老师评分覆盖率也按这份名单算；未定稿月份立刻重算
+                  await callFeedbackApi({ action: "recompute-scores", courseMonth: collectionMonthToCourseMonth(collectionMonth) });
+                  return next.length === 0
+                    ? "所有学生都参与统计，老师评分覆盖率已更新"
+                    : `已排除 ${next.length} 位学生，应发、完成率和老师评分覆盖率已不含他们`;
+                })
+              }
+              className="w-44"
             />
             {notice ? <span className="text-muted-foreground ml-2 text-xs">{notice}</span> : null}
             {data.error ? <span className="text-destructive ml-2 text-xs">{data.error}</span> : null}
@@ -371,6 +425,7 @@ export function Workbench({
           <TaskTable
             tasks={visible}
             selected={selected}
+            highlighted={newTaskIds}
             onToggle={(taskId) =>
               setSelected((current) => {
                 const next = new Set(current);
@@ -394,6 +449,7 @@ export function Workbench({
             onOwnerChange={(taskId, owner) =>
               void data.updateOwner([taskId], owner).catch((cause) => setNotice(cause instanceof Error ? cause.message : String(cause)))
             }
+            onStatusChange={(taskId, status) => void changeStatus(status, data.tasks.filter((task) => task.taskId === taskId))}
             sortKey={sortKey}
             sortAsc={sortAsc}
             onSort={toggleSort}
@@ -405,21 +461,18 @@ export function Workbench({
               variant="outline"
               size="sm"
               disabled={busy !== null || visible.length === 0}
-              onClick={() =>
-                void run("导出名单", async () => {
-                  downloadBlob(new Blob([buildTasksCsv(visible)], { type: "text/csv;charset=utf-8" }), `问卷任务-${collectionMonth}.csv`);
-                  return `已导出 ${visible.length} 份`;
-                })
-              }
+              onClick={() => void downloadTasksCsv(visible, `问卷任务-${collectionMonth}.csv`)}
             >
               <Download /> 导出名单
             </Button>
             <Button variant="outline" size="sm" disabled={busy !== null} onClick={() => void downloadCsvFromApi("export-schedule-csv", "导出课表")}>
               <Download /> 导出课表
             </Button>
-            <Button variant="outline" size="sm" disabled={busy !== null} onClick={() => void downloadCsvFromApi("export-feedback-csv", "导出反馈")}>
-              <Download /> 导出反馈
-            </Button>
+            {canViewDetail(role) ? (
+              <Button variant="outline" size="sm" disabled={busy !== null} onClick={() => void downloadCsvFromApi("export-feedback-csv", "导出反馈")}>
+                <Download /> 导出反馈
+              </Button>
+            ) : null}
 
           </div>
         </section>
@@ -444,12 +497,7 @@ export function Workbench({
           })
         }
         onDownloadZip={() => void zipSelected()}
-        onExportCsv={() =>
-          void run("导出选中", async () => {
-            downloadBlob(new Blob([buildTasksCsv(selectedTasks)], { type: "text/csv;charset=utf-8" }), `问卷任务-${collectionMonth}-已选${selectedTasks.length}.csv`);
-            return `已导出 ${selectedTasks.length} 份`;
-          })
-        }
+        onExportCsv={() => void downloadTasksCsv(selectedTasks, `问卷任务-${collectionMonth}-已选${selectedTasks.length}.csv`)}
       />
 
       <QrBatchDialog progress={batch} onCancel={() => batchAbort.current?.abort()} onClose={() => setBatch(null)} />

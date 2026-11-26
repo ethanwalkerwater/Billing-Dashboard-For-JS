@@ -23,7 +23,7 @@ import { FeishuClient } from "../src/server/feishu/client";
 import { loadFeishuConfig } from "../src/server/feishu/config";
 import { parseStudentRecord } from "../src/server/feishu/parsers";
 import { LIVE_SCORES_FROM, recomputeMonth } from "../src/server/scores/recompute";
-import type { PriorDetailRow, ScoreStore, StoredResult } from "../src/server/scores/recompute";
+import type { ScoreHistoryMonth, ScoreStore, StoredResult } from "../src/server/scores/recompute";
 import { computeLocally } from "./compute-locally";
 import { ALIASES_TABLE, RdbFeedbackTaskRepository, SCORE_HISTORY_TABLE, SCORE_RESULTS_TABLE, SNAPSHOTS_TABLE, TASKS_TABLE } from "../src/shared/rdb";
 
@@ -192,12 +192,14 @@ const store: ScoreStore = {
   aliases: async () => aliases,
   teacherNames: async () => teacherNames,
   courseTypeOverrides: () => repository.listCourseTypeOverrides(),
-  detail: async (courseMonth) => {
-    const result = await db.from(SCORE_RESULTS_TABLE).select<{ detail: PriorDetailRow[] }>("detail").eq("course_month", courseMonth);
-    return result.data?.[0]?.detail;
+  history: async (beforeMonth) => {
+    const result = await db.from(SCORE_RESULTS_TABLE).select<ScoreHistoryMonth>("course_month,detail").lt("course_month", beforeMonth).order("course_month");
+    check(result, "读取评分历史");
+    return result.data ?? [];
   },
   // 回填的都是提前评价上线前的月份，没有定稿课时
   frozenLessons: async () => [],
+  excludedStudents: async () => [],
 };
 for (let courseMonth = LIVE_SCORES_FROM; courseMonth < currentMonth; courseMonth = shiftMonth(courseMonth, 1)) {
   const outcome = await recomputeMonth({ store, compute: async (request) => computeLocally({ ...request }), courseMonth, currentMonth, force: true });

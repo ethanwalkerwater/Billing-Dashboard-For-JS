@@ -33,6 +33,7 @@ from monthly_teacher_feedback import (
     normalize_teacher,
     normalize_text,
     parse_datetime,
+    shift_month,
 )
 
 # 与评分脚本默认一致的非授课课程类型（课时不计入权重）
@@ -149,11 +150,13 @@ def with_rank(teachers: List[Dict[str, object]]) -> List[Dict[str, object]]:
 # ---- 4 分算 5 分（业务方 2026-10 定，只用于 LIVE_SCORES_FROM 起实时计算的月份）----
 # 规则 1「连续打 4 分」：同一评价人（学生或家长）给同一老师的同一项，前 3 个月都是 4 分、每个月都有这位老师的课，
 #   本月仍有课又打 4 分 → 本月这一项按 5 分算。前 3 个月看原始分，所以一直打 4 分的人之后每个月都继续算 5 分。
-# 规则 2「评分标准高」：本月给 2 位及以上老师打过分，所有老师所有项都没打过 5 分 → 他的 4 分都按 5 分算，4 分以下不变。
-# 明细里存的始终是原始分，另外记下哪几项被改了（adjusted），下个月判断规则 1 要用原始分。
+# 规则 2「评分标准高」：超过 3 个历史课程月的最高原始分为 4（可不连续），历史从未超过 4，
+#   本月最高原始分仍为 4 → 本月有课的 4 分按 5 分算；学生、家长分开，不要求多位老师。
+# 明细始终存原始分，改算字段另记 adjusted，两条规则下个月都继续用原始分判断。
 ADJUST_DIMS = ("charisma", "learning_effect", "responsibility")
 ADJUST_ROLES = ("student", "parent")
 STREAK_MONTHS = 3
+STRICT_RATER_MONTHS = 4
 
 
 def student_key(name: str, aliases: Dict[str, str]) -> str:
@@ -166,42 +169,65 @@ def is_matched(value: object) -> bool:
     return str(value) in ("1", "True", "true")
 
 
-def score_adjustments(rows: List[Dict[str, object]], prior: List[List[Dict[str, object]]], aliases: List[Dict[str, str]]) -> Dict[int, Dict[str, str]]:
-    """返回 行号 → {分数字段: "streak" | "strict-rater"}；prior 是前 3 个月（由远到近）存下的明细。"""
+def score_adjustments(rows: List[Dict[str, object]], prior: List[Dict[str, object]], aliases: List[Dict[str, str]], course_month: str) -> Dict[int, Dict[str, str]]:
+    """返回 行号 → {分数字段: "streak" | "historical-strict-rater"}；历史只读 scores，忽略 adjusted。"""
     student_aliases = {nfkc(a.get("alias", "")).strip().lower(): nfkc(a.get("canonical", "")) for a in aliases if a.get("kind") == "student"}
     skey = lambda name: student_key(str(name or ""), student_aliases)  # noqa: E731
 
-    history: Dict[tuple, tuple] = {}
-    if len(prior) == STREAK_MONTHS:
-        for month_index, month_rows in enumerate(prior):
-            for row in month_rows:
-                for field, value in (row.get("scores") or {}).items():
-                    history[(month_index, skey(row.get("student")), teacher_key(str(row.get("teacher") or "")), field)] = (value, bool(row.get("matched")))
+    history: Dict[tuple, float] = {}
+    rated_history: Dict[tuple, Dict[str, float]] = {}
+    for month in prior:
+        month_name = str(month.get("course_month") or "")
+        if not re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", month_name) or month_name >= course_month:
+            continue
+        for row in month.get("detail") or []:
+            if not is_matched(row.get("matched")):
+                continue
+            student, teacher = skey(row.get("student")), teacher_key(str(row.get("teacher") or ""))
+            scores = row.get("scores") or {}
+            for role in ADJUST_ROLES:
+                values = []
+                for dim in ADJUST_DIMS:
+                    field = f"{dim}_{role}"
+                    value = number(scores.get(field))
+                    if value is not None:
+                        history[(month_name, student, teacher, field)] = value
+                        values.append(value)
+                if values:
+                    months = rated_history.setdefault((student, role), {})
+                    months[month_name] = max(months.get(month_name, 0), *values)
 
-    rated: Dict[tuple, Dict[str, object]] = {}
+    rated: Dict[tuple, float] = {}
     for row in rows:
+        if not is_matched(row.get("matched")):
+            continue
         for role in ADJUST_ROLES:
             values = [number(row.get(f"score_{dim}_{role}")) for dim in ADJUST_DIMS]
             values = [value for value in values if value is not None]
             if values:
-                entry = rated.setdefault((skey(row["student"]), role), {"teachers": set(), "max": 0.0})
-                entry["teachers"].add(teacher_key(str(row["teacher"])))
-                entry["max"] = max(entry["max"], *values)
-    strict_raters = {key for key, entry in rated.items() if len(entry["teachers"]) >= 2 and entry["max"] == 4}
+                key = (skey(row["student"]), role)
+                rated[key] = max(rated.get(key, 0), *values)
+    strict_raters = {
+        key for key, months in rated_history.items()
+        if sum(value == 4 for value in months.values()) >= STRICT_RATER_MONTHS
+        and max(months.values()) == 4 and rated.get(key) == 4
+    }
 
     adjustments: Dict[int, Dict[str, str]] = {}
+    prior_months = [shift_month(course_month, offset) for offset in range(-STREAK_MONTHS, 0)]
     for index, row in enumerate(rows):
+        if not is_matched(row.get("matched")):
+            continue
         student, teacher = skey(row["student"]), teacher_key(str(row["teacher"]))
         for role in ADJUST_ROLES:
             for dim in ADJUST_DIMS:
                 field = f"{dim}_{role}"
                 if number(row.get(f"score_{field}")) != 4:
                     continue
-                prev = [history.get((month_index, student, teacher, field)) for month_index in range(STREAK_MONTHS)]
-                if is_matched(row.get("matched")) and all(p and p[0] == 4 and p[1] for p in prev):
+                if all(history.get((month, student, teacher, field)) == 4 for month in prior_months):
                     adjustments.setdefault(index, {})[field] = "streak"
                 elif (student, role) in strict_raters:
-                    adjustments.setdefault(index, {})[field] = "strict-rater"
+                    adjustments.setdefault(index, {})[field] = "historical-strict-rater"
     return adjustments
 
 
@@ -309,7 +335,17 @@ def overlay_history(teachers: List[Dict[str, object]], history: List[Dict[str, o
     return with_rank(rows)
 
 
-def rescore_with_adjustments(course_month: str, folder: Path, rows: List[Dict[str, object]], adjustments: Dict[int, Dict[str, str]]) -> List[Dict[str, object]]:
+def excluded_name_set(event: Dict[str, object], key: str) -> set:
+    return {nfkc(str(name)).strip() for name in (event.get(key) or []) if str(name).strip()}
+
+
+def rescore_with_adjustments(
+    course_month: str,
+    folder: Path,
+    rows: List[Dict[str, object]],
+    adjustments: Dict[int, Dict[str, str]],
+    excluded_students: set,
+) -> List[Dict[str, object]]:
     """把被改的 4 分换成 5 分，用同一套加权（按明细重算）再算一遍。"""
     changed = []
     for index, row in enumerate(rows):
@@ -331,6 +367,7 @@ def rescore_with_adjustments(course_month: str, folder: Path, rows: List[Dict[st
         max_duration_hours=8.0,
         exclude_course_type_keywords=COURSE_TYPE_EXCLUDES,
         excluded_teachers=set(),
+        excluded_students=excluded_students,
     )["summary_rows"]
 
 
@@ -338,6 +375,7 @@ def compute_month(event: Dict[str, object]) -> Dict[str, object]:
     course_month = str(event["courseMonth"])
     display = {teacher_key(name): name for name in event.get("teacherNames") or []}
     show = lambda name: display.get(teacher_key(name), name)  # noqa: E731
+    excluded_students = excluded_name_set(event, "excludedStudents")
 
     adjustments: Dict[int, Dict[str, str]] = {}
     adjusted_summary: List[Dict[str, object]] = []
@@ -361,6 +399,7 @@ def compute_month(event: Dict[str, object]) -> Dict[str, object]:
                 max_duration_hours=8.0,
                 exclude_course_type_keywords=COURSE_TYPE_EXCLUDES,
                 excluded_teachers=set(),
+                excluded_students=excluded_students,
             )["summary_rows"]
             teacher_map = load_name_map(name_map)["teacher"]
             with (folder / "detail.csv").open(encoding="utf-8-sig", newline="") as handle:
@@ -375,6 +414,7 @@ def compute_month(event: Dict[str, object]) -> Dict[str, object]:
                 output_dir=folder / "out",
                 name_map_csv=name_map,
                 dedupe_keep=str(event.get("dedupeKeep") or "last"),
+                exclude_students_raw=",".join(sorted(excluded_students)),
                 # 答卷快照已经按「反馈课程月份」筛好了这一轮（月中提前交的也在里面），
                 # 不能再让脚本按「提交月 = 课程月 + 1」筛一遍，所以给一个包住所有提交时间的窗口。
                 feedback_start_date="2000-01-01",
@@ -393,12 +433,14 @@ def compute_month(event: Dict[str, object]) -> Dict[str, object]:
                 "unmappedScoreTexts": meta.get("unmapped_score_texts") or {},
             }
             if not event.get("history"):
-                adjustments = score_adjustments(detail_rows, event.get("priorDetails") or [], event.get("aliases") or [])
+                adjustments = score_adjustments(detail_rows, event.get("priorDetails") or [], event.get("aliases") or [], course_month)
                 if adjustments:
-                    adjusted_summary = rescore_with_adjustments(course_month, folder, detail_rows, adjustments)
+                    adjusted_summary = rescore_with_adjustments(
+                        course_month, folder, detail_rows, adjustments, excluded_students
+                    )
                     stats["adjustedScores"] = {
                         rule: sum(1 for fields in adjustments.values() for value in fields.values() if value == rule)
-                        for rule in ("streak", "strict-rater")
+                        for rule in ("streak", "historical-strict-rater")
                     }
 
     for row in summary_rows:

@@ -1,0 +1,442 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>11月 · 小禾 · 月度反馈</title>
+<style>
+:root{
+  color-scheme:light;
+  --navy:#123969;--ink:#102e55;--muted:#5a6678;--gold:#ba8d45;--goldbg:#f6ecd7;
+  --apricot:#e8894a;--apricotbg:#fdeee1;--sky:#e8f1fb;--cream:#faf6ec;--line:#e6e1d4;
+  --warn:#b45309;--warnbg:#fff4e5;
+  --ease:cubic-bezier(.22,1,.36,1);
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0}
+body{background:#e9e6de;color:var(--ink);font:16px/1.55 -apple-system,"PingFang SC","Helvetica Neue",sans-serif}
+button{font:inherit;color:inherit}
+.phone{position:relative;width:393px;max-width:100%;min-height:100svh;margin:0 auto;overflow:hidden;
+  background:radial-gradient(120% 60% at 100% 0%,#e3eefb 0,transparent 60%),radial-gradient(90% 50% at 0% 100%,#fbe9d6 0,transparent 60%),var(--cream)}
+.wx{position:sticky;top:0;z-index:30;height:44px;display:flex;align-items:center;justify-content:center;background:#ededed;font-size:15px;font-weight:600;border-bottom:1px solid #ddd}
+.wx::before{content:"✕";position:absolute;left:16px;font-weight:400}
+.wx::after{content:"···";position:absolute;right:16px}
+
+/* 顶部：老师进度 */
+.crew{padding:14px 16px 6px}
+.crew-head{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;color:var(--muted)}
+.crew-head img{width:22px;height:22px}
+.crew-head span:last-child{margin-left:auto;font-variant-numeric:tabular-nums;color:var(--ink)}
+.crew-list{display:flex;gap:14px;overflow-x:auto;padding:12px 2px 4px;scrollbar-width:none}
+.mate{flex:none;display:flex;flex-direction:column;align-items:center;gap:4px;width:64px;border:0;background:none;padding:0;cursor:pointer}
+.mate:disabled{cursor:default}
+.ava{position:relative;display:grid;place-items:center;width:52px;height:52px;border-radius:50%;background:#fff;font-weight:700;font-size:19px;color:var(--navy);box-shadow:0 0 0 2px #fff,0 0 0 3px var(--line);transition:transform .3s var(--ease),box-shadow .3s}
+.mate[aria-current=true] .ava{box-shadow:0 0 0 2px #fff,0 0 0 4px var(--navy);transform:scale(1.06)}
+.mate.done .ava{background:var(--goldbg)}
+.badge{position:absolute;right:-3px;bottom:-3px;display:grid;place-items:center;width:20px;height:20px;border-radius:50%;background:var(--gold);color:#fff;font-size:12px;box-shadow:0 0 0 2px #fff}
+.mate b{font-size:13px}
+.mate small{font-size:11px;color:var(--muted);white-space:nowrap}
+.mate.done small{color:#7a5a22;font-weight:600}
+
+/* 舞台 */
+.stage{padding:8px 20px 150px;min-height:calc(100svh - 190px)}
+.enter{animation:enter .45s var(--ease) both}
+.enter.back{animation-name:enterBack}
+@keyframes enter{from{opacity:0;transform:translateX(28px)}to{opacity:1;transform:none}}
+@keyframes enterBack{from{opacity:0;transform:translateX(-28px)}to{opacity:1;transform:none}}
+
+/* 老师开场 */
+.hero{margin-top:6px;padding:22px 20px 20px;border-radius:24px;background:#fff;box-shadow:0 10px 30px -12px rgba(16,46,85,.25);text-align:center;position:relative;overflow:hidden}
+.hero::before{content:"";position:absolute;inset:0 0 auto;height:86px;background:linear-gradient(120deg,#dbe8f8,#f6ecd7 70%,#fde3cc)}
+.hero .big{position:relative;display:grid;place-items:center;width:84px;height:84px;margin:18px auto 10px;border-radius:50%;background:#fff;font-size:34px;font-weight:700;color:var(--navy);box-shadow:0 0 0 4px #fff,0 0 0 6px var(--gold);animation:pop .6s var(--ease) both}
+.hero h1{margin:0;font-size:24px}
+.chips{display:flex;flex-wrap:wrap;gap:6px;justify-content:center;margin-top:8px}
+.chip{font-size:13px;padding:2px 10px;border-radius:999px;background:var(--sky);color:var(--navy);font-weight:600}
+.who{margin:26px 0 12px;font-size:18px;font-weight:700;text-align:left}
+.ids{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.id{position:relative;display:flex;flex-direction:column;align-items:center;gap:8px;padding:18px 10px 16px;border-radius:18px;border:2px solid transparent;background:#fff;cursor:pointer;box-shadow:0 6px 18px -10px rgba(16,46,85,.35);transition:transform .2s var(--ease),border-color .2s}
+.id:active{transform:scale(.97)}
+.id[aria-pressed=true]{border-color:var(--navy)}
+.id:disabled{opacity:.55;cursor:not-allowed;box-shadow:none}
+.id svg{width:54px;height:54px}
+.id b{font-size:16px}
+.stamp{position:absolute;top:8px;right:8px;font-size:11px;font-weight:700;color:#7a5a22;background:var(--goldbg);border-radius:6px;padding:1px 6px}
+
+/* 题目 */
+.prog{display:flex;align-items:center;gap:10px;margin:6px 0 18px}
+.backbtn{display:grid;place-items:center;width:36px;height:36px;border-radius:50%;border:0;background:#fff;cursor:pointer;box-shadow:0 2px 8px -4px rgba(16,46,85,.4);flex:none}
+.bar{flex:1;height:8px;border-radius:99px;background:#e9e3d3;overflow:hidden}
+.bar i{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,var(--navy),#3d74b8);transition:width .5s var(--ease)}
+.prog span{font-size:13px;font-weight:700;font-variant-numeric:tabular-nums;color:var(--muted);min-width:38px;text-align:right}
+.qt{font-size:21px;line-height:1.45;font-weight:700;margin:0 0 6px;text-wrap:pretty}
+.opt-tag{display:inline-block;font-size:12px;font-weight:600;color:var(--muted);background:#efe9da;border-radius:6px;padding:1px 7px;margin-bottom:12px}
+.qhint{font-size:13px;color:var(--muted);margin:0 0 12px}
+.opts{display:grid;gap:10px;margin-top:14px}
+.op{display:flex;align-items:center;gap:12px;width:100%;text-align:left;padding:14px 14px;border-radius:16px;border:2px solid transparent;background:#fff;cursor:pointer;box-shadow:0 4px 14px -10px rgba(16,46,85,.45);font-size:15.5px;line-height:1.45;transition:transform .18s var(--ease),border-color .18s,background .18s;opacity:0;animation:rise .4s var(--ease) forwards}
+.op:active{transform:scale(.98)}
+.op .k{flex:none;display:grid;place-items:center;width:30px;height:30px;border-radius:10px;background:var(--sky);color:var(--navy);font-weight:800;font-size:14px;transition:background .2s,color .2s}
+.op[aria-pressed=true]{border-color:var(--navy);background:#f3f7fd}
+.op[aria-pressed=true] .k{background:var(--navy);color:#fff}
+.still,.still .op,.still .cs,.still .big{animation:none;opacity:1}
+.still .op.picked{animation:picked .35s var(--ease)}
+@keyframes rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+@keyframes picked{0%{transform:scale(1)}40%{transform:scale(1.03)}100%{transform:scale(1)}}
+@keyframes pop{0%{transform:scale(.4);opacity:0}60%{transform:scale(1.08);opacity:1}100%{transform:scale(1)}}
+.chipsel{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
+.cs{padding:10px 14px;border-radius:14px;border:2px solid transparent;background:#fff;cursor:pointer;font-size:15px;line-height:1.4;text-align:left;box-shadow:0 4px 14px -10px rgba(16,46,85,.45);opacity:0;animation:rise .4s var(--ease) forwards;transition:border-color .18s,background .18s}
+.cs[aria-pressed=true]{border-color:var(--navy);background:#f3f7fd}
+.cs[aria-pressed=true]::before{content:"✓ ";font-weight:800;color:var(--navy)}
+.other,textarea{width:100%;font:inherit;font-size:15px;border:2px solid var(--line);border-radius:14px;padding:12px 14px;background:#fff;color:var(--ink);margin-top:10px;outline:none;transition:border-color .2s}
+.other:focus,textarea:focus{border-color:var(--navy)}
+textarea{min-height:150px;resize:none}
+.count{text-align:right;font-size:12px;color:var(--muted);margin-top:4px;font-variant-numeric:tabular-nums}
+
+/* 底部动作 */
+.dock{position:fixed;left:50%;bottom:0;transform:translateX(-50%);width:393px;max-width:100%;z-index:20;padding:12px 20px calc(14px + env(safe-area-inset-bottom));background:linear-gradient(to top,var(--cream) 70%,rgba(250,246,236,0))}
+.cta{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;min-height:52px;border:0;border-radius:16px;background:var(--navy);color:#fff;font-weight:700;font-size:16px;cursor:pointer;box-shadow:0 10px 24px -12px rgba(18,57,105,.8);transition:transform .15s var(--ease),opacity .2s}
+.cta:active{transform:scale(.98)}
+.cta:disabled{opacity:.6}
+.cta.ghost{background:#fff;color:var(--ink);box-shadow:0 4px 14px -10px rgba(16,46,85,.45)}
+.spin{width:18px;height:18px;border-radius:50%;border:2.5px solid rgba(255,255,255,.4);border-top-color:#fff;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.toast{display:flex;gap:8px;align-items:flex-start;margin-bottom:10px;padding:10px 14px;border-radius:14px;font-size:14px;animation:rise .3s var(--ease) forwards}
+.toast.warn{background:var(--warnbg);color:#7c2d12;border:1px solid #fcd9a8}
+.toast.info{background:#fff;color:var(--ink);border:1px solid var(--line)}
+
+/* 完成一位老师 */
+.cheer{text-align:center;padding-top:40px}
+.medal{position:relative;display:grid;place-items:center;width:116px;height:116px;margin:0 auto 18px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#f5dfae,var(--gold));color:#fff;box-shadow:0 14px 30px -12px rgba(186,141,69,.9);animation:pop .7s var(--ease) both}
+.medal svg{width:56px;height:56px}
+.medal::after{content:"";position:absolute;inset:-10px;border-radius:50%;border:2px dashed #e2c995;animation:turn 12s linear infinite}
+@keyframes turn{to{transform:rotate(360deg)}}
+.cheer h2{margin:0 0 6px;font-size:23px;animation:rise .5s .15s var(--ease) both}
+.cheer p{margin:0;color:var(--muted);animation:rise .5s .25s var(--ease) both}
+
+/* 全部完成 */
+.allset{text-align:center;padding-top:26px}
+.allset h2{font-size:24px;margin:0 0 18px}
+.roll{display:grid;gap:10px;text-align:left}
+.roll div{display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:16px;background:#fff;box-shadow:0 4px 14px -10px rgba(16,46,85,.45);opacity:0;animation:rise .45s var(--ease) forwards}
+.roll .ava{width:40px;height:40px;font-size:16px;background:var(--goldbg);box-shadow:none}
+.roll span:last-child{margin-left:auto;font-size:13px;font-weight:700;color:#7a5a22}
+
+/* 感谢礼（线上已有 FeedbackThanksDialog，这里只示意它接在礼花之后弹出） */
+.mask{position:fixed;inset:0;z-index:40;display:flex;align-items:flex-end;justify-content:center;background:rgba(23,41,68,.42);animation:fade .25s both}
+@keyframes fade{from{opacity:0}}
+.sheet{width:393px;max-width:100%;max-height:92svh;overflow:auto;background:#fff;border-radius:22px 22px 0 0;padding:18px 20px calc(18px + env(safe-area-inset-bottom));animation:up .45s var(--ease) both}
+@keyframes up{from{transform:translateY(100%)}}
+.sheet .env{display:grid;place-items:center;height:140px;margin-bottom:14px;border-radius:14px;background:radial-gradient(ellipse at 50% 90%,#f3e9cf,#faf6ec 70%)}
+.sheet .env img{width:136px;height:136px;object-fit:contain;mix-blend-mode:multiply;animation:pop .6s var(--ease) both}
+.sheet h3{margin:0 0 6px;font:600 22px/1.4 "Songti SC","Noto Serif CJK SC",serif}
+.sheet p{margin:0 0 14px;color:var(--muted);font-size:14px}
+.gifts{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px}
+.gift{border:2px solid #e8e4da;border-radius:14px;background:#fff;padding:6px 6px 10px;cursor:pointer;text-align:center}
+.gift img{width:100%;height:96px;object-fit:contain;mix-blend-mode:multiply}
+.gift b{display:block;font-size:14px}
+.gift[aria-pressed=true]{border-color:var(--navy);background:#f3f7fd}
+.notes{display:grid;gap:8px;margin-bottom:14px}
+.duo{display:grid;grid-template-columns:auto 1fr;gap:10px}
+.duo .cta.ghost{padding:0 18px}
+
+canvas#fx{position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:60}
+
+/* 调场景（只在 Demo 里） */
+.lab{position:fixed;right:8px;bottom:150px;z-index:70;font-size:13px}
+.lab summary{cursor:pointer;background:#fff;border:1px solid var(--line);border-radius:8px;padding:4px 9px;list-style:none;font-weight:600;font-size:12px;opacity:.92}
+.lab div{position:absolute;right:0;bottom:calc(100% + 6px);width:230px;display:grid;gap:4px;padding:8px;background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:0 6px 20px rgba(0,0,0,.14)}
+.lab button{font-size:13px;text-align:left;border:1px solid var(--line);background:#fff;border-radius:6px;padding:6px 8px;cursor:pointer}
+.lab label{display:flex;gap:6px;align-items:center;padding:3px 2px}
+@media (min-width:700px){.lab{left:16px;right:auto;bottom:16px}.lab div{left:0;right:auto}}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}
+</style>
+</head>
+<body>
+<div class="phone">
+  <div class="wx">11月 · 小禾 · 月度反馈</div>
+  <section class="crew">
+    <div class="crew-head"><img src="../../public/logo-blue.svg" alt=""><span>菁仕教育 · 11月月度反馈</span><span id="count"></span></div>
+    <div class="crew-list" id="crew" role="tablist" aria-label="选择评价老师"></div>
+  </section>
+  <main class="stage" id="stage"></main>
+</div>
+<div class="dock" id="dock"></div>
+<div id="sheet"></div>
+<canvas id="fx" hidden></canvas>
+
+<details class="lab">
+  <summary>调场景</summary>
+  <div>
+    <button data-s="normal">① 本月 3 位老师，周老师家长已评</button>
+    <button data-s="draft">② 中途退出后重开（恢复草稿）</button>
+    <button data-s="closed">③ 本月反馈已结束</button>
+    <button data-s="all">④ 3 位老师学生、家长都已评</button>
+    <label><input type="checkbox" id="fail">下一次提交失败（网络断开）</label>
+    <label><input type="checkbox" id="nogift">本月没有启用感谢礼</label>
+  </div>
+</details>
+
+<script>
+// 题目和选项照线上飞书「课程反馈问卷」（2026-11-25 读取），去掉了（必填）（选填）前缀。
+const single = 1, multi = 2, text = 3;
+const BRANCH = {
+  "学生本人": [
+    { id: "【学生】学习提升效果", title: "这段时间的课程，对您的成绩提升帮助有多大？", type: single, req: true,
+      opts: ["帮助非常大，进步明显", "帮助较大，有一定提升", "帮助一般，提升有限", "帮助不大，收获较少"] },
+    { id: "【学生】责任心与服务态度", title: "在整个课程期间，老师是否始终认真负责、态度热情、服务周到？", type: single, req: true,
+      opts: ["是的，始终如此，非常满意", "大部分时候能做到，整体良好", "偶尔有所欠缺，但总体尚可", "有较明显的不足，希望改进"] },
+    { id: "【学生】个人魅力", title: "您觉得这位老师的个人教学魅力如何？", type: single, req: true,
+      opts: ["非常出色，深深吸引我投入学习", "较好，能够调动我的学习兴趣", "一般，课堂氛围较为平淡", "有待提升，较难引发我的学习热情"] },
+    { id: "【学生】改进方面", title: "在日常学习过程中，您希望老师可以在哪些方面进一步提升？", type: multi, req: false,
+      opts: ["已经很好了，没有需要提升的", "更得体的着装形象与职业气质", "更注重个人气味管理，保持清新的课堂气息", "更温和、鼓励性的语言表达方式", "更个性化地了解我的学习习惯与心理状态", "更灵活地调整教学节奏，适应我的学习状态", "更能激发我的学习主动性与自信心", "更加得体、更有分寸的谈吐", "其他"] },
+  ],
+  "家长/监护人": [
+    { id: "【家长】学习提升效果", title: "这段时间的课程，您认为对孩子的成绩提升帮助有多大？", type: single, req: true,
+      opts: ["帮助非常大，孩子进步明显", "帮助较大，孩子有一定提升", "帮助一般，提升较为有限", "帮助不大，收获较少"] },
+    { id: "【家长】责任心与服务态度", title: "在整个课程期间，您感受到老师是否始终认真负责、态度热情、服务周到？", type: single, req: true,
+      opts: ["是的，始终如此，非常满意", "大部分时候能做到，整体良好", "偶尔有所欠缺，但总体尚可", "有较明显的不足，希望改进"] },
+    { id: "【家长】个人魅力", title: "您认为这位老师对学生的教学影响力如何？", type: single, req: true,
+      opts: ["影响力非常显著，孩子在学习态度、思维方式和成绩上均有明显改变", "影响力较为积极，孩子的学习状态和兴趣有所提升", "影响力一般，孩子暂未呈现出明显的改变", "影响力有待加强，孩子的学习状态未见明显改善"] },
+    { id: "顾问", title: "顾问老师（Tinko）是否及时帮助学生优化课程安排？", type: single, req: true,
+      opts: ["已经很好了，不需要提升", "对沟通效率总体满意，但可以沟通更频繁", "基本满意，但可以更少打扰", "沟通稍有欠缺，建议多加反馈和沟通", "沟通太多，建议少打扰"] },
+    { id: "【家长】改进方面", title: "在孩子的日常学习过程中，您希望老师可以在哪些方面进一步提升？", type: multi, req: false,
+      opts: ["已经很好了，没有需要提升的", "更得体的着装形象与职业气质", "更温和、鼓励性的语言表达方式", "更个性化地了解孩子的学习习惯与心理状态", "课后能主动提供学习反馈和阶段性总结", "更灵活地调整教学节奏，适应孩子的学习状态", "更能激发孩子的学习主动性与自信心", "其他"] },
+  ],
+};
+const SHARED = [
+  { id: "上课风格", title: "您如何评价这位老师的整体授课风格？", type: single, req: false,
+    opts: ["风趣幽默型 — 课堂氛围轻松活跃，善于调动学习热情", "严谨专注型 — 讲解严密深入，注重知识的系统性与准确性，课堂专注高效", "其他"] },
+  { id: "教学节奏", title: "您如何评价这位老师的教学进度与节奏把控？", type: multi, req: false,
+    opts: ["高效紧凑型 — 知识点覆盖全面、推进迅速，适合基础扎实、学习节奏快的学生", "稳扎稳打型 — 讲解细致充分、循序渐进，注重每个知识点的理解与消化", "其他"] },
+  { id: "课堂互动", title: "您如何评价这位老师的课堂教学方式？", type: single, req: false,
+    opts: ["系统讲授型 — 以老师讲解为主，知识体系完整、逻辑清晰，内容输出充分", "互动引导型 — 注重师生双向交流，善于通过提问、讨论引导学生主动思考"] },
+  { id: "建议", title: "如果您可以对我们提一个最希望改进的建议，您最想说的是什么？", type: text, req: false },
+];
+const GIFTS = [["coffee", "请老师喝一杯"], ["flowers", "送老师一束花"], ["cake", "给老师一点甜"], ["pennant", "为老师送上荣誉"]];
+const NOTES = ["感谢老师的耐心与负责", "孩子最近进步很明显", "老师的教学方式很适合孩子", "感谢老师课后的及时反馈"];
+const ICON = {
+  student: `<svg viewBox="0 0 64 64" fill="none"><circle cx="32" cy="32" r="30" fill="#e8f1fb"/><path d="M14 26l18-8 18 8-18 8z" fill="#123969"/><path d="M22 30v9c0 3 4.5 6 10 6s10-3 10-6v-9" stroke="#123969" stroke-width="3" fill="#fff"/><path d="M48 27v11" stroke="#ba8d45" stroke-width="3" stroke-linecap="round"/><circle cx="48" cy="40" r="2.6" fill="#ba8d45"/></svg>`,
+  parent: `<svg viewBox="0 0 64 64" fill="none"><circle cx="32" cy="32" r="30" fill="#fdeee1"/><circle cx="25" cy="23" r="6" fill="#123969"/><path d="M14 46c0-7 5-12 11-12s11 5 11 12" fill="#123969"/><circle cx="42" cy="29" r="4.5" fill="#e8894a"/><path d="M34 47c0-5 3.6-9 8-9s8 4 8 9" fill="#e8894a"/></svg>`,
+  back: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M15 5l-7 7 7 7"/></svg>`,
+  check: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>`,
+  warn: `<svg width="16" height="16" viewBox="0 0 24 24" fill="#b45309" style="flex:none;margin-top:3px"><path d="M12 3l10 18H2z"/><path d="M12 10v5M12 17.5v.5" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg>`,
+};
+
+const fresh = () => ({ closed: false, teachers: [
+  { id: "chen", name: "陈老师", initial: "陈", courses: ["小学数学", "奥数思维"], student: false, parent: false },
+  { id: "xu", name: "许老师", initial: "许", courses: ["英语阅读"], student: false, parent: false },
+  { id: "zhou", name: "周老师", initial: "周", courses: ["语文"], student: false, parent: true },
+] });
+let S, sel, draft, toast = null, busy = false, dir = "";
+const KEY = "demo.v5.";
+const teacher = () => S.teachers.find(t => t.id === sel);
+const label = t => t.student && t.parent ? "双方已评" : t.student ? "学生已评" : t.parent ? "家长已评" : "待评价";
+const done = t => t.student || t.parent;
+const questions = () => draft.identity ? [...BRANCH[draft.identity], ...SHARED] : [];
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const save = () => localStorage.setItem(KEY + sel, JSON.stringify(draft));
+
+function load(scene) {
+  Object.keys(localStorage).filter(k => k.startsWith(KEY)).forEach(k => localStorage.removeItem(k));
+  S = fresh(); toast = null;
+  if (scene === "closed") S.closed = true;
+  if (scene === "all") S.teachers.forEach(t => { t.student = true; t.parent = true; });
+  if (scene === "draft") localStorage.setItem(KEY + "chen", JSON.stringify({ identity: "学生本人", qi: 2, a: { "【学生】学习提升效果": "帮助较大，有一定提升", "【学生】责任心与服务态度": "是的，始终如此，非常满意" } }));
+  const first = S.teachers.find(t => !done(t)) ?? S.teachers.find(t => !(t.student && t.parent));
+  open(first?.id ?? "", scene === "draft");
+}
+function open(id, announce) {
+  sel = id; dir = "";
+  const t = teacher();
+  draft = JSON.parse(localStorage.getItem(KEY + id) || "null") ?? { identity: "", qi: -1, a: {} };
+  if (t && !draft.identity) {
+    const last = localStorage.getItem(KEY + "identity");
+    if (last && !(last === "学生本人" ? t.student : t.parent)) draft.lastIdentity = last;
+  }
+  if (announce && draft.identity) toast = { kind: "info", text: "已恢复上次填写的内容。" };
+  render(); scrollTo(0, 0);
+}
+
+function renderCrew() {
+  const n = S.teachers.filter(done).length;
+  document.getElementById("count").textContent = `已提交 ${n}/${S.teachers.length}`;
+  document.getElementById("crew").innerHTML = S.teachers.map(t => `
+    <button class="mate ${done(t) ? "done" : ""}" role="tab" aria-current="${t.id === sel}" data-t="${t.id}" ${busy ? "disabled" : ""}>
+      <span class="ava">${t.initial}${done(t) ? `<span class="badge">✓</span>` : ""}</span><b>${t.name}</b><small>${label(t)}</small></button>`).join("");
+}
+function render(quiet) {
+  renderCrew();
+  const stage = document.getElementById("stage"), dock = document.getElementById("dock"), t = teacher();
+  stage.className = quiet ? "stage still" : "stage enter" + (dir === "back" ? " back" : "");
+  void stage.offsetWidth; // 重放进场动画
+  const toastHtml = toast ? `<div class="toast ${toast.kind}" role="${toast.kind === "warn" ? "alert" : "status"}">${toast.kind === "warn" ? ICON.warn : ""}<span>${toast.text}</span></div>` : "";
+
+  if (!t) { stage.innerHTML = allSet(); dock.innerHTML = ""; return; }
+  if (S.closed || (t.student && t.parent)) {
+    stage.innerHTML = hero(t) + `<p class="who" style="text-align:center">${S.closed ? "本月反馈已结束" : "学生和家长都已提交反馈"}</p>`;
+    dock.innerHTML = ""; return;
+  }
+  if (draft.qi < 0) {
+    stage.innerHTML = hero(t) + `<p class="who">这份评价由谁来填写？</p><div class="ids">` +
+      [["学生本人", "student", t.student], ["家长/监护人", "parent", t.parent]].map(([v, icon, sent]) => `
+        <button class="id" data-id="${v}" aria-pressed="${(draft.identity || draft.lastIdentity) === v}" ${sent ? "disabled" : ""}>
+          ${sent ? `<span class="stamp">已提交</span>` : ""}${ICON[icon]}<b>${v}</b></button>`).join("") + `</div>`;
+    const pick = draft.identity || draft.lastIdentity;
+    dock.innerHTML = toastHtml + `<button class="cta" data-go="start" ${pick ? "" : "disabled"}>开始评价${t.name}</button>`;
+    return;
+  }
+  const qs = questions(), q = qs[draft.qi], v = draft.a[q.id], last = draft.qi === qs.length - 1;
+  let body = "";
+  if (q.type === single) {
+    body = `<div class="opts">` + q.opts.map((o, i) => `<button class="op" style="animation-delay:${i * 45}ms" data-o="${esc(o)}" aria-pressed="${v === o}"><span class="k">${"ABCDEFGHI"[i]}</span><span>${o}</span></button>`).join("") + `</div>`;
+  } else if (q.type === multi) {
+    body = `<p class="qhint">可多选</p><div class="chipsel">` + q.opts.map((o, i) => `<button class="cs" style="animation-delay:${i * 35}ms" data-m="${esc(o)}" aria-pressed="${(v || []).includes(o)}">${o}</button>`).join("") + `</div>`;
+  } else {
+    body = `<textarea data-txt maxlength="500" placeholder="写下您的建议">${esc(v || "")}</textarea><div class="count">${(v || "").length}/500</div>`;
+  }
+  const other = q.type !== text && (q.type === multi ? (v || []).includes("其他") : v === "其他");
+  if (other) body += `<input class="other" data-other="${q.id}" placeholder="请补充其他内容" value="${esc(draft.a[q.id + "-其他"] || "")}">`;
+  stage.innerHTML = `
+    <div class="prog"><button class="backbtn" data-go="back" aria-label="上一题">${ICON.back}</button>
+      <div class="bar"><i style="width:${(draft.qi + 1) / qs.length * 100}%"></i></div><span>${draft.qi + 1} / ${qs.length}</span></div>
+    <h2 class="qt">${q.title}</h2>${q.req ? "" : `<span class="opt-tag">选填</span>`}${body}`;
+  const answered = q.type === multi ? (v || []).length > 0 : Boolean(v);
+  if (last) dock.innerHTML = toastHtml + `<button class="cta" data-go="submit" ${busy ? "disabled" : ""}>${busy ? `<span class="spin"></span>正在提交…` : `提交对${t.name}的评价`}</button>`;
+  else if (answered) dock.innerHTML = toastHtml + `<button class="cta" data-go="next">下一题</button>`;
+  else if (!q.req) dock.innerHTML = toastHtml + `<button class="cta ghost" data-go="next">跳过这题</button>`;
+  else dock.innerHTML = toastHtml;
+}
+const hero = t => `<div class="hero"><div class="big">${t.initial}</div><h1>${t.name}</h1>
+  <div class="chips">${t.courses.map(c => `<span class="chip">${c}</span>`).join("")}</div></div>`;
+const allSet = () => `<div class="allset"><div class="medal">${ICON.check}</div><h2>本月反馈已全部完成</h2>
+  <div class="roll">${S.teachers.map((t, i) => `<div style="animation-delay:${200 + i * 90}ms"><span class="ava">${t.initial}</span><b>${t.name}</b><span>✓ ${label(t)}</span></div>`).join("")}</div></div>`;
+
+function go(step) {
+  toast = null;
+  const qs = questions();
+  if (step === "start") { draft.identity = draft.identity || draft.lastIdentity; draft.qi = 0; dir = ""; }
+  if (step === "next") { draft.qi = Math.min(draft.qi + 1, qs.length - 1); dir = ""; }
+  if (step === "back") { draft.qi -= 1; dir = "back"; }
+  save(); render(); scrollTo(0, 0);
+}
+
+document.addEventListener("click", e => {
+  const el = e.target.closest("button, [data-s]");
+  if (!el || el.closest(".sheet")) return;
+  if (el.dataset.s) { document.getElementById("fail").checked = false; load(el.dataset.s); return; }
+  if (el.dataset.t && !busy) { toast = null; open(el.dataset.t); return; }
+  if (el.dataset.id) { draft = { identity: "", qi: -1, a: {}, lastIdentity: el.dataset.id }; render(true); return; }
+  if (el.dataset.go === "submit") return submit();
+  if (el.dataset.go) return go(el.dataset.go);
+  const q = questions()[draft.qi];
+  if (el.dataset.o !== undefined) {
+    draft.a[q.id] = el.dataset.o; save(); render(true);
+    document.querySelector(`.op[data-o="${CSS.escape(el.dataset.o)}"]`)?.classList.add("picked");
+    // 单选点完自动进下一题；选「其他」要先补充内容，不自动跳
+    if (el.dataset.o !== "其他" && draft.qi < questions().length - 1) {
+      const at = draft.qi; setTimeout(() => { if (draft.qi === at && !busy) go("next"); }, 420);
+    }
+  }
+  if (el.dataset.m !== undefined) {
+    const set = new Set(draft.a[q.id] || []);
+    set.has(el.dataset.m) ? set.delete(el.dataset.m) : set.add(el.dataset.m);
+    draft.a[q.id] = [...set]; save(); render(true);
+  }
+});
+document.addEventListener("input", e => {
+  const el = e.target;
+  if (el.matches("[data-txt]")) { draft.a["建议"] = el.value; el.nextElementSibling.textContent = `${el.value.length}/500`; }
+  else if (el.dataset.other) draft.a[el.dataset.other + "-其他"] = el.value;
+  else return;
+  save();
+});
+
+async function submit() {
+  if (busy) return;
+  busy = true; toast = null; render();
+  await new Promise(r => setTimeout(r, 1000));
+  busy = false;
+  const fail = document.getElementById("fail");
+  if (fail.checked) {
+    fail.checked = false;
+    toast = { kind: "warn", text: "提交没有成功，填写的内容已保留，请再点一次提交。" };
+    render(); return;
+  }
+  const t = teacher(), identity = draft.identity;
+  identity === "学生本人" ? (t.student = true) : (t.parent = true);
+  localStorage.removeItem(KEY + sel);
+  localStorage.setItem(KEY + "identity", identity);
+  // 完成一位老师：礼花 + 奖章，然后接感谢礼
+  document.getElementById("stage").className = "stage";
+  document.getElementById("stage").innerHTML = `<div class="cheer"><div class="medal">${ICON.check}</div><h2>${t.name}的评价已提交</h2><p>感谢您的认真反馈</p></div>`;
+  document.getElementById("dock").innerHTML = "";
+  renderCrew();
+  confetti();
+  setTimeout(() => document.getElementById("nogift").checked ? finish(t, identity, false) : thanks(t, identity), 1500);
+}
+function nextTeacher(identity, from) {
+  const self = identity === "学生本人" ? "student" : "parent";
+  const order = S.teachers.slice(S.teachers.findIndex(x => x.id === from) + 1).concat(S.teachers);
+  return order.find(x => !x[self] && !(x.student && x.parent))?.id ?? "";
+}
+function finish(t, identity, sent) {
+  document.getElementById("sheet").innerHTML = "";
+  const next = nextTeacher(identity, t.id);
+  open(next);
+  toast = { kind: "info", text: sent ? `已登记给${t.name}的感谢礼，菁仕教育将为您转达。` : `${t.name}的反馈已提交。` };
+  if (!next) confetti(true);
+  render();
+}
+function thanks(t, identity) {
+  const box = document.getElementById("sheet");
+  let step = 0, gift = "", note = NOTES[0];
+  const draw = () => {
+    box.innerHTML = `<div class="mask"><div class="sheet" role="dialog" aria-modal="true">` + (
+      step === 0 ? `<div class="env"><img src="../../public/thanks/envelope.webp" alt=""></div>
+        <h3>给${t.name}一份小小的感谢</h3><p>礼物我们来准备，您不用花钱。</p>
+        <div class="duo"><button class="cta ghost" data-a="skip">暂时不用</button><button class="cta" data-a="go">传递感谢</button></div>`
+      : step === 1 ? `<h3>选礼物</h3><div class="gifts">${GIFTS.map(([id, name]) => `<button class="gift" data-g="${id}" aria-pressed="${gift === id}"><img src="../../public/thanks/${id}.webp" alt=""><b>${name}</b></button>`).join("")}</div>
+        <div class="duo"><button class="cta ghost" data-a="skip">暂时不用</button><button class="cta" data-a="note" ${gift ? "" : "disabled"}>选感谢语</button></div>`
+      : `<h3>留感谢语</h3><div class="notes">${NOTES.map(n => `<button class="op" style="opacity:1;animation:none" data-n="${n}" aria-pressed="${note === n}"><span>${n}</span></button>`).join("")}</div>
+        <div class="duo"><button class="cta ghost" data-a="back">上一步</button><button class="cta" data-a="send">确认送出</button></div>`) + `</div></div>`;
+  };
+  box.onclick = e => {
+    const b = e.target.closest("button"); if (!b) return;
+    if (b.dataset.g) { gift = b.dataset.g; draw(); return; }
+    if (b.dataset.n) { note = b.dataset.n; draw(); return; }
+    ({ skip: () => finish(t, identity, false), go: () => { step = 1; draw(); }, note: () => { step = 2; draw(); },
+       back: () => { step = 1; draw(); }, send: () => finish(t, identity, true) })[b.dataset.a]?.();
+  };
+  draw();
+}
+
+// 礼花：一次性 canvas 粒子，约 2 秒；系统开了「减弱动态效果」就不放
+function confetti(big) {
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  const c = document.getElementById("fx"), x = c.getContext("2d"), dpr = devicePixelRatio || 1;
+  c.hidden = false; c.width = innerWidth * dpr; c.height = innerHeight * dpr; x.scale(dpr, dpr);
+  const colors = ["#123969", "#ba8d45", "#e8894a", "#7fb0e6", "#f2c46d", "#9b8ad8"];
+  const parts = Array.from({ length: big ? 220 : 140 }, (_, i) => {
+    const fromLeft = i % 2 === 0, a = (fromLeft ? -60 : -120) * Math.PI / 180 + (Math.random() - .5) * .9, s = 9 + Math.random() * 9;
+    return { x: fromLeft ? innerWidth * .1 : innerWidth * .9, y: innerHeight * .88, vx: Math.cos(a) * s, vy: Math.sin(a) * s,
+      w: 6 + Math.random() * 6, h: 8 + Math.random() * 8, r: Math.random() * 6, vr: (Math.random() - .5) * .4,
+      color: colors[i % colors.length], round: Math.random() < .3 };
+  });
+  const t0 = performance.now();
+  (function frame(now) {
+    const k = (now - t0) / 1000;
+    x.clearRect(0, 0, innerWidth, innerHeight);
+    for (const p of parts) {
+      p.vy += .32; p.vx *= .985; p.vy *= .985; p.x += p.vx; p.y += p.vy; p.r += p.vr;
+      x.save(); x.globalAlpha = Math.max(0, 1 - Math.max(0, k - 1.4) / .8);
+      x.translate(p.x, p.y); x.rotate(p.r); x.fillStyle = p.color;
+      if (p.round) { x.beginPath(); x.arc(0, 0, p.w / 2, 0, 7); x.fill(); } else x.fillRect(-p.w / 2, -p.h / 2, p.w, p.h * Math.abs(Math.cos(p.r * 2)) + 2);
+      x.restore();
+    }
+    if (k < 2.2) requestAnimationFrame(frame); else { x.setTransform(1, 0, 0, 1, 0, 0); x.clearRect(0, 0, c.width, c.height); c.hidden = true; }
+  })(t0);
+}
+
+load(new URLSearchParams(location.search).get("s") || "normal");
+</script>
+</body>
+</html>

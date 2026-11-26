@@ -1,13 +1,19 @@
-import { ClipboardList, LogOut, Tags, Trophy } from "lucide-react";
-import { useEffect, useState } from "react";
+import { ClipboardList, LogOut, ShieldCheck, Tags, Trophy } from "lucide-react";
+import { createContext, useContext, useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { allowedPages } from "@/shared/roles";
+import type { Page, Role } from "@/shared/roles";
 
-export type Page = "tracking" | "scores" | "course-types";
+export type { Page };
 
-const HASH: Record<Page, string> = { tracking: "#/", scores: "#/scores", "course-types": "#/course-types" };
+const HASH: Record<Page, string> = { tracking: "#/", scores: "#/scores", "course-types": "#/course-types", admin: "#/admin" };
+
+/** 当前登录账号的权限，App 登录后提供；各页面用 useRole() 决定显示什么。 */
+export const RoleContext = createContext<{ uid: string; role: Role }>({ uid: "", role: "teacher" });
+export const useRole = () => useContext(RoleContext);
 
 function pageFromHash(): Page {
   const entry = Object.entries(HASH).find(([, hash]) => hash !== "#/" && window.location.hash === hash);
@@ -25,19 +31,40 @@ export function usePage(): [Page, (page: Page) => void] {
   return [page, (next) => (window.location.hash = HASH[next])];
 }
 
+const TABS: Record<Page, React.ReactNode> = {
+  tracking: (
+    <>
+      <ClipboardList /> 问卷跟踪
+    </>
+  ),
+  scores: (
+    <>
+      <Trophy /> 老师评分
+    </>
+  ),
+  "course-types": (
+    <>
+      <Tags /> 课程类型
+    </>
+  ),
+  admin: (
+    <>
+      <ShieldCheck /> 管理员设置
+    </>
+  ),
+};
+
 export function AppNav({ page, onChange }: { page: Page; onChange: (page: Page) => void }) {
+  const pages = allowedPages(useRole().role);
+  if (pages.length < 2) return null;
   return (
     <Tabs value={page} onValueChange={(value) => onChange(value as Page)}>
       <TabsList>
-        <TabsTrigger value="tracking">
-          <ClipboardList /> 问卷跟踪
-        </TabsTrigger>
-        <TabsTrigger value="scores">
-          <Trophy /> 老师评分
-        </TabsTrigger>
-        <TabsTrigger value="course-types">
-          <Tags /> 课程类型
-        </TabsTrigger>
+        {pages.map((value) => (
+          <TabsTrigger key={value} value={value}>
+            {TABS[value]}
+          </TabsTrigger>
+        ))}
       </TabsList>
     </Tabs>
   );

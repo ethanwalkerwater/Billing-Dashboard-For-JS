@@ -1,0 +1,578 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>11月课程反馈 · 小禾</title>
+<style>
+:root{
+  color-scheme:light;
+  --bg:#f2f2f7;--card:#fff;--ink:#1c1c1e;--sub:#6e6e73;--faint:#8e8e93;--line:#d1d1d6;--press:#e5e5ea;
+  --accent:#0e2848;--accent-weak:#edf1f7;--gold:#ba8d45;
+  --warn:#c2620c;--warn-ink:#8a3b07;--warn-bg:#fff6e8;--warn-line:#f1cf9c;
+  --ease:cubic-bezier(.2,.8,.2,1);
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0}
+body{background:#e5e5ea;color:var(--ink);font:17px/1.47 -apple-system,BlinkMacSystemFont,"PingFang SC","Helvetica Neue","Microsoft YaHei",sans-serif;-webkit-font-smoothing:antialiased}
+button{font:inherit;color:inherit}
+.app{position:relative;max-width:430px;min-height:100svh;margin:0 auto;padding-bottom:150px;background:var(--bg)}
+.wx{position:sticky;top:0;z-index:30;height:44px;display:flex;align-items:center;justify-content:center;background:#ededed;font-size:16px;font-weight:600;border-bottom:.5px solid #d6d6d6}
+.wx::before{content:"✕";position:absolute;left:16px;font-weight:400}
+.wx::after{content:"···";position:absolute;right:16px}
+
+/* 页头 */
+.mast{padding:16px 20px 6px}
+.brand{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--sub)}
+.brand img{width:18px;height:18px}
+.brand span:last-child{margin-left:auto}
+.mast-row{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-top:4px}
+.mast h1{margin:0;font-size:28px;line-height:1.25;font-weight:700}
+#count{font-size:15px;color:var(--sub);font-variant-numeric:tabular-nums;white-space:nowrap}
+
+/* 老师切换：分段控件 */
+.tabs{position:sticky;top:44px;z-index:20;padding:8px 16px;background:rgba(242,242,247,.92);-webkit-backdrop-filter:saturate(180%) blur(20px);backdrop-filter:saturate(180%) blur(20px)}
+.seg{position:relative;display:flex;gap:2px;padding:2px;background:#e3e3e8;border-radius:10px;overflow-x:auto;scrollbar-width:none}
+.seg::-webkit-scrollbar{display:none}
+.seg-i{flex:1 0 100px;display:flex;flex-direction:column;align-items:center;gap:1px;padding:6px 8px;border:0;border-radius:8px;background:none;cursor:pointer;transition:background .2s}
+.seg-i b{font-size:15px;font-weight:600}
+.seg-i[aria-selected=true]{background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.1),0 0 0 .5px rgba(0,0,0,.04)}
+.seg-i:disabled{cursor:default}
+.st{display:inline-flex;align-items:center;gap:4px;font-size:12px;color:var(--sub);white-space:nowrap;border-radius:4px;padding:0 3px}
+.st svg{width:12px;height:12px;flex:none}
+.st.part,.st.full{color:var(--accent);font-weight:600}
+.st.flash{animation:flash 1.2s var(--ease)}
+@keyframes flash{0%,40%{background:#dfe6f1}100%{background:transparent}}
+
+/* 老师抬头 */
+.th{padding:18px 20px 2px}
+.th h2{margin:0;font-size:22px;line-height:1.3;font-weight:700}
+.th p{margin:2px 0 0;font-size:15px;color:var(--sub)}
+
+/* 提示条 */
+.note{display:flex;gap:8px;align-items:flex-start;margin:12px 16px 0;padding:10px 14px;border-radius:10px;font-size:15px;background:var(--accent-weak);color:var(--accent)}
+.note svg{width:18px;height:18px;flex:none;margin-top:2px}
+
+/* 题目：iOS 分组列表 */
+.q{margin:24px 16px 0;scroll-margin:150px 0 170px}
+.qh{display:flex;gap:6px;padding:0 4px 8px}
+.qn{flex:none;min-width:1.3em;font-weight:600;color:var(--faint);font-variant-numeric:tabular-nums}
+.qh h3{margin:0;font-size:17px;line-height:1.45;font-weight:600;text-wrap:pretty}
+.tag{display:inline-block;margin-left:6px;padding:0 6px;border-radius:4px;font-size:12px;line-height:20px;font-weight:500;color:var(--sub);background:#e5e5ea;vertical-align:1px;white-space:nowrap}
+.tag.req{color:var(--accent);background:#e1e8f2}
+.group{background:var(--card);border-radius:10px;overflow:hidden}
+.row{position:relative;display:flex;align-items:center;gap:12px;width:100%;min-height:48px;padding:12px 16px;border:0;background:var(--card);text-align:left;font-size:16px;line-height:1.45;color:var(--ink)}
+.row+.row::before{content:"";position:absolute;top:0;left:16px;right:0;border-top:.5px solid var(--line)}
+.group.multi .row+.row::before{left:50px}
+.opt{cursor:pointer;transition:background .15s}
+.opt:active:not(:disabled){background:var(--press)}
+.opt[aria-pressed=true]{background:#f5f7fa}
+.opt:disabled{cursor:default}
+.opt:disabled:has(.aside) .lab{color:var(--faint)}
+.lab{flex:1;min-width:0}
+.o-d{display:block;margin-top:2px;font-size:14px;color:var(--sub)}
+.tick{flex:none;width:20px;height:20px;color:var(--accent);visibility:hidden}
+.opt[aria-pressed=true] .tick{visibility:visible}
+.box{flex:none;display:grid;place-items:center;width:22px;height:22px;border-radius:6px;border:1.5px solid #b8b8bf;color:#fff;transition:background .15s,border-color .15s}
+.box svg{width:14px;height:14px;visibility:hidden}
+.opt[aria-pressed=true] .box{background:var(--accent);border-color:var(--accent)}
+.opt[aria-pressed=true] .box svg{visibility:visible}
+.aside{display:inline-flex;align-items:center;gap:4px;font-size:15px;color:var(--sub);white-space:nowrap}
+.aside svg{width:16px;height:16px}
+.field{padding:0}
+.field textarea,.field input{display:block;width:100%;border:0;padding:12px 16px;background:transparent;color:var(--ink);font:inherit;font-size:16px;outline:none;resize:none}
+.field textarea{min-height:120px}
+.field:focus-within{box-shadow:inset 0 0 0 2px var(--accent)}
+.field:first-child:last-child{border-radius:10px}
+::placeholder{color:#a1a1a6}
+.qf{margin:6px 20px 0;font-size:13px;color:var(--sub)}
+.count{text-align:right;font-variant-numeric:tabular-nums}
+.q.miss .group{outline:1.5px solid var(--warn);outline-offset:0}
+.q.miss .qn{color:var(--warn)}
+.miss-msg{display:flex;align-items:center;gap:6px;font-size:14px;font-weight:500;color:var(--warn-ink)}
+.miss-msg svg,.msg svg{width:16px;height:16px;flex:none}
+
+/* 只读行、汇总 */
+.static{cursor:default}
+.row small{display:block;font-size:14px;color:var(--sub)}
+.link{cursor:pointer}
+.link:active{background:var(--press)}
+.chev{flex:none;width:14px;height:14px;color:#c4c4c7}
+.list{margin:20px 16px 0}
+.list-foot{margin:8px 20px 0;font-size:13px;color:var(--sub)}
+.fin{padding:36px 20px 4px;text-align:center}
+.fin-mark{display:grid;place-items:center;width:56px;height:56px;margin:0 auto 14px;border-radius:50%;background:var(--accent);color:#fff}
+.fin-mark svg{width:28px;height:28px}
+.fin h2{margin:0;font-size:22px;line-height:1.35}
+.done-row{display:flex;align-items:center;gap:10px}
+.done-row svg{width:20px;height:20px;flex:none;color:var(--accent)}
+
+/* 底部提交栏 */
+.bar{position:fixed;left:50%;bottom:0;z-index:30;width:100%;max-width:430px;transform:translateX(-50%);padding:10px 16px calc(10px + env(safe-area-inset-bottom));background:rgba(249,249,251,.94);-webkit-backdrop-filter:saturate(180%) blur(20px);backdrop-filter:saturate(180%) blur(20px);border-top:.5px solid var(--line)}
+.bar[hidden]{display:none}
+.bar-row{display:flex;align-items:center;gap:12px}
+.req-count{font-size:14px;color:var(--sub);white-space:nowrap;font-variant-numeric:tabular-nums}
+.primary{flex:1;display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:50px;padding:0 16px;border:0;border-radius:12px;background:var(--accent);color:#fff;font-size:17px;font-weight:600;cursor:pointer;transition:opacity .15s}
+.primary:active:not(:disabled){opacity:.85}
+.primary:disabled{opacity:.55;cursor:default}
+.primary[aria-busy=true]{opacity:.85}
+.primary.ok,.primary.ok:disabled{opacity:1}
+.primary .ok-ico{width:20px;height:20px}
+.primary .ok-ico path{stroke-dasharray:24;stroke-dashoffset:24;animation:draw .38s .05s var(--ease) forwards}
+@keyframes draw{to{stroke-dashoffset:0}}
+.msg{display:flex;gap:8px;align-items:flex-start;margin:0 0 10px;padding:9px 12px;border:1px solid var(--warn-line);border-radius:10px;background:var(--warn-bg);color:var(--warn-ink);font-size:14px;line-height:1.5}
+.msg svg{margin-top:2px}
+.spin{width:18px;height:18px;border-radius:50%;border:2.5px solid rgba(255,255,255,.35);border-top-color:#fff;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* 完成动效：按钮上方一小簇，0.7 秒 */
+.spark{position:fixed;z-index:60;width:6px;height:6px;margin:-3px 0 0 -3px;border-radius:1px;pointer-events:none;animation:spark .7s var(--ease) forwards}
+.spark.dot{border-radius:50%}
+@keyframes spark{from{transform:translate(0,0) rotate(0);opacity:1}70%{opacity:1}to{transform:translate(var(--dx),var(--dy)) rotate(var(--r)) scale(.7);opacity:0}}
+
+/* 感谢礼：照线上 FeedbackThanksDialog + feedback-thanks.css 的样式 */
+.thanks-dialog{color-scheme:light;margin:auto;width:min(calc(100% - 24px),420px);max-height:calc(100% - 24px);overflow-y:auto;overscroll-behavior:contain;padding:0;border:1px solid #dededb;border-radius:20px;background:#fffefa;color:#192f4c;box-shadow:0 20px 70px rgba(0,0,0,.18);font:15px/1.55 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",system-ui,sans-serif}
+.thanks-dialog[open]{animation:dlg .28s var(--ease)}
+@keyframes dlg{from{opacity:0;transform:translateY(12px) scale(.98)}}
+.thanks-dialog::backdrop{background:#17294469}
+.thanks-dialog button{border:0;background:none;font:inherit;color:inherit;cursor:pointer}
+.thanks-dialog button:disabled{cursor:default;opacity:.48}
+.thanks-dialog h2,.thanks-dialog p,.thanks-dialog ol{margin:0;padding:0;list-style:none}
+.thanks-dialog .thanks-body{padding:14px 18px 18px}
+.thanks-dialog .thanks-top,.thanks-dialog .wordmark,.thanks-dialog .sponsor,.thanks-dialog .step{display:flex;align-items:center}
+.thanks-dialog .thanks-top{justify-content:space-between;border-bottom:1px solid #e8e6df;padding-bottom:10px;margin-bottom:18px}
+.thanks-dialog .wordmark{gap:7px;font-size:13px;letter-spacing:.08em;font-weight:600}
+.thanks-dialog .wordmark img{width:24px;height:24px}
+.thanks-dialog .tool{display:grid;place-items:center;width:44px;height:44px;margin:-5px -9px -5px 0;border-radius:8px;color:#536278}
+.thanks-dialog svg{width:18px;height:18px;flex:none}
+.thanks-dialog h2{font:600 21px/1.4 "Songti SC","Noto Serif CJK SC",STSong,serif;letter-spacing:.01em;text-wrap:balance}
+.thanks-dialog h2.center{text-align:center}
+.thanks-dialog .heading-note,.thanks-dialog .invite-copy{font-size:13.65px;color:#596371;line-height:1.65}
+.thanks-dialog .heading-note{margin-top:5px}
+.thanks-dialog .step{gap:8px;margin-bottom:8px;font-size:12.3px;color:#596779}
+.thanks-dialog .step li{display:inline-flex;gap:8px;align-items:center}
+.thanks-dialog .step [aria-current]{font-weight:700;color:#102e55}
+.thanks-dialog .envelope{display:grid;place-items:center;height:146px;margin-bottom:18px;border-radius:10px;background:radial-gradient(ellipse at 50% 90%,#f3e9cf,#faf6ec 70%)}
+.thanks-dialog .envelope img,.thanks-dialog .gift-art img{object-fit:contain;mix-blend-mode:multiply}
+.thanks-dialog .envelope img{width:143px;height:146px}
+.thanks-dialog .invite-copy{margin:8px auto 15px;text-align:center}
+.thanks-dialog .sponsor{gap:12px;padding:12px 14px;border:1px solid #d5e2f2;border-radius:10px;background:#edf4fc;color:#193e6b}
+.thanks-dialog .sponsor strong,.thanks-dialog .sponsor small{display:block}
+.thanks-dialog .sponsor strong{font-size:15.9px;line-height:1.5}
+.thanks-dialog .sponsor small{font-size:12.9px;line-height:1.55;margin-top:2px;color:#425b77}
+.thanks-dialog .sponsor svg{width:22px;height:22px}
+.thanks-dialog .thanks-actions{display:grid;gap:3px;margin-top:18px}
+.thanks-dialog .thanks-actions.split{grid-template-columns:auto 1fr;gap:12px}
+.thanks-dialog .thanks-actions button{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:44px;border:1px solid transparent;border-radius:10px;padding:8px 15px;font-size:14.4px;font-weight:600;color:#4d5a6b}
+.thanks-dialog .thanks-actions .primary-t{background:#123969;color:#fff}
+.thanks-dialog .gift-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:16px}
+.thanks-dialog .gift-card{display:block;padding:0;text-align:left}
+.thanks-dialog .gift-surface{position:relative;display:flex;flex-direction:column;min-height:100%;padding:5px 5px 10px;border:1px solid #deded9;border-radius:12px;background:#fff;overflow:hidden}
+.thanks-dialog .gift-card[aria-pressed=true] .gift-surface{border-color:#345c8c;box-shadow:inset 0 0 0 1px #345c8c}
+.thanks-dialog .gift-surface strong,.thanks-dialog .gift-surface small{padding-inline:6px}
+.thanks-dialog .gift-surface strong{font-size:14.4px;color:#233852;font-weight:650;line-height:1.4;margin-top:7px}
+.thanks-dialog .gift-surface small{font-size:12px;color:#596371;margin-top:2px}
+.thanks-dialog .price{position:absolute;top:9px;left:10px;font-size:12.3px;line-height:1.5;font-weight:600;color:#384759;font-variant-numeric:tabular-nums}
+.thanks-dialog .mark{display:none;position:absolute;top:9px;right:9px;width:17px;height:17px;place-items:center;border-radius:50%;background:#25486e;color:#fff}
+.thanks-dialog .mark svg{width:12px;height:12px}
+.thanks-dialog .gift-card[aria-pressed=true] .mark{display:grid}
+.thanks-dialog .gift-art{width:100%;height:100px;display:grid;place-items:end center;border-radius:8px;background:#eaf0f6}
+.thanks-dialog .gift-art img{width:83px;height:83px}
+.thanks-dialog .gift-art[data-gift=flowers]{background:#f2f3e9}
+.thanks-dialog .gift-art[data-gift=cake]{background:#faf0e8}
+.thanks-dialog .gift-art[data-gift=pennant]{background:#f1edf4}
+.thanks-dialog .gift-summary{display:flex;justify-content:space-between;gap:8px;align-items:center;background:#eef5ff;border-radius:8px;padding:8px 11px;margin:12px 0 10px;font-size:12px;color:#294e7f}
+.thanks-dialog .gift-summary span{display:inline-flex;gap:4px;align-items:center}
+.thanks-dialog .message-options{display:grid;gap:3px;border:0;margin:0;padding:0}
+.thanks-dialog .message-option{display:flex;align-items:center;gap:9px;min-height:38px;border:1px solid transparent;border-radius:8px;padding:5px 8px;font-size:14px;cursor:pointer}
+.thanks-dialog .message-option:has(:checked){border-color:#dceafe;background:#eef5ff;font-weight:650}
+.thanks-dialog .message-option input{accent-color:#123969;width:16px;height:16px;margin:0;flex:none}
+.thanks-dialog textarea{display:block;width:100%;resize:vertical;min-height:58px;margin-top:7px;border:1px solid #d5deea;border-radius:8px;background:#fff;padding:8px 10px;font:inherit;font-size:16px}
+.thanks-dialog .counter{text-align:right;font-size:11px;color:#4c617a;margin-top:2px}
+
+/* 调场景（只在 Demo 里） */
+.tune{position:fixed;left:8px;bottom:150px;z-index:70;font-size:13px}
+.tune summary{cursor:pointer;list-style:none;padding:4px 9px;border:1px solid var(--line);border-radius:8px;background:#fff;font-size:12px;font-weight:600;opacity:.92}
+.tune summary::-webkit-details-marker{display:none}
+.tune>div{position:absolute;left:0;bottom:calc(100% + 6px);width:250px;display:grid;gap:4px;padding:8px;background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:0 6px 20px rgba(0,0,0,.14)}
+.tune button{padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:#fff;font-size:13px;text-align:left;cursor:pointer}
+.tune label{display:flex;gap:6px;align-items:center;padding:3px 2px}
+.tune select{font:inherit;font-size:13px}
+@media (min-width:700px){
+  .app,.bar{max-width:560px}
+  .tune{bottom:16px;left:16px}
+}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="wx">菁仕教育</div>
+  <header class="mast">
+    <div class="brand"><img src="../../public/logo-blue.svg" alt=""><span>菁仕教育</span><span>学生 小禾</span></div>
+    <div class="mast-row"><h1>11月课程反馈</h1><span id="count"></span></div>
+  </header>
+  <nav class="tabs" id="tabs-wrap"><div class="seg" id="tabs" role="tablist" aria-label="选择老师"></div></nav>
+  <main id="page"></main>
+</div>
+<div class="bar" id="bar" hidden></div>
+<dialog class="thanks-dialog" id="thanks" aria-labelledby="thanks-title"></dialog>
+
+<details class="tune" id="lab">
+  <summary>调场景</summary>
+  <div>
+    <button data-s="normal">① 本月 3 位老师（周老师家长已评）</button>
+    <button data-s="parent">② 家长填写（9 题）</button>
+    <button data-s="zhou">③ 周老师：家长已提交，学生来评</button>
+    <button data-s="missing">④ 必填题未填就点提交</button>
+    <button data-s="draft">⑤ 中途退出后重开（恢复草稿）</button>
+    <button data-s="many">⑥ 本月 6 位老师</button>
+    <button data-s="closed">⑦ 本月反馈已截止</button>
+    <button data-s="all">⑧ 学生、家长都已评完</button>
+    <label><input type="checkbox" id="fail">下一次提交失败（网络断开）</label>
+    <label><input type="checkbox" id="slow">提交较慢（4 秒）</label>
+    <label><input type="checkbox" id="nogift">本月没有启用感谢礼</label>
+    <label>完成动效 <select id="fx"><option value="burst">对勾 + 小礼花</option><option value="check">只有对勾</option></select></label>
+  </div>
+</details>
+
+<script>
+// 题目和选项照线上飞书「课程反馈问卷」（2026-11-25 读取），去掉了（必填）（选填）前缀。
+const single = 1, multi = 2, text = 3;
+const BRANCH = {
+  "学生本人": [
+    { id: "【学生】学习提升效果", title: "这段时间的课程，对您的成绩提升帮助有多大？", type: single, req: true,
+      opts: ["帮助非常大，进步明显", "帮助较大，有一定提升", "帮助一般，提升有限", "帮助不大，收获较少"] },
+    { id: "【学生】责任心与服务态度", title: "在整个课程期间，老师是否始终认真负责、态度热情、服务周到？", type: single, req: true,
+      opts: ["是的，始终如此，非常满意", "大部分时候能做到，整体良好", "偶尔有所欠缺，但总体尚可", "有较明显的不足，希望改进"] },
+    { id: "【学生】个人魅力", title: "您觉得这位老师的个人教学魅力如何？", type: single, req: true,
+      opts: ["非常出色，深深吸引我投入学习", "较好，能够调动我的学习兴趣", "一般，课堂氛围较为平淡", "有待提升，较难引发我的学习热情"] },
+    { id: "【学生】改进方面", title: "在日常学习过程中，您希望老师可以在哪些方面进一步提升？", type: multi, req: false,
+      opts: ["已经很好了，没有需要提升的", "更得体的着装形象与职业气质", "更注重个人气味管理，保持清新的课堂气息", "更温和、鼓励性的语言表达方式", "更个性化地了解我的学习习惯与心理状态", "更灵活地调整教学节奏，适应我的学习状态", "更能激发我的学习主动性与自信心", "更加得体、更有分寸的谈吐", "其他"] },
+  ],
+  "家长/监护人": [
+    { id: "【家长】学习提升效果", title: "这段时间的课程，您认为对孩子的成绩提升帮助有多大？", type: single, req: true,
+      opts: ["帮助非常大，孩子进步明显", "帮助较大，孩子有一定提升", "帮助一般，提升较为有限", "帮助不大，收获较少"] },
+    { id: "【家长】责任心与服务态度", title: "在整个课程期间，您感受到老师是否始终认真负责、态度热情、服务周到？", type: single, req: true,
+      opts: ["是的，始终如此，非常满意", "大部分时候能做到，整体良好", "偶尔有所欠缺，但总体尚可", "有较明显的不足，希望改进"] },
+    { id: "【家长】个人魅力", title: "您认为这位老师对学生的教学影响力如何？", type: single, req: true,
+      opts: ["影响力非常显著，孩子在学习态度、思维方式和成绩上均有明显改变", "影响力较为积极，孩子的学习状态和兴趣有所提升", "影响力一般，孩子暂未呈现出明显的改变", "影响力有待加强，孩子的学习状态未见明显改善"] },
+    { id: "顾问", title: "顾问老师（Tinko）是否及时帮助学生优化课程安排？", type: single, req: true,
+      opts: ["已经很好了，不需要提升", "对沟通效率总体满意，但可以沟通更频繁", "基本满意，但可以更少打扰", "沟通稍有欠缺，建议多加反馈和沟通", "沟通太多，建议少打扰"] },
+    { id: "【家长】改进方面", title: "在孩子的日常学习过程中，您希望老师可以在哪些方面进一步提升？", type: multi, req: false,
+      opts: ["已经很好了，没有需要提升的", "更得体的着装形象与职业气质", "更温和、鼓励性的语言表达方式", "更个性化地了解孩子的学习习惯与心理状态", "课后能主动提供学习反馈和阶段性总结", "更灵活地调整教学节奏，适应孩子的学习状态", "更能激发孩子的学习主动性与自信心", "其他"] },
+  ],
+};
+const SHARED = [
+  { id: "上课风格", title: "您如何评价这位老师的整体授课风格？", type: single, req: false,
+    opts: ["风趣幽默型 — 课堂氛围轻松活跃，善于调动学习热情", "严谨专注型 — 讲解严密深入，注重知识的系统性与准确性，课堂专注高效", "其他"] },
+  { id: "教学节奏", title: "您如何评价这位老师的教学进度与节奏把控？", type: multi, req: false,
+    opts: ["高效紧凑型 — 知识点覆盖全面、推进迅速，适合基础扎实、学习节奏快的学生", "稳扎稳打型 — 讲解细致充分、循序渐进，注重每个知识点的理解与消化", "其他"] },
+  { id: "课堂互动", title: "您如何评价这位老师的课堂教学方式？", type: single, req: false,
+    opts: ["系统讲授型 — 以老师讲解为主，知识体系完整、逻辑清晰，内容输出充分", "互动引导型 — 注重师生双向交流，善于通过提问、讨论引导学生主动思考"] },
+  { id: "建议", title: "如果您可以对我们提一个最希望改进的建议，您最想说的是什么？", type: text, req: false },
+];
+// 感谢礼：照 migrations/202611230001_feedback_thanks.sql 的默认礼物
+const GIFTS = [
+  { id: "coffee", label: "请老师喝一杯", description: "辛苦了，放松一下", value: 35 },
+  { id: "flowers", label: "送老师一束花", description: "感谢您的用心", value: 45 },
+  { id: "cake", label: "给老师一点甜", description: "谢谢您的耐心陪伴", value: 40 },
+  { id: "pennant", label: "为老师送上荣誉", description: "感谢您的专业指导", value: 50 },
+];
+const CUSTOM = "我想自己写一句";
+const NOTES = ["感谢老师的耐心与负责", "孩子最近进步很明显", "老师的教学方式很适合孩子", "感谢老师课后的及时反馈", CUSTOM];
+const IDS = ["学生本人", "家长/监护人"];
+const KEY = "demo.v6.";
+const I = {
+  check: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>`,
+  checkDraw: `<svg class="ok-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>`,
+  warn: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.8l10 17.6H2z" fill="#c2620c"/><path d="M12 9.5v5M12 17.2v.3" stroke="#fff" stroke-width="2.2" stroke-linecap="round"/></svg>`,
+  info: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9.5"/><path d="M12 11v6M12 7.5v.5" stroke-linecap="round"/></svg>`,
+  chev: `<svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg>`,
+  x: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"/></svg>`,
+  gift: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="8" width="18" height="4" rx="1"/><path d="M12 8v13M19 12v7a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-7M7.5 8a2.5 2.5 0 0 1 0-5C10 3 12 8 12 8s2-5 4.5-5a2.5 2.5 0 0 1 0 5"/></svg>`,
+  mail: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M22 7l-10 6L2 7"/></svg>`,
+  send: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4z"/></svg>`,
+  // 状态图形：待评价=虚线空心圈，一方已评=描边圈加勾，双方已评=实心圈加勾
+  none: `<svg viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4.8" fill="none" stroke="currentColor" stroke-width="1.3" stroke-dasharray="2 1.6"/></svg>`,
+  part: `<svg viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="5" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M3.6 6.2l1.6 1.6 3.2-3.3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+  full: `<svg viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="6" fill="currentColor"/><path d="M3.4 6.2l1.8 1.8 3.4-3.5" fill="none" stroke="#fff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+};
+
+const TEACHERS = [
+  { id: "chen", name: "陈老师", courses: ["小学数学", "奥数思维"], student: false, parent: false },
+  { id: "xu", name: "许老师", courses: ["英语阅读"], student: false, parent: false },
+  { id: "zhou", name: "周老师", courses: ["语文"], student: false, parent: true },
+];
+const MORE = [
+  { id: "wang", name: "王老师", courses: ["初中物理"], student: false, parent: false },
+  { id: "li", name: "李老师", courses: ["化学", "实验探究"], student: false, parent: false },
+  { id: "zhao", name: "赵老师", courses: ["编程启蒙"], student: false, parent: false },
+];
+const fresh = many => ({ closed: false, teachers: structuredClone(many ? [...TEACHERS, ...MORE] : TEACHERS) });
+
+let S, sel, draft, notice = null, busy = false, failed = false, showMiss = false, gen = 0; // gen：切场景后丢弃上一场景未完成的提交
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const wait = ms => new Promise(r => setTimeout(r, ms));
+const reduced = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
+// 预览、隐私模式下 localStorage 可能不可用，Demo 照样能走
+const store = {
+  get(k) { try { return JSON.parse(localStorage.getItem(KEY + k)); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem(KEY + k, JSON.stringify(v)); } catch {} },
+  del(k) { try { localStorage.removeItem(KEY + k); } catch {} },
+  clear() { try { Object.keys(localStorage).filter(k => k.startsWith(KEY)).forEach(k => localStorage.removeItem(k)); } catch {} },
+};
+const teacher = () => S.teachers.find(t => t.id === sel);
+const who = identity => identity === "学生本人" ? "student" : "parent";
+const sent = (t, identity) => t[who(identity)];
+const done = t => t.student || t.parent;
+const full = t => t.student && t.parent;
+const kind = t => full(t) ? "full" : done(t) ? "part" : "none";
+const label = t => full(t) ? "双方已评" : t.student ? "学生已评" : t.parent ? "家长已评" : "待评价";
+const status = t => `<span class="st ${kind(t)}">${I[kind(t)]}${label(t)}</span>`;
+const questions = () => draft.identity ? [...BRANCH[draft.identity], ...SHARED] : [];
+const answered = q => q.type === multi ? (draft.a[q.id] || []).length > 0 : Boolean(draft.a[q.id]);
+const save = () => store.set("d." + sel, draft);
+
+// s 为空 = 真实刷新：保留草稿和已提交状态；带场景 = 重置后进入该场景
+function load(scene) {
+  gen++;
+  if (scene) store.clear();
+  if ($("thanks").open) $("thanks").close();
+  S = (!scene && store.get("state")) || fresh(scene === "many");
+  if (scene === "closed") S.closed = true;
+  if (scene === "all") S.teachers.forEach(t => { t.student = true; t.parent = true; });
+  if (scene === "draft") store.set("d.chen", { identity: "学生本人", a: { "【学生】学习提升效果": "帮助较大，有一定提升", "【学生】责任心与服务态度": "是的，始终如此，非常满意" } });
+  if (scene === "parent") store.set("d.chen", { identity: "家长/监护人", a: {} });
+  if (scene === "missing") store.set("d.chen", { identity: "学生本人", a: { "【学生】学习提升效果": "帮助较大，有一定提升" } });
+  store.set("state", S);
+  busy = false;
+  const first = S.teachers.find(t => !done(t)) ?? S.teachers.find(t => !full(t));
+  open(scene === "zhou" ? "zhou" : first?.id ?? "", !scene || scene === "draft");
+  if (scene === "missing") submit();
+}
+function open(id, announce) {
+  sel = id; notice = null; failed = false; showMiss = false;
+  const t = teacher(), saved = store.get("d." + id);
+  draft = saved ?? { identity: "", a: {} };
+  if (t && draft.identity && sent(t, draft.identity)) draft.identity = "";
+  if (t && !draft.identity) {
+    const last = store.get("identity");
+    if (last && !sent(t, last)) draft.identity = last;
+  }
+  if (announce && saved && Object.keys(saved.a || {}).length) notice = { text: "已恢复上次未提交的内容。" };
+  render(); scrollTo(0, 0);
+}
+
+function renderTabs(flash) {
+  $("tabs").innerHTML = S.teachers.map(t => `
+    <button class="seg-i" role="tab" aria-selected="${t.id === sel}" data-t="${t.id}" ${busy ? "disabled" : ""}>
+      <b>${t.name}</b>${status(t).replace('class="st', `class="st${t.id === flash ? " flash" : ""}`)}</button>`).join("");
+  const tabs = $("tabs"), on = tabs.querySelector('[aria-selected="true"]');
+  if (on) tabs.scrollLeft = on.offsetLeft - (tabs.clientWidth - on.offsetWidth) / 2; // 老师多时把当前老师滚到中间
+  $("count").textContent = `已评价 ${S.teachers.filter(done).length}/${S.teachers.length}`;
+}
+function render() {
+  const t = teacher(), plain = S.closed || !t;
+  renderTabs();
+  $("tabs-wrap").hidden = plain;
+  if (S.closed) { $("page").innerHTML = closedView(); $("bar").hidden = true; return; }
+  if (!t) { $("page").innerHTML = doneView(); $("bar").hidden = true; return; }
+  $("page").innerHTML = formView(t);
+  renderBar(t);
+}
+
+const optLabel = o => {
+  const [h, d] = o.split(" — ");
+  return d ? `${esc(h)}<span class="o-d">${esc(d)}</span>` : esc(o);
+};
+function formView(t) {
+  const head = `<header class="th"><h2>${t.name}</h2><p>${t.courses.join(" · ")}</p></header>`;
+  const note = notice ? `<div class="note" role="status">${I.info}<span>${notice.text}</span></div>` : "";
+  if (full(t)) return head + note + `<div class="list"><div class="group"><div class="row static done-row">${I.check}<span class="lab">学生和家长都已提交对${t.name}的评价</span></div></div></div>`;
+  const ids = `<section class="q"><div class="qh"><h3>填写人</h3></div><div class="group">` + IDS.map(v => {
+    const s = sent(t, v);
+    return `<button class="row opt" data-id="${v}" aria-pressed="${draft.identity === v}" ${s || busy ? "disabled" : ""}>
+      <span class="lab">${v}</span>${s ? `<span class="aside">${I.check}已提交</span>` : `<span class="tick">${I.check}</span>`}</button>`;
+  }).join("") + `</div></section>`;
+  if (!draft.identity) return head + note + ids;
+  return head + note + ids + questions().map(question).join("");
+}
+function question(q, i) {
+  const v = draft.a[q.id], miss = showMiss && q.req && !answered(q), dis = busy ? "disabled" : "";
+  const tags = `<span class="tag${q.req ? " req" : ""}">${q.req ? "必填" : "选填"}</span>` + (q.type === multi ? `<span class="tag">可多选</span>` : "");
+  let rows;
+  if (q.type === text) {
+    rows = `<div class="row field"><textarea data-txt="${q.id}" maxlength="500" placeholder="写下您的建议" aria-label="${q.title}" ${dis}>${esc(v || "")}</textarea></div>`;
+  } else {
+    rows = q.opts.map(o => {
+      const on = q.type === multi ? (v || []).includes(o) : v === o;
+      return `<button class="row opt" data-q="${q.id}" data-o="${esc(o)}" aria-pressed="${on}" ${dis}>` +
+        (q.type === multi ? `<span class="box">${I.check}</span>` : "") + `<span class="lab">${optLabel(o)}</span>` +
+        (q.type === single ? `<span class="tick">${I.check}</span>` : "") + `</button>`;
+    }).join("");
+    const other = q.type === multi ? (v || []).includes("其他") : v === "其他";
+    if (other) rows += `<div class="row field"><input data-other="${q.id}" placeholder="请补充其他内容" aria-label="其他内容" value="${esc(draft.a[q.id + "-其他"] || "")}" ${dis}></div>`;
+  }
+  const foot = q.type === text ? `<p class="qf count">${(v || "").length}/500</p>`
+    : miss ? `<p class="qf miss-msg">${I.warn}请选择一项</p>` : "";
+  return `<section class="q${miss ? " miss" : ""}" data-qid="${q.id}">
+    <div class="qh"><span class="qn">${i + 1}</span><h3>${q.title}${tags}</h3></div>
+    <div class="group${q.type === multi ? " multi" : ""}">${rows}</div>${foot}</section>`;
+}
+function renderBar(t) {
+  const bar = $("bar");
+  if (full(t) || !draft.identity) { bar.hidden = true; return; }
+  bar.hidden = false;
+  const req = questions().filter(q => q.req), got = req.filter(answered).length;
+  const msg = failed ? `<p class="msg" role="alert">${I.warn}<span>提交没有成功，填写的内容已保留。请检查网络后重新提交。</span></p>`
+    : showMiss && got < req.length ? `<p class="msg" role="alert">${I.warn}<span>有 ${req.length - got} 道必填题未选择</span></p>` : "";
+  bar.innerHTML = msg + `<div class="bar-row"><span class="req-count">必填 ${got}/${req.length}</span>
+    <button class="primary" data-go="submit" ${busy ? "disabled aria-busy=\"true\"" : ""}>${busy ? `<span class="spin"></span>正在提交…` : failed ? "重新提交评价" : `提交对${t.name}的评价`}</button></div>`;
+}
+function closedView() {
+  return `<header class="th"><h2>11月反馈已截止</h2></header><div class="list"><div class="group">` +
+    S.teachers.map(t => `<div class="row static"><span class="lab">${t.name}<small>${t.courses.join(" · ")}</small></span>${status(t)}</div>`).join("") +
+    `</div><p class="list-foot">如需补充评价，请联系教务老师。</p></div>`;
+}
+function doneView() {
+  const all = S.teachers.every(full), last = store.get("identity");
+  const title = all || !last ? "11月反馈已全部提交" : `${last === "学生本人" ? "学生" : "家长"}的评价已全部提交`;
+  return `<div class="fin"><div class="fin-mark">${I.check}</div><h2>${title}</h2></div><div class="list"><div class="group">` +
+    S.teachers.map(t => full(t)
+      ? `<div class="row static"><span class="lab">${t.name}<small>${t.courses.join(" · ")}</small></span>${status(t)}</div>`
+      : `<button class="row link" data-t="${t.id}"><span class="lab">${t.name}<small>${t.courses.join(" · ")}</small></span>${status(t)}${I.chev}</button>`).join("") +
+    `</div></div>`;
+}
+
+document.addEventListener("click", e => {
+  const el = e.target.closest("button");
+  if (!el || el.closest("dialog")) return;
+  if (el.dataset.s) { $("lab").open = false; load(el.dataset.s); return; }
+  if (busy) return;
+  if (el.dataset.t) { open(el.dataset.t); return; }
+  if (el.dataset.id) { draft.identity = el.dataset.id; save(); render(); return; }
+  if (el.dataset.go === "submit") { submit(); return; }
+  if (el.dataset.o !== undefined) {
+    const q = questions().find(x => x.id === el.dataset.q), o = el.dataset.o;
+    if (q.type === multi) {
+      const set = new Set(draft.a[q.id] || []);
+      set.has(o) ? set.delete(o) : set.add(o);
+      draft.a[q.id] = [...set];
+    } else draft.a[q.id] = o;
+    save(); render();
+  }
+});
+document.addEventListener("input", e => {
+  const el = e.target;
+  if (el.closest("dialog")) return;
+  if (el.dataset.txt) { draft.a[el.dataset.txt] = el.value; el.closest(".q").querySelector(".count").textContent = `${el.value.length}/500`; }
+  else if (el.dataset.other) draft.a[el.dataset.other + "-其他"] = el.value;
+  else return;
+  save();
+});
+
+async function submit() {
+  if (busy) return;
+  const t = teacher(), req = questions().filter(q => q.req);
+  if (req.some(q => !answered(q))) {
+    showMiss = true; failed = false; render();
+    document.querySelector(".q.miss")?.scrollIntoView({ behavior: reduced() ? "auto" : "smooth", block: "start" });
+    return;
+  }
+  const g = gen;
+  busy = true; failed = false; showMiss = false; render();
+  await wait($("slow").checked ? 4000 : 1000);
+  if (g !== gen) return;
+  if ($("fail").checked) { $("fail").checked = false; busy = false; failed = true; render(); return; }
+  const identity = draft.identity;
+  t[who(identity)] = true;
+  store.del("d." + t.id); store.set("identity", identity); store.set("state", S);
+  // 完成反馈：按钮变成「已提交」并描出对勾，顶部老师状态同步更新
+  renderTabs(t.id);
+  $("bar").innerHTML = `<div class="bar-row"><span class="req-count">必填 ${req.length}/${req.length}</span>
+    <button class="primary ok" disabled>${I.checkDraw}已提交</button></div>`;
+  if ($("fx").value === "burst" && !reduced()) burst($("bar").querySelector(".primary"));
+  await wait(reduced() ? 300 : 900);
+  if (g !== gen) return;
+  busy = false;
+  $("nogift").checked ? finish(t, identity, false) : thanks(t, identity);
+}
+function burst(el) {
+  const r = el.getBoundingClientRect(), cx = r.left + r.width / 2, cy = r.top + 6;
+  const colors = ["#0e2848", "#ba8d45", "#3d6aa3", "#d9b878"];
+  for (let i = 0; i < 14; i++) {
+    const a = Math.PI * (1.08 + .84 * i / 13) + (Math.random() - .5) * .2, d = 46 + Math.random() * 34;
+    const s = document.createElement("i");
+    s.className = "spark" + (i % 3 === 0 ? " dot" : "");
+    s.style.cssText = `left:${cx + (i - 6.5) * 6}px;top:${cy}px;background:${colors[i % 4]};--dx:${Math.cos(a) * d}px;--dy:${Math.sin(a) * d}px;--r:${(Math.random() - .5) * 300}deg`;
+    document.body.append(s);
+    setTimeout(() => s.remove(), 800);
+  }
+}
+function nextTeacher(identity, from) {
+  const self = who(identity), i = S.teachers.findIndex(x => x.id === from);
+  return [...S.teachers.slice(i + 1), ...S.teachers].find(x => !x[self] && !full(x))?.id ?? "";
+}
+function finish(t, identity, gift) {
+  open(nextTeacher(identity, t.id));
+  if (teacher()) { notice = { text: gift ? `${t.name}的评价已提交，感谢礼已登记。` : `${t.name}的评价已提交。` }; render(); }
+}
+
+function thanks(t, identity) {
+  const d = $("thanks");
+  let step = "invite", gift = null, choice = "", custom = "", sending = false;
+  const note = () => choice === CUSTOM ? custom.trim() : choice;
+  const close = given => { d.close(); finish(t, identity, given); };
+  const draw = () => {
+    const top = `<header class="thanks-top"><span class="wordmark"><img src="../../public/logo-blue.svg" alt="">菁仕教育</span>
+      <button type="button" class="tool" data-a="skip" aria-label="关闭并跳过感谢礼" ${sending ? "disabled" : ""}>${I.x}</button></header>`;
+    const steps = step === "invite" ? "" : `<ol class="step"><li ${step === "gifts" ? 'aria-current="step"' : ""}>${step === "gifts" ? "选礼物" : "已选礼物"}</li>
+      <li ${step === "message" ? 'aria-current="step"' : ""}><span aria-hidden="true">›</span>留感谢语</li></ol>`;
+    let body;
+    if (step === "invite") body = `<div class="envelope"><img src="../../public/thanks/envelope.webp" alt=""></div>
+      <h2 id="thanks-title" class="center">给${t.name}一份小小的感谢</h2><p class="invite-copy">这位老师的评价已提交。</p>
+      <p class="sponsor">${I.gift}<span><strong>礼物我们来准备，您不用花钱</strong><small>我们会把礼物和您的感谢一起送给老师。</small></span></p>
+      <div class="thanks-actions"><button class="primary-t" data-a="go">${I.mail}传递感谢</button><button data-a="skip">暂时不用</button></div>`;
+    else if (step === "gifts") body = `<h2 id="thanks-title">选一份心意送给${t.name}</h2><p class="heading-note">这些礼物由菁仕准备，您不用花钱。</p>
+      <div class="gift-grid">${GIFTS.map(g => `<button class="gift-card" data-g="${g.id}" aria-pressed="${gift?.id === g.id}"><span class="gift-surface">
+        <span class="gift-art" data-gift="${g.id}"><img src="../../public/thanks/${g.id}.webp" alt=""></span><span class="mark">${I.check}</span>
+        <strong>${g.label}</strong><small>${g.description}</small><span class="price">价值 ¥${g.value}</span></span></button>`).join("")}</div>
+      <div class="thanks-actions split"><button data-a="invite">上一步</button><button class="primary-t" data-a="message" ${gift ? "" : "disabled"}>选感谢语</button></div>`;
+    else body = `<h2 id="thanks-title">想对${t.name}说些什么？</h2><div class="gift-summary"><span>${I.gift}已选礼物</span><strong>${gift.label}</strong></div>
+      <fieldset class="message-options" ${sending ? "disabled" : ""}>${NOTES.map(n => `<label class="message-option"><input type="radio" name="msg" value="${n}" ${choice === n ? "checked" : ""}>${n}</label>`).join("")}</fieldset>
+      <textarea data-custom aria-label="自己写一句感谢语" placeholder="写下您想对老师说的话…" maxlength="200" ${sending ? "disabled" : ""}>${esc(custom)}</textarea>
+      <p class="counter">${custom.length}/200</p>
+      <div class="thanks-actions split"><button data-a="gifts" ${sending ? "disabled" : ""}>上一步</button>
+        <button class="primary-t" data-a="send" ${note() && !sending ? "" : "disabled"}>${I.send}${sending ? "正在送出…" : "确认送出"}</button></div>`;
+    d.innerHTML = `<div class="thanks-body">${top}${steps}${body}</div>`;
+    d.scrollTop = 0;
+  };
+  d.onclick = async e => {
+    const b = e.target.closest("button");
+    if (!b || b.disabled) return;
+    if (b.dataset.g) { gift = GIFTS.find(g => g.id === b.dataset.g); draw(); return; }
+    const a = b.dataset.a;
+    if (a === "skip") return close(false);
+    if (a === "go") step = "gifts";
+    if (["invite", "gifts", "message"].includes(a)) step = a;
+    if (a === "send") { const g = gen; sending = true; draw(); await wait(700); if (g === gen) close(true); return; }
+    draw();
+  };
+  d.onchange = e => { if (e.target.name === "msg") { choice = e.target.value; draw(); } };
+  d.oninput = e => {
+    if (!e.target.dataset.custom) return;
+    custom = e.target.value; choice = CUSTOM;
+    d.querySelector(`input[value="${CUSTOM}"]`).checked = true;
+    d.querySelector(".counter").textContent = `${custom.length}/200`;
+    d.querySelector('[data-a="send"]').disabled = !note();
+  };
+  d.oncancel = e => { e.preventDefault(); if (!sending) close(false); };
+  draw(); d.showModal();
+}
+
+load(new URLSearchParams(location.search).get("s") || "");
+</script>
+</body>
+</html>

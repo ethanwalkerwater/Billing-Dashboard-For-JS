@@ -1,4 +1,4 @@
-import { courseMonthToCollectionMonth, shiftMonth } from "../../domain";
+import { courseMonthToCollectionMonth } from "../../domain";
 import type { LessonRow } from "../../domain";
 import { applyFrozenLessons, keepCourseLessons } from "../export/csv";
 import type { NameAlias } from "../tasks/types";
@@ -14,16 +14,20 @@ export const LIVE_SCORES_FROM = "2026-09";
 // 3：4 分算 5 分的两条规则（连续打 4 分、评分标准高），见 functions/feedback-score/index.py
 // 4：答卷按「反馈课程月份」归属（可以月中提前评）；评价过的学生-老师课时定稿（applyFrozenLessons）
 // 5：顺带算官网「课堂体验」三项偏好（preferences），见 functions/feedback-score/index.py
-export const SCORE_ENGINE_VERSION = "5";
-
-/** 规则「连续 3 个月打 4 分」要看前几个月的逐条明细（存的是原始分） */
-export const STREAK_MONTHS = 3;
+// 6：评分标准高改看超过 3 个历史课程月份的原始分，允许不连续、持续触发
+// 7：覆盖率 / 加权课时不含「不统计的学生」
+export const SCORE_ENGINE_VERSION = "7";
 
 export interface PriorDetailRow {
   student: string;
   teacher: string;
   matched: boolean;
   scores: Record<string, number | null>;
+}
+
+export interface ScoreHistoryMonth {
+  course_month: string;
+  detail: PriorDetailRow[];
 }
 
 export interface ScoreRequest {
@@ -33,8 +37,10 @@ export interface ScoreRequest {
   dedupeKeep: "first" | "last";
   aliases: NameAlias[];
   teacherNames: string[];
-  /** 前 STREAK_MONTHS 个月（由远到近）的明细，只留有 4 分的行 */
-  priorDetails: PriorDetailRow[][];
+  /** 本月之前所有已存月份的原始明细，含 5 分；不能把 adjusted 当作原始分 */
+  priorDetails: ScoreHistoryMonth[];
+  /** 工作台「不统计的学生」，覆盖率和加权课时都不算他们 */
+  excludedStudents: string[];
 }
 
 /** 老师 → 偏好维度 → 「偏右侧选择 × 课时」的和、课时和、份数 */
@@ -71,10 +77,12 @@ export interface ScoreStore {
   teacherNames(): Promise<string[]>;
   /** 「课程类型」页的手动设定 */
   courseTypeOverrides(): Promise<Map<string, boolean>>;
-  /** 某个课程月份存下的逐条明细 */
-  detail(courseMonth: string): Promise<PriorDetailRow[] | undefined>;
+  /** 一次读取本月之前的原始明细，避免逐月发请求 */
+  history(beforeMonth: string): Promise<ScoreHistoryMonth[]>;
   /** 这一轮（收集月份）里有人评价过、课时已定稿的任务 */
   frozenLessons(collectionMonth: string): Promise<Array<{ studentName: string; teacherName: string; lessons: LessonRow[] }>>;
+  /** 工作台「不统计的学生」，所有月份通用 */
+  excludedStudents(): Promise<string[]>;
 }
 
 /** 课程月份 M 的反馈从 M 月生成名单起就能填（预填了反馈课程月份），晚交的到 M+1 月；M+1 月过完，M 就定稿。 */
@@ -100,33 +108,49 @@ export async function recomputeMonth(input: {
   currentMonth: string;
   /** 手动重算：已定稿的月份也重算一次 */
   force?: boolean;
+  /** 提前发布：收集月份还没过完也定稿 */
+  publish?: boolean;
 }): Promise<RecomputeOutcome> {
   const { store, courseMonth } = input;
   if (courseMonth < LIVE_SCORES_FROM) return "history";
   const existing = await store.result(courseMonth);
   if (existing?.status === "final" && !input.force) return "final";
 
-  const priorMonths = Array.from({ length: STREAK_MONTHS }, (_, index) => shiftMonth(courseMonth, index - STREAK_MONTHS));
   const collectionMonth = courseMonthToCollectionMonth(courseMonth);
-  const [rawScheduleCsv, feedbackCsv, aliases, teacherNames, overrides, frozen, ...priorRows] = await Promise.all([
+  const [rawScheduleCsv, feedbackCsv, aliases, teacherNames, overrides, frozen, history, excludedStudents] = await Promise.all([
     store.snapshot("schedule", courseMonth),
     store.snapshot("feedback", collectionMonth),
     store.aliases(),
     store.teacherNames(),
     store.courseTypeOverrides(),
     store.frozenLessons(collectionMonth),
-    ...priorMonths.map((month) => store.detail(month)),
+    store.history(courseMonth),
+    store.excludedStudents(),
   ]);
   if (!rawScheduleCsv || !feedbackCsv) return "missing-input";
 
   // 评价过的学生-老师按评价时的课算权重；再只把「课程」交给评分：咨询、考试、会议这类课表占位不算老师总课时，
   // 也不参与学生权重。课程类型设定一改，过滤后的课表就变，下面的哈希跟着变，未定稿月份会自动重算。
   const scheduleCsv = keepCourseLessons(applyFrozenLessons(rawScheduleCsv, frozen), overrides).csv;
-  const priorDetails = priorRows.map((rows) =>
-    (rows ?? []).filter((row) => Object.values(row.scores).includes(4)).map(({ student, teacher, matched, scores }) => ({ student, teacher, matched, scores })),
-  );
-  const request: ScoreRequest = { courseMonth, scheduleCsv, feedbackCsv, dedupeKeep: "first", aliases, teacherNames, priorDetails };
-  const status = isFinalMonth(courseMonth, input.currentMonth) ? "final" : "draft";
+  const priorDetails = history
+    .filter((month) => month.course_month < courseMonth)
+    .sort((a, b) => a.course_month.localeCompare(b.course_month))
+    .map(({ course_month, detail }) => ({
+      course_month,
+      detail: detail.map(({ student, teacher, matched, scores }) => ({ student, teacher, matched, scores })),
+    }));
+  const request: ScoreRequest = {
+    courseMonth,
+    scheduleCsv,
+    feedbackCsv,
+    dedupeKeep: "first",
+    aliases,
+    teacherNames,
+    priorDetails,
+    excludedStudents: [...excludedStudents].sort((a, b) => a.localeCompare(b, "zh-CN")),
+  };
+  // 定稿过的月份（到期或提前发布）手动重算后仍是定稿
+  const status = input.publish || existing?.status === "final" || isFinalMonth(courseMonth, input.currentMonth) ? "final" : "draft";
   const hash = await sha256(JSON.stringify({ v: SCORE_ENGINE_VERSION, request }));
   if (!input.force && existing?.inputs_hash === hash && existing.status === status) return "unchanged";
 

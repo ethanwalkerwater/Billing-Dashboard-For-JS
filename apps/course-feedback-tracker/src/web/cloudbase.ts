@@ -2,6 +2,7 @@ import cloudbase from "@cloudbase/js-sdk";
 
 import { RdbFeedbackTaskRepository } from "../shared/rdb";
 import type { PostgrestLike } from "../shared/rdb";
+import type { Role } from "../shared/roles";
 
 const envId = import.meta.env.VITE_CLOUDBASE_ENV_ID;
 if (!envId) throw new Error("缺少 VITE_CLOUDBASE_ENV_ID");
@@ -15,18 +16,19 @@ export const db = (app as unknown as { rdb: (options?: { schema?: string }) => P
 export const taskRepository = new RdbFeedbackTaskRepository(db);
 
 /**
- * 已登录且仍是有效管理员才算登录。改飞书登录后旧的账号密码账号已停用，但浏览器里还留着它的登录态：
- * 只看 getCurrentUser 的话页面能进、所有数据却被 RLS 挡成空白。白名单只对管理员可见，读不到 = 不是，直接登出。
+ * 已登录且在 feedback_admins 里启用才算登录，顺带读出自己的权限（src/shared/roles.ts）。
+ * 读不到自己那一行（旧的账号密码登录态、被停用）就直接登出，免得页面能进、数据却被 RLS 挡成空白。
  */
-export async function getSignedInUser() {
-  const user = await auth.getCurrentUser();
-  if (!user || (user as { isAnonymous?: boolean }).isAnonymous) return null;
-  const admin = await db.from("feedback_admins").select<{ user_id: string }>("user_id").limit(1);
-  if (admin.error || (admin.data?.length ?? 0) === 0) {
+export async function getSignedInUser(): Promise<{ uid: string; role: Role; feishuMember: boolean } | null> {
+  const user = (await auth.getCurrentUser()) as { uid?: string; isAnonymous?: boolean } | null;
+  if (!user?.uid || user.isAnonymous) return null;
+  const me = await db.from("feedback_admins").select<{ role: Role; feishu_open_id: string | null }>("role,feishu_open_id").eq("user_id", user.uid).limit(1);
+  const member = me.data?.[0];
+  if (me.error || !member?.role) {
     await auth.signOut().catch(() => undefined);
     return null;
   }
-  return user;
+  return { uid: user.uid, role: member.role, feishuMember: Boolean(member.feishu_open_id) };
 }
 
 // ---- 飞书登录：流程见 src/server/feishu-login.ts ----
@@ -83,11 +85,4 @@ export async function callFeedbackApi<T>(data: Record<string, unknown>): Promise
   const payload = result.result as T & { ok?: boolean; error?: string };
   if (payload?.ok === false) throw new Error(payload.error ?? "云函数返回失败");
   return payload;
-}
-
-/** 飞书问卷分享链接。二维码直接编码它 + 预填参数，不再经过我们的短链接中转。 */
-export function feishuFormUrl(): string {
-  const url = import.meta.env.VITE_FEISHU_FORM_URL;
-  if (!url) throw new Error("缺少 VITE_FEISHU_FORM_URL");
-  return url;
 }

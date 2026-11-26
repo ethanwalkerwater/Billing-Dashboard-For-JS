@@ -13,6 +13,12 @@ export const METRICS: Array<{ id: MetricId; label: string; short: string }> = [
 
 export const DIMENSION_LABELS: Record<Dimension, string> = { total: "总", student: "学生", parent: "家长" };
 
+export const SCORE_ADJUST_RULES = {
+  streak: { label: "连续 4 分", hint: "前三个月给这位老师这一项的原始分都是 4、每月都有课，本月仍有课且打 4 分，按 5 分算" },
+  "strict-rater": { label: "评分标准高（旧规则）", hint: "旧规则：本月给 2 位及以上老师打分、所有项最高分为 4，4 分按 5 分算" },
+  "historical-strict-rater": { label: "历史评分标准高", hint: "学生、家长分开：至少 4 个历史课程月份最高原始分为 4，可不连续，历史从未超过 4；本月最高原始分仍为 4，有课的 4 分按 5 分算。原始分保留，下月可继续触发" },
+} as const;
+
 export interface TeacherScore {
   teacher: string;
   rank: number | null;
@@ -39,7 +45,7 @@ export interface DetailRow {
   weight: number;
   scores: Record<string, number | null>;
   /** 按规则把 4 分算作 5 分的字段（scores 里仍是原始分） */
-  adjusted?: Record<string, "streak" | "strict-rater">;
+  adjusted?: Record<string, keyof typeof SCORE_ADJUST_RULES>;
   texts: { improvement_student?: string; improvement_parent?: string; suggestion?: string };
 }
 
@@ -50,6 +56,9 @@ export interface MonthReport {
   /** live：按快照计算；history：老看板已公布的分数（分项按原始反馈补算） */
   source: "live" | "history";
   computedAt?: string;
+  /** 工作台「发布定稿」提前定稿的时间和人；到期自动定稿的为空 */
+  publishedAt?: string;
+  publishedBy?: string;
   teachers: TeacherScore[];
   stats?: {
     feedbackRows?: number;
@@ -60,7 +69,7 @@ export interface MonthReport {
     totalHours?: number;
     unmappedScoreTexts?: Record<string, Record<string, number>>;
     breakdownFrom?: "feishu" | "legacy-detail";
-    adjustedScores?: { streak: number; "strict-rater": number };
+    adjustedScores?: { streak: number; "strict-rater"?: number; "historical-strict-rater"?: number };
   };
   error?: string;
 }

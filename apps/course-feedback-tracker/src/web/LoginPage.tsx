@@ -35,7 +35,6 @@ export function LoginPage({
           >
             {busy ? "正在打开飞书…" : "用飞书登录"}
           </Button>
-          <p className="text-muted-foreground text-center text-xs">仅管理员白名单可访问</p>
         </CardContent>
       </Card>
     </main>

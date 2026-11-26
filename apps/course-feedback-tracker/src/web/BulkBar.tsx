@@ -6,8 +6,7 @@ import { Separator } from "@/components/ui/separator";
 import { TASK_OWNERS } from "@/domain";
 
 /**
- * 批量操作栏。作用范围写清楚：教务最容易踩的坑是以为"标记已发"作用于全部，
- * 实际只作用于勾选的那几行。fixed 定位——sticky 会被当成父级 grid 的网格项塞进侧栏列。
+ * 发放按学生，拒绝和退回按选中的师生任务。fixed 定位，避免插入父级 grid 的侧栏列。
  */
 export function BulkBar({
   selectedCount,
@@ -53,7 +52,7 @@ export function BulkBar({
       </div>
       <Separator orientation="vertical" className="h-5" />
       <Button variant="ghost" size="sm" disabled={busy} onClick={onMarkSent}>
-        标记已发
+        标记学生已发
       </Button>
       <Button variant="ghost" size="sm" disabled={busy} onClick={onMarkDeclined}>
         标记拒绝
@@ -77,7 +76,7 @@ export function BulkBar({
       </Select>
       <Separator orientation="vertical" className="h-5" />
       <Button variant="ghost" size="sm" disabled={busy} onClick={onDownloadZip}>
-        <QrCode /> 二维码 ZIP
+        <QrCode /> 学生二维码 ZIP
       </Button>
       <Button variant="ghost" size="sm" disabled={busy} onClick={onExportCsv}>
         <Download /> 导出 CSV

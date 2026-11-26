@@ -1,4 +1,5 @@
 """python3 -m unittest discover -s functions/feedback-score -p 'test_*.py'（PYTHONPATH 指向 apps/teacher-feedback/scripts）"""
+import copy
 import unittest
 
 import index
@@ -27,6 +28,18 @@ BASE = {
     "aliases": [{"kind": "teacher", "alias": "Valentina 林", "canonical": "Valentina Lin"}],
     "teacherNames": ["Valentina Lin", "数学杨老师", "邓老师(地理)"],
 }
+
+
+def historical_month(month, role="student", value=4, teacher="历史老师", student="示例学生", matched=True):
+    return {"course_month": month, "detail": [
+        {"student": student, "teacher": teacher, "matched": matched,
+         "scores": {f"{dim}_{role}": value for dim in index.ADJUST_DIMS}},
+    ]}
+
+
+def current_rating(role="student", teacher="本月老师", student="示例学生", matched=True):
+    return {"student": student, "teacher": teacher, "matched": matched,
+            **{f"score_{dim}_{role}": 4 for dim in index.ADJUST_DIMS}}
 
 
 class FeedbackScoreTest(unittest.TestCase):
@@ -64,22 +77,24 @@ class FeedbackScoreTest(unittest.TestCase):
         fours = "帮助较大，有一定提升,大部分时候能做到，整体良好,较好，能够调动我的学习兴趣"
         feedback = FEEDBACK.split("\n")[0] + "\n" + "\n".join(
             [
-                # 姚凯榕给两位老师都只打 4 分 → 评分标准高
+                # 姚凯榕有 4 个不连续历史月份最高原始分为 4 → 评分标准高
                 f"2026-10-01 10:00:00,Valentina 林,姚凯榕,学生本人,{fours}",
                 f"2026-10-01 11:00:00,数学杨,姚凯榕,学生本人,{fours}",
-                # Mia 只评了一位老师，不算评分标准高；学习提升效果连续 3 个月打 4 分 → 连续 4 分
+                # Mia 只有 3 个历史月份，不够历史门槛；学习提升效果连续 3 个月打 4 分 → 连续 4 分
                 f"2026-10-01 12:00:00,邓老师(地理),Mia,学生本人,{fours}",
             ]
         )
         streak = [{"student": "Mia", "teacher": "邓老师(地理)", "matched": True, "scores": {"learning_effect_student": 4}}]
-        result = index.main({**BASE, "feedbackCsv": feedback, "priorDetails": [streak, streak, streak]})
+        prior = [historical_month(month, student="姚凯榕") for month in ("2026-01", "2026-02", "2026-04", "2026-05")]
+        prior += [{"course_month": month, "detail": streak} for month in ("2026-06", "2026-07", "2026-08")]
+        result = index.main({**BASE, "feedbackCsv": feedback, "priorDetails": prior})
         self.assertTrue(result["ok"], result.get("error"))
         scores = {row["teacher"]: row["scores"] for row in result["teachers"]}
         self.assertEqual(5.0, scores["Valentina Lin"]["charisma"])
         self.assertEqual(5.0, scores["数学杨老师"]["responsibility"])
         self.assertEqual(5.0, scores["邓老师(地理)"]["learning_effect"])
         self.assertEqual(4.0, scores["邓老师(地理)"]["charisma"])
-        self.assertEqual({"streak": 1, "strict-rater": 6}, result["stats"]["adjustedScores"])
+        self.assertEqual({"streak": 1, "historical-strict-rater": 6}, result["stats"]["adjustedScores"])
         mia = next(row for row in result["detail"] if row["student"] == "Mia")
         # 明细保留原始分，另记被改的字段
         self.assertEqual(4.0, mia["scores"]["learning_effect_student"])
@@ -87,8 +102,79 @@ class FeedbackScoreTest(unittest.TestCase):
 
         # 中间有一个月没排课：不算连续
         broken = [{**streak[0], "matched": False}]
-        result = index.main({**BASE, "feedbackCsv": feedback, "priorDetails": [streak, broken, streak]})
+        prior[-2] = {"course_month": "2026-07", "detail": broken}
+        result = index.main({**BASE, "feedbackCsv": feedback, "priorDetails": prior})
         self.assertEqual(4.0, {row["teacher"]: row["scores"] for row in result["teachers"]}["邓老师(地理)"]["learning_effect"])
+
+    def test_strict_rater_needs_four_distinct_past_months_and_allows_one_teacher(self):
+        prior = [historical_month(month) for month in ("2026-01", "2026-03", "2026-05", "2026-07")]
+        rows = [current_rating()]
+        expected = {0: {f"{dim}_student": "historical-strict-rater" for dim in index.ADJUST_DIMS}}
+        self.assertEqual(expected, index.score_adjustments(rows, prior, [], "2026-09"))
+        self.assertEqual({}, index.score_adjustments(rows, prior[:3], [], "2026-09"))
+        # 多份答卷、重复月份、本月、未来和非法月份都不能凑出历史门槛
+        invalid = [historical_month(month) for month in ("2026-09", "2026-10", "2026-00")]
+        self.assertEqual({}, index.score_adjustments(rows, prior[:3] + prior[:3] + invalid, [], "2026-09"))
+        self.assertEqual({}, index.score_adjustments([current_rating(), current_rating(teacher="另一老师")], [], [], "2026-09"))
+
+    def test_strict_rater_checks_all_teachers_all_dimensions_and_raw_scores(self):
+        prior = [historical_month(month) for month in ("2026-01", "2026-03", "2026-05", "2026-07")]
+        for dim in index.ADJUST_DIMS:
+            with self.subTest(dim=dim):
+                past_five = historical_month("2025-12", teacher="其他老师")
+                past_five["detail"][0]["scores"] = {f"{dim}_student": 5}
+                self.assertEqual({}, index.score_adjustments([current_rating()], [past_five] + prior, [], "2026-09"))
+                current_five = current_rating(teacher="其他老师")
+                current_five[f"score_{dim}_student"] = 5
+                self.assertEqual({}, index.score_adjustments([current_rating(), current_five], prior, [], "2026-09"))
+        rows = [current_rating()]
+        rows[0]["score_responsibility_student"] = 3
+        rows[0]["score_charisma_student"] = None
+        self.assertEqual({0: {"learning_effect_student": "historical-strict-rater"}}, index.score_adjustments(rows, prior, [], "2026-09"))
+        # 只有 1～3 分的历史月不能充当「最高分为 4」的达标月
+        prior[-1] = historical_month("2026-07", value=3)
+        self.assertEqual({}, index.score_adjustments(rows, prior, [], "2026-09"))
+
+    def test_strict_rater_separates_students_parents_and_ignores_unmatched_feedback(self):
+        for role in index.ADJUST_ROLES:
+            with self.subTest(role=role):
+                prior = [historical_month(month, role=role) for month in ("2026-01", "2026-03", "2026-05", "2026-07")]
+                expected = {0: {f"{dim}_{role}": "historical-strict-rater" for dim in index.ADJUST_DIMS}}
+                other_role = "parent" if role == "student" else "student"
+                prior.append(historical_month("2026-08", role=other_role, value=5))
+                self.assertEqual(expected, index.score_adjustments([current_rating(role)], prior, [], "2026-09"))
+                self.assertEqual({}, index.score_adjustments([current_rating(other_role)], prior, [], "2026-09"))
+                self.assertEqual({}, index.score_adjustments([current_rating(role, student="其他学生")], prior, [], "2026-09"))
+                self.assertEqual({}, index.score_adjustments([current_rating(role, matched=False)], prior, [], "2026-09"))
+                prior[0]["detail"][0]["matched"] = False
+                self.assertEqual({}, index.score_adjustments([current_rating(role)], prior, [], "2026-09"))
+
+    def test_strict_rater_uses_student_aliases_without_mutating_history(self):
+        prior = [historical_month(month, student="示例学生 1234") for month in ("2026-01", "2026-03", "2026-05", "2026-07")]
+        for month in prior:
+            month["detail"][0]["adjusted"] = {"learning_effect_student": "historical-strict-rater"}
+        original = copy.deepcopy(prior)
+        adjusted = index.score_adjustments([current_rating(student="学生别名")], prior,
+                                           [{"kind": "student", "alias": "学生别名", "canonical": "示例学生"}], "2026-09")
+        self.assertEqual(3, len(adjusted[0]))
+        self.assertEqual(original, prior)
+
+    def test_strict_rater_continues_across_months_with_stored_raw_detail(self):
+        prior = [historical_month(month, student="Mia") for month in ("2026-01", "2026-03", "2026-05", "2026-07")]
+        fours = "帮助较大，有一定提升,大部分时候能做到，整体良好,较好，能够调动我的学习兴趣"
+        feedback = FEEDBACK.split("\n")[0] + f"\n2026-10-01 12:00:00,邓老师(地理),Mia,学生本人,{fours}"
+        for month, submission_month in (("2026-09", "2026-10"), ("2026-10", "2026-11"), ("2026-11", "2026-12")):
+            with self.subTest(month=month):
+                result = index.main({**BASE, "courseMonth": month, "scheduleCsv": SCHEDULE.replace("2026-09", month),
+                                     "feedbackCsv": feedback.replace("2026-10", submission_month), "priorDetails": prior})
+                self.assertTrue(result["ok"], result.get("error"))
+                teacher = next(row for row in result["teachers"] if row["teacher"] == "邓老师(地理)")
+                self.assertEqual(5.0, teacher["scores"]["learning_effect"])
+                raw = result["detail"][0]
+                self.assertEqual(4.0, raw["scores"]["learning_effect_student"])
+                self.assertEqual("historical-strict-rater", raw["adjusted"]["learning_effect_student"])
+                self.assertEqual({"streak": 0, "historical-strict-rater": 3}, result["stats"]["adjustedScores"])
+                prior.append({"course_month": month, "detail": result["detail"]})
 
     def test_preferences_weighted_by_student_hours(self):
         schedule = SCHEDULE + "\n2026-09-04 10:00:00,Valentina Lin,王同学,1,IG数学,1v1,"

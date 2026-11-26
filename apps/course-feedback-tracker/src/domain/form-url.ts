@@ -17,12 +17,18 @@ export const FORM_PREFILL_KEYS = {
 /** 飞书表单的 hide_<题目>=1：预填后把这道题藏起来，学生看不到也改不了月份。 */
 export const FORM_HIDE_COURSE_MONTH = `hide_${FEEDBACK_MONTH_FIELD}`;
 
-export function buildPrefilledFormUrl(input: { baseUrl: string; teacherName: string; studentName: string; courseMonth: string }): string {
+export function buildPrefilledFormUrl(input: { baseUrl: string; teacherName: string; studentName: string; courseMonth: string; hideNames?: boolean }): string {
   const url = new URL(input.baseUrl);
   url.searchParams.set(FORM_PREFILL_KEYS.teacher, input.teacherName);
   url.searchParams.set(FORM_PREFILL_KEYS.student, input.studentName);
   url.searchParams.set(FORM_PREFILL_KEYS.courseMonth, input.courseMonth);
   url.searchParams.set(FORM_HIDE_COURSE_MONTH, "1");
+  if (input.hideNames) {
+    url.searchParams.delete("prefill_（必填）您的身份");
+    url.searchParams.delete("hide_（必填）您的身份");
+    url.searchParams.set("hide_（必填）学生姓名：", "1");
+    url.searchParams.set("hide_（必填）您本次评价的老师姓名：", "1");
+  }
   return url.toString();
 }
 

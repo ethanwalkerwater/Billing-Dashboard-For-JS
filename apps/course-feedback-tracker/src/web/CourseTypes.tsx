@@ -13,7 +13,7 @@ import type { LessonKindSource } from "@/domain";
 import { cn } from "@/lib/utils";
 import { parseCsv } from "@/server/export/csv";
 import { LIVE_SCORES_FROM } from "@/server/scores/recompute";
-import { COURSE_TYPE_RULES_TABLE, SCORE_RESULTS_TABLE, SNAPSHOTS_TABLE } from "@/shared/rdb";
+import { COURSE_TYPE_RULES_TABLE, SCORE_SUMMARIES_VIEW, SNAPSHOTS_TABLE } from "@/shared/rdb";
 import { PageHeader } from "./AppNav";
 import type { Page } from "./AppNav";
 import { callFeedbackApi, db } from "./cloudbase";
@@ -195,7 +195,7 @@ export function CourseTypes({ page, onPageChange, onSignOut }: { page: Page; onP
               },
             );
       if (result.error) throw new Error(result.error.message);
-      const drafts = await db.from(SCORE_RESULTS_TABLE).select<{ course_month: string }>("course_month").eq("status", "draft");
+      const drafts = await db.from(SCORE_SUMMARIES_VIEW).select<{ course_month: string }>("course_month").eq("status", "draft");
       const draftMonths = (drafts.data ?? []).map((row) => row.course_month).filter((month) => month >= LIVE_SCORES_FROM);
       for (const courseMonth of draftMonths) await callFeedbackApi({ action: "recompute-scores", courseMonth });
       await reload();

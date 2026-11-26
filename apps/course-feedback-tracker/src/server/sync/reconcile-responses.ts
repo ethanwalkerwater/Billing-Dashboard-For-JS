@@ -173,8 +173,11 @@ export async function reconcileResponses(input: {
   collectionMonth: string;
   /** 已经读好的整张答卷表；不传就现读。 */
   records?: FeishuRecord[];
+  /** A record confirmed after this Feishu read began cannot be inferred deleted from that snapshot. */
+  snapshotStartedAt?: string;
 }): Promise<ReconcileResponsesResult> {
   // ponytail: 全量读答卷表再按轮次过滤。当前约 1000 行，读全表最简单也最幂等；上万行后再按提交时间增量。
+  const snapshotStartedAt = input.snapshotStartedAt ?? (input.records ? undefined : new Date().toISOString());
   const raw = input.records ?? (await listResponseRecords(input.client, input.config));
 
   const responses: FeedbackResponseRecord[] = [];
@@ -206,7 +209,7 @@ export async function reconcileResponses(input: {
     input.repository.listByCollectionMonth(input.collectionMonth),
     input.repository.listAliases(),
     input.repository.listManualBindings(input.collectionMonth),
-    input.repository.listResponseIds(input.collectionMonth),
+    input.repository.listResponseIds(input.collectionMonth, snapshotStartedAt),
   ]);
 
   // 库里有、飞书里已经没有（变成空行、或被改到了别的月份）的答卷：删掉引用，并把它占的任务位置腾出来。

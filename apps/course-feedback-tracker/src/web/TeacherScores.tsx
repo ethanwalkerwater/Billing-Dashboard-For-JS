@@ -1,4 +1,4 @@
-import { AlertTriangle, Download, FileSpreadsheet, Info, MessageSquareText, RefreshCw, Search } from "lucide-react";
+import { AlertTriangle, Download, FileSpreadsheet, Info, MessageSquareText, RefreshCw, Search, Stamp } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -9,21 +9,27 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { nameMatchKey, shiftMonth } from "@/domain";
+import { courseMonthToCollectionMonth, nameMatchKey, shiftMonth } from "@/domain";
 import { cn } from "@/lib/utils";
-import { PageHeader } from "./AppNav";
+import type { StoredFeedbackTask } from "@/server/tasks/types";
+import { EXCLUDED_STUDENTS_TABLE } from "@/shared/rdb";
+import { canViewDetail } from "@/shared/roles";
+import { PageHeader, useRole } from "./AppNav";
 import type { Page } from "./AppNav";
 import { FeedbackEntry } from "./FeedbackEntry";
 import { MultiSelectFilter } from "./MultiSelectFilter";
+import { PublishDialog, autoFinalizeLabel } from "./PublishDialog";
 import { ScoreChart } from "./ScoreChart";
 import type { ChartRow } from "./ScoreChart";
 import { ScoreTable } from "./ScoreTable";
 import { SyncStatus, useSyncTimes } from "./SyncStatus";
 import { TeacherFilter } from "./TeacherFilter";
 import { TeacherSheet } from "./TeacherSheet";
+import { db, taskRepository } from "./cloudbase";
 import { downloadCumulativeExcel, downloadMonthlyExcel, downloadScoresCsv, downloadTextsCsv } from "./export-scores";
 import { hasSubstance, identityLabel } from "./feedback-text";
-import { DIMENSION_LABELS, METRICS, formatHours, formatPercent, formatScore, monthName } from "./report-types";
+import { missingStudentsForTeacher } from "./missing-feedback";
+import { DIMENSION_LABELS, METRICS, SCORE_ADJUST_RULES, formatHours, formatPercent, formatScore, monthName } from "./report-types";
 import type { Contribution, CumulativeTeacher, DetailRow, Dimension, MetricId, MonthReport, TeacherScore } from "./report-types";
 import { cumulative, rerankMonth } from "./scoring";
 import { currentCollectionMonth, useTeacherReport } from "./useTeacherReport";
@@ -70,11 +76,12 @@ function averageOverall(rows: Array<{ overall: number | null }>): number | null 
 /** 4 分按 5 分算的两条规则，算法在 functions/feedback-score/index.py */
 function AdjustNote({ report }: { report: MonthReport }) {
   const counts = report.stats?.adjustedScores;
-  const total = counts ? counts.streak + counts["strict-rater"] : 0;
+  const total = counts ? counts.streak + (counts["strict-rater"] ?? 0) + (counts["historical-strict-rater"] ?? 0) : 0;
+  const hint = `${SCORE_ADJUST_RULES.streak.hint}。${SCORE_ADJUST_RULES["historical-strict-rater"].hint}。${counts?.["strict-rater"] ? SCORE_ADJUST_RULES["strict-rater"].hint : ""}`;
   return (
-    <span title="连续 4 分：连续 3 个月给同一老师同一项打 4 分、每月都有课，本月的 4 分按 5 分算。评分标准高：本月给 2 位及以上老师打分、从没打过 5 分，4 分都按 5 分算。明细里显示为 4→5。">
+    <span title={hint}>
       {" "}
-      4 分按 5 分算的规则{total ? `本月改算 ${total} 项（连续 4 分 ${counts?.streak ?? 0}、评分标准高 ${counts?.["strict-rater"] ?? 0}）` : "本月没有命中"}，悬停看说明。
+      4 分按 5 分算的规则{total ? `本月改算 ${total} 项（连续 4 分 ${counts?.streak ?? 0}、历史评分标准高 ${counts?.["historical-strict-rater"] ?? 0}${counts?.["strict-rater"] ? `、旧规则 ${counts["strict-rater"]}` : ""}）` : "本月没有命中"}，悬停看说明。
     </span>
   );
 }
@@ -90,11 +97,14 @@ function StatusBadge({ report }: { report: MonthReport }) {
       </>
     );
   }
+  const publishedOn = report.publishedAt
+    ? new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", month: "long", day: "numeric" }).format(new Date(report.publishedAt))
+    : null;
   return report.status === "final" ? (
     <>
       <Badge variant="success">已定稿</Badge>
       <span className="text-muted-foreground text-xs">
-        收集月份已结束，分数不再变化。同一学生对同一老师重复提交只算第一份；没评到的学生按当月平均分补齐。
+        {publishedOn ? `${publishedOn}由 ${report.publishedBy ?? "管理员"} 提前发布` : "收集月份已结束"}，分数不再变化。同一学生对同一老师重复提交只算第一份；没评到的学生按当月平均分补齐。
         <AdjustNote report={report} />
       </span>
     </>
@@ -102,7 +112,8 @@ function StatusBadge({ report }: { report: MonthReport }) {
     <>
       <Badge variant="warning">收集中</Badge>
       <span className="text-muted-foreground text-xs">
-        反馈还在陆续提交，每次刷新反馈后自动更新（{report.computedAt ? `本次计算于 ${report.computedAt.slice(5, 16).replace("T", " ")}` : ""}）。下月初自动定稿。
+        反馈还在陆续提交，每次刷新反馈后自动更新（{report.computedAt ? `本次计算于 ${report.computedAt.slice(5, 16).replace("T", " ")}` : ""}）。
+        {autoFinalizeLabel(report.month)}自动定稿，{report.month < currentCollectionMonth() ? "反馈收齐后可以提前发布" : "这个月的课上完后可以提前发布"}。
         <AdjustNote report={report} />
       </span>
     </>
@@ -504,21 +515,51 @@ function loadAdhoc(): string[] {
 }
 
 export function TeacherScores({ page, onPageChange, onSignOut }: { page: Page; onPageChange: (page: Page) => void; onSignOut: () => void | Promise<void> }) {
-  const { months, excluded, details, loadDetail, syncing, error, sync } = useTeacherReport();
+  const { months, excluded, details, loadDetail, syncing, error, sync, publish } = useTeacherReport();
+  // 普通老师看得到分数，看不到每份反馈是谁评的：不读明细、不显示文字评价和未评价名单，也不能发布定稿
+  const canSeeDetail = canViewDetail(useRole().role);
+  const [monthTasks, setMonthTasks] = useState<StoredFeedbackTask[] | null>(null);
+  const [nextMonthTasks, setNextMonthTasks] = useState<StoredFeedbackTask[] | null>(null);
+  const [excludedStudents, setExcludedStudents] = useState<string[]>([]);
   const syncTimes = useSyncTimes();
   const [chosenMonth, setChosenMonth] = useState<string | null>(null);
   const [view, setView] = useState<View>("monthly");
   const [range, setRange] = useState({ from: "", to: "" });
   const [selected, setSelected] = useState<string | null>(null);
   const [adhoc, setAdhoc] = useState<string[]>(loadAdhoc);
+  const [publishing, setPublishing] = useState(false);
 
   // 默认看最近一个有结果的课程月份
   const courseMonth = chosenMonth ?? months?.[0]?.month ?? shiftMonth(currentCollectionMonth(), -1);
   const monthReport = months?.find((row) => row.month === courseMonth);
+  // 课上完了（课程月份已过）、还在收集晚交反馈的月份才能提前发布
+  const publishable =
+    monthReport?.source === "live" && monthReport.status === "draft" && !monthReport.error && monthReport.teachers.length > 0 && courseMonth < currentCollectionMonth();
 
   useEffect(() => {
-    void loadDetail(courseMonth);
-  }, [courseMonth, loadDetail]);
+    if (canSeeDetail) void loadDetail(courseMonth);
+  }, [courseMonth, loadDetail, canSeeDetail]);
+  // 月度任务 + 不统计学生：打开老师侧栏时算「未评价」名单，和覆盖率同一口径
+  useEffect(() => {
+    let cancelled = false;
+    const collectionMonth = courseMonthToCollectionMonth(courseMonth);
+    const nextCourseMonth = shiftMonth(courseMonth, 1);
+    const nextCollectionMonth = courseMonthToCollectionMonth(nextCourseMonth);
+    setMonthTasks(null);
+    setNextMonthTasks(null);
+    void Promise.all([
+      taskRepository.listByCollectionMonths([collectionMonth, nextCollectionMonth]),
+      db.from(EXCLUDED_STUDENTS_TABLE).select<{ student_name: string }>("student_name"),
+    ]).then(([tasks, excludedRows]) => {
+      if (cancelled) return;
+      setMonthTasks(tasks.filter((task) => task.courseMonth === courseMonth));
+      setNextMonthTasks(tasks.filter((task) => task.courseMonth === nextCourseMonth));
+      setExcludedStudents((excludedRows.data ?? []).map((row) => row.student_name));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [courseMonth]);
   useEffect(() => {
     if (!syncing) void syncTimes.reload();
   }, [syncing, syncTimes.reload]);
@@ -546,7 +587,7 @@ export function TeacherScores({ page, onPageChange, onSignOut }: { page: Page; o
     [months, range],
   );
   const cumulativeResult = useMemo(() => cumulative(rangeMonths, hidden), [rangeMonths, hidden]);
-  const detail = details[courseMonth]?.filter((row) => !hidden.has(row.teacher));
+  const detail = canSeeDetail ? details[courseMonth]?.filter((row) => !hidden.has(row.teacher)) : undefined;
 
   // 排除面板里列出的老师：当前视图里的（不含长期不统计的），带课时
   const filterOptions = useMemo(() => {
@@ -559,6 +600,15 @@ export function TeacherScores({ page, onPageChange, onSignOut }: { page: Page; o
 
   const selectedScore = selected ? monthTeachers.find((row) => row.teacher === selected) : undefined;
   const selectedCumulative = selected ? cumulativeResult.teachers.find((row) => row.teacher === selected) : undefined;
+  const selectedMissing =
+    selected && view === "monthly" && canSeeDetail
+      ? missingStudentsForTeacher({
+          teacher: selected,
+          tasks: monthTasks ?? [],
+          detail: detail ?? [],
+          excludedStudents,
+        })
+      : undefined;
 
   return (
     <div className="bg-muted/40 min-h-screen">
@@ -599,10 +649,17 @@ export function TeacherScores({ page, onPageChange, onSignOut }: { page: Page; o
             <TabsList>
               <TabsTrigger value="monthly">月度评分</TabsTrigger>
               <TabsTrigger value="cumulative">累计评分</TabsTrigger>
-              <TabsTrigger value="texts">文字评价</TabsTrigger>
+              {canSeeDetail ? <TabsTrigger value="texts">文字评价</TabsTrigger> : null}
             </TabsList>
           </Tabs>
-          <TeacherFilter teachers={filterOptions} excluded={adhoc} onChange={setAdhoc} permanentCount={excluded.length} />
+          <div className="flex items-center gap-2">
+            {view === "monthly" && publishable && canSeeDetail ? (
+              <Button size="sm" disabled={syncing} onClick={() => setPublishing(true)}>
+                <Stamp /> 发布定稿
+              </Button>
+            ) : null}
+            <TeacherFilter teachers={filterOptions} excluded={adhoc} onChange={setAdhoc} permanentCount={excluded.length} />
+          </div>
         </div>
 
         {error ? (
@@ -625,10 +682,24 @@ export function TeacherScores({ page, onPageChange, onSignOut }: { page: Page; o
             {view === "cumulative" ? (
               <CumulativeView result={cumulativeResult} months={months.map((row) => row.month)} range={range} onRange={setRange} onSelect={setSelected} />
             ) : null}
-            {view === "texts" ? <TextsView key={courseMonth} month={courseMonth} detail={detail} teachers={monthTeachers} onSelect={setSelected} /> : null}
+            {view === "texts" && canSeeDetail ? <TextsView key={courseMonth} month={courseMonth} detail={detail} teachers={monthTeachers} onSelect={setSelected} /> : null}
           </>
         )}
       </div>
+
+      {publishing && monthReport ? (
+        <PublishDialog
+          month={courseMonth}
+          summary={{
+            teachers: monthReport.teachers.length,
+            responses: monthReport.stats?.mergedRecords ?? monthReport.teachers.reduce((sum, row) => sum + row.responses, 0),
+            coverage: weightedCoverage(monthReport.teachers),
+            hours: monthReport.teachers.reduce((sum, row) => sum + row.hours, 0),
+          }}
+          onPublish={() => publish(courseMonth)}
+          onClose={() => setPublishing(false)}
+        />
+      ) : null}
 
       {selected ? (
         <TeacherSheet
@@ -637,8 +708,16 @@ export function TeacherScores({ page, onPageChange, onSignOut }: { page: Page; o
           teacher={selected}
           subtitle={view === "cumulative" ? `累计评分 · ${rangeLabel(cumulativeResult.months)}` : courseLabel(courseMonth)}
           score={view === "cumulative" ? selectedCumulative : selectedScore}
-          detail={view === "cumulative" ? undefined : (detail ?? [])}
+          detail={view === "cumulative" || !canSeeDetail ? undefined : (detail ?? [])}
           contributions={view === "cumulative" ? cumulativeResult.contributions.filter((row) => row.teacher === selected) : undefined}
+          missing={selectedMissing}
+          courseMonth={view === "cumulative" ? undefined : courseMonth}
+          currentTasks={
+            syncTimes.times.some((row) => row.kind === "schedule" && row.month === courseMonth) ? monthTasks : null
+          }
+          nextTasks={
+            syncTimes.times.some((row) => row.kind === "schedule" && row.month === shiftMonth(courseMonth, 1)) ? nextMonthTasks : null
+          }
         />
       ) : null}
     </div>

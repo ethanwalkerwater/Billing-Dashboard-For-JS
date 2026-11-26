@@ -11,3 +11,4 @@ dist-cancellations/
 # CloudBase 自定义登录私钥
 tcb_custom_login*.json
 custom-login-key*.json
+dist-thanks/

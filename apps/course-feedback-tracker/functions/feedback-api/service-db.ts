@@ -35,6 +35,11 @@ class Query implements PromiseLike<PostgrestResult<never>> {
     return this;
   }
 
+  lt(column: string, value: unknown): this {
+    this.conditions.push(`${encodeURIComponent(column)}=lt.${encodeURIComponent(String(value))}`);
+    return this;
+  }
+
   in(column: string, values: readonly unknown[]): this {
     // PostgREST 的 in 列表用括号包裹，值里的逗号和引号必须转义。
     const list = values.map((value) => `"${String(value).replace(/"/g, '\\"')}"`).join(",");
@@ -60,7 +65,9 @@ class Query implements PromiseLike<PostgrestResult<never>> {
   }
 }
 
-export function createServiceDb(options: ServiceDbOptions): PostgrestLike {
+export function createServiceDb(options: ServiceDbOptions): PostgrestLike & {
+  rpc<T>(name: string, args: Record<string, unknown>): Promise<PostgrestResult<T>>;
+} {
   const fetchImpl = options.fetchImpl ?? fetch;
   const base = `https://${options.envId}.api.tcloudbasegateway.com/v1/rdb/rest`;
   const headers = {
@@ -99,6 +106,7 @@ export function createServiceDb(options: ServiceDbOptions): PostgrestLike {
   }
 
   return {
+    rpc: (name, args) => send("POST", `rpc/${encodeURIComponent(name)}`, "", args),
     from(table: string) {
       const path = encodeURIComponent(table);
       return {

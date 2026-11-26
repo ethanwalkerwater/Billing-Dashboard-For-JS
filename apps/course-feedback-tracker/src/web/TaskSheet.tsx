@@ -6,10 +6,13 @@ import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { TASK_STATUS_LABELS } from "@/domain";
+import { monthlyFeedbackTitle, monthlyTaskKey } from "@/domain/monthly-feedback";
 import { cn } from "@/lib/utils";
 import { isFrozen } from "@/server/tasks/reconcile";
 import type { StoredFeedbackTask } from "@/server/tasks/types";
-import { BRAND_LOGO_URL, FOOTER_LINE, cardFileName, cardMonthLabel, downloadBlob, renderQrCard, taskFormUrl, taskQrDataUrl } from "./qr";
+import { loadMonthlyLinks, monthlyUrl } from "./monthly-links";
+import { BRAND_LOGO_URL, QR_DESCRIPTION, cardFileName, downloadBlob, renderQrCard, monthlyQrDataUrl } from "./qr";
+import { formatMoment } from "./report-types";
 import { respondedBy } from "./useWorkbenchData";
 
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
@@ -22,53 +25,54 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
 }
 
 export function TaskSheet({ task, onClose }: { task: StoredFeedbackTask | null; onClose: () => void }) {
-  const [qrDataUrl, setQrDataUrl] = useState("");
+  const [card, setCard] = useState<{ key: string; url: string; image: string }>();
+  const [error, setError] = useState("");
+  const [attempt, setAttempt] = useState(0);
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     if (!task) return;
     let active = true;
-    setQrDataUrl("");
-    void taskQrDataUrl(task, 480).then((value) => {
-      if (active) setQrDataUrl(value);
+    setError("");
+    setCopied(false);
+    void loadMonthlyLinks([task]).then(async (links) => {
+      const url = monthlyUrl(links, task);
+      const image = await monthlyQrDataUrl(url, 480);
+      if (active) setCard({ key: monthlyTaskKey(task), url, image });
+    }).catch(() => {
+      if (active) setError("暂时无法生成月度链接，请重试。");
     });
     return () => {
       active = false;
     };
-  }, [task]);
+  }, [task, attempt]);
 
   if (!task) return null;
-  const formUrl = taskFormUrl(task);
+  const ready = card?.key === monthlyTaskKey(task) ? card : undefined;
+  const title = monthlyFeedbackTitle(task.courseMonth, task.studentName);
   const responded = respondedBy(task);
 
   return (
     <Sheet open onOpenChange={(open) => !open && onClose()}>
       <SheetContent className="sm:max-w-sm">
         <SheetHeader>
-          <SheetTitle>
-            {task.studentName} × {task.teacherCanonicalName}
-          </SheetTitle>
-          <SheetDescription>{task.courseNames.join("、")}</SheetDescription>
+          <SheetTitle>{title}</SheetTitle>
+          <SheetDescription>同一个学生本月使用同一链接和二维码，名单同步后自动更新老师。</SheetDescription>
         </SheetHeader>
 
         <div className="px-4">
-          {/* 与导出的 PNG 同一套设计：官网 logo、大标题「课程反馈」、罗列老师/学生、二维码、底部一句话 */}
           <div className="bg-muted/40 flex shrink-0 flex-col rounded-xl border p-5">
             <div className="mt-2 text-center">
-              <div className="text-3xl font-bold tracking-tight">{task.teacherCanonicalName}老师</div>
-              <div className="mt-2 text-base font-medium text-[#3f3f46]">{task.courseNames.join(" · ")}</div>
-              <div className="text-muted-foreground mt-2 text-sm">
-                学生：{task.studentName} · {cardMonthLabel(task.courseMonth)}
-              </div>
+              <div className="text-xl font-bold tracking-tight">{title}</div>
+              <p className="text-muted-foreground mt-2 text-sm">{QR_DESCRIPTION}</p>
             </div>
             <div className="mx-auto mt-5 size-48 shrink-0 overflow-hidden rounded-lg bg-white p-2 shadow-sm">
-              {qrDataUrl ? (
-                <img src={qrDataUrl} alt={`${task.studentName} 评价 ${task.teacherCanonicalName} 老师的问卷二维码`} className="size-full" />
+              {ready ? (
+                <img src={ready.image} alt={`${title}二维码`} className="size-full" />
               ) : (
-                <div className="bg-muted size-full animate-pulse rounded" />
+                <div className="bg-muted size-full rounded" />
               )}
             </div>
-            <p className="text-muted-foreground mt-4 text-center text-[11px]">{FOOTER_LINE}</p>
             <div className="mt-3 flex items-center justify-center gap-1.5">
               <img src={BRAND_LOGO_URL} alt="" className="size-4" />
               <span className="text-xs font-semibold text-[#0E2848]">菁仕教育</span>
@@ -76,33 +80,36 @@ export function TaskSheet({ task, onClose }: { task: StoredFeedbackTask | null; 
           </div>
 
           <div className="mt-4 grid gap-2">
-            <Button disabled={!qrDataUrl} onClick={() => void renderQrCard(task).then((blob) => downloadBlob(blob, cardFileName(task)))}>
+            {error && <p role="alert" className="text-sm">{error} <button className="underline" onClick={() => setAttempt((count) => count + 1)}>重试</button></p>}
+            <Button disabled={!ready} onClick={() => ready && void renderQrCard(task, ready.url).then((blob) => downloadBlob(blob, cardFileName(task))).catch(() => setError("下载失败，请重试。"))}>
               <Download /> 下载 PNG
             </Button>
             <div className="grid grid-cols-2 gap-2">
               <Button
                 variant="outline"
+                disabled={!ready}
                 onClick={() =>
-                  void navigator.clipboard.writeText(formUrl).then(() => {
+                  ready && void navigator.clipboard.writeText(ready.url).then(() => {
                     setCopied(true);
                     setTimeout(() => setCopied(false), 1500);
-                  })
+                  }).catch(() => setError("无法复制，请打开月度反馈后复制地址。"))
                 }
               >
                 {copied ? <Check /> : <Copy />}
                 {copied ? "已复制" : "复制链接"}
               </Button>
-              <Button variant="outline" asChild>
-                <a href={formUrl} target="_blank" rel="noreferrer">
-                  <ExternalLink /> 打开问卷
+              {ready ? <Button variant="outline" asChild>
+                <a href={ready.url} target="_blank" rel="noreferrer">
+                  <ExternalLink /> 打开月度反馈
                 </a>
-              </Button>
+              </Button> : <Button variant="outline" disabled>打开月度反馈</Button>}
             </div>
           </div>
 
           <Separator className="my-4" />
 
           <div className="divide-y">
+            <Row label="当前任务">{task.teacherCanonicalName} · {task.courseNames.join("、")}</Row>
             <Row label="状态">
               <Badge
                 variant={
@@ -112,6 +119,8 @@ export function TaskSheet({ task, onClose }: { task: StoredFeedbackTask | null; 
                 {TASK_STATUS_LABELS[task.status]}
               </Badge>
             </Row>
+            {task.sentAt && <Row label="发送时间">{formatMoment(task.sentAt)}</Row>}
+            {task.submittedAt && <Row label="提交时间">{formatMoment(task.submittedAt)}</Row>}
             <Row label="谁评了">
               <span className="inline-flex items-center gap-3 text-xs">
                 <span className="inline-flex items-center gap-1.5">

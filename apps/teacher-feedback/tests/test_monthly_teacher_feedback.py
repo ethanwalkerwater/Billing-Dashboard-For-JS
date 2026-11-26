@@ -936,6 +936,56 @@ class MonthlyTeacherFeedbackTests(unittest.TestCase):
         self.assertEqual({("黄钢", "C"): 3.0}, filtered["teacher_student_hours"])
         self.assertEqual([{"teacher": "黄钢", "student": "C"}], filtered["raw_feedback_records"])
 
+    def test_filter_excluded_students_drops_their_hours_from_coverage_denominator(self):
+        records = [
+            MODULE.FeedbackRecord(
+                teacher="Jack",
+                student="应评",
+                student_raw_name="应评",
+                identity="合并",
+                source_identities="学生",
+                submitted_at="2026-11-01 00:00:00",
+                scores={field["id"]: 5 for field in MODULE.NUMERIC_SCORE_FIELDS},
+                matched=True,
+            ),
+            MODULE.FeedbackRecord(
+                teacher="Jack",
+                student="内部试听",
+                student_raw_name="内部试听",
+                identity="合并",
+                source_identities="学生",
+                submitted_at="2026-11-01 00:00:00",
+                scores={field["id"]: None for field in MODULE.NUMERIC_SCORE_FIELDS},
+                matched=False,
+            ),
+        ]
+        teacher_student_hours = {("Jack", "应评"): 60.0, ("Jack", "内部试听"): 40.0}
+        teacher_total_hours = {"Jack": 100.0}
+        raw_feedback_records = [
+            {"teacher": "Jack", "student": "应评"},
+            {"teacher": "Jack", "student": "内部试听"},
+        ]
+
+        filtered = MODULE.filter_excluded_students(
+            records=records,
+            teacher_total_hours=teacher_total_hours,
+            teacher_student_hours=teacher_student_hours,
+            raw_feedback_records=raw_feedback_records,
+            excluded_students={"内部试听"},
+        )
+        summary = MODULE.build_teacher_summary(
+            records=filtered["records"],
+            teacher_total_hours=filtered["teacher_total_hours"],
+            teacher_student_hours=filtered["teacher_student_hours"],
+            raw_feedback_records=filtered["raw_feedback_records"],
+        )
+        row = {item["teacher"]: item for item in summary}["Jack"]
+
+        self.assertEqual({"Jack": 60.0}, filtered["teacher_total_hours"])
+        self.assertEqual({("Jack", "应评"): 60.0}, filtered["teacher_student_hours"])
+        self.assertEqual(1.0, float(row["coverage_rate"]))
+        self.assertEqual(60.0, float(row["teacher_total_hours"]))
+
     def test_generate_monthly_feedback_report_writes_outputs(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)

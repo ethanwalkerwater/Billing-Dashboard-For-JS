@@ -1,8 +1,12 @@
+import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 import { FeedbackEntry } from "./FeedbackEntry";
+import { studentCourseTrend } from "./missing-feedback";
+import type { MissingStudent } from "./missing-feedback";
+import type { StoredFeedbackTask } from "@/server/tasks/types";
 import { DIMENSION_LABELS, METRICS, formatHours, formatPercent, formatScore, monthName } from "./report-types";
 import type { Contribution, DetailRow, Dimension, TeacherScore } from "./report-types";
 
@@ -24,6 +28,10 @@ export function TeacherSheet({
   score,
   detail,
   contributions,
+  missing,
+  courseMonth,
+  currentTasks,
+  nextTasks,
 }: {
   open: boolean;
   onClose: () => void;
@@ -32,9 +40,16 @@ export function TeacherSheet({
   score?: Pick<TeacherScore, "rank" | "overall" | "scores" | "hours" | "coverage" | "responses" | "variants" | "counts">;
   detail?: DetailRow[];
   contributions?: Contribution[];
+  /** 月度评分：课表上有课但还没收到反馈的学生，用来查覆盖率缺口 */
+  missing?: MissingStudent[];
+  courseMonth?: string;
+  /** null 表示该月课表还没同步，不能当成 0 节。 */
+  currentTasks?: StoredFeedbackTask[] | null;
+  nextTasks?: StoredFeedbackTask[] | null;
 }) {
   const dimensions: Dimension[] = score?.variants ? ["total", "student", "parent"] : ["total"];
   const rows = (detail ?? []).filter((row) => row.teacher === teacher);
+  const missingHours = (missing ?? []).reduce((sum, row) => sum + row.hours, 0);
 
   return (
     <Sheet open={open} onOpenChange={(next) => !next && onClose()}>
@@ -138,9 +153,53 @@ export function TeacherSheet({
               ) : (
                 <div className="divide-y">
                   {rows.map((row, index) => (
-                    <FeedbackEntry key={`${row.student}-${row.submittedAt}-${index}`} row={row} />
+                    <FeedbackEntry
+                      key={`${row.student}-${row.submittedAt}-${index}`}
+                      row={row}
+                      courseTrend={
+                        courseMonth
+                          ? studentCourseTrend({ courseMonth, teacher: row.teacher, student: row.student, currentTasks: currentTasks ?? null, nextTasks: nextTasks ?? null })
+                          : undefined
+                      }
+                    />
                   ))}
                 </div>
+              )}
+            </div>
+          ) : null}
+
+          {missing ? (
+            <div className="flex flex-col gap-2">
+              <Separator />
+              <h3 className="pt-2 text-sm font-medium">
+                未评价{" "}
+                <span className="text-muted-foreground font-normal">
+                  {missing.length} 人
+                  {missingHours > 0 ? ` · ${formatHours(missingHours)} 课时` : ""}
+                </span>
+              </h3>
+              <p className="text-muted-foreground -mt-1 text-xs">课表上跟这位老师有课、但还没收到反馈的学生。按课时从多到少排，方便先追覆盖率缺口大的。</p>
+              {missing.length === 0 ? (
+                <p className="text-muted-foreground py-4 text-sm">都评过了。</p>
+              ) : (
+                <ul className="divide-y rounded-lg border">
+                  {missing.map((row) => (
+                    <li key={row.student} className="flex items-start justify-between gap-3 px-3 py-2.5 text-sm">
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-1.5 font-medium">
+                          <span className="truncate">{row.student}</span>
+                          {row.declined ? <Badge variant="secondary">拒绝填写</Badge> : null}
+                        </div>
+                        {row.courses.length > 0 ? (
+                          <div className="text-muted-foreground mt-0.5 truncate text-xs">{row.courses.join("、")}</div>
+                        ) : null}
+                      </div>
+                      <span className="text-muted-foreground shrink-0 font-mono text-xs tabular-nums">
+                        {row.hours > 0 ? formatHours(row.hours) : "—"}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
               )}
             </div>
           ) : null}

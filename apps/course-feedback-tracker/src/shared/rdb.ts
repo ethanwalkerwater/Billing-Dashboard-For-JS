@@ -14,6 +14,7 @@ export interface PostgrestResult<T> {
 
 interface PostgrestFilter<T> extends PromiseLike<PostgrestResult<T>> {
   eq(column: string, value: unknown): PostgrestFilter<T>;
+  lt(column: string, value: unknown): PostgrestFilter<T>;
   in(column: string, values: readonly unknown[]): PostgrestFilter<T>;
   order(column: string, options?: { ascending?: boolean }): PostgrestFilter<T>;
   limit(count: number): PostgrestFilter<T>;
@@ -23,22 +24,25 @@ export interface PostgrestLike {
   from(table: string): {
     select<T = FeedbackTaskRow>(columns?: string): PostgrestFilter<T>;
     insert(rows: Record<string, unknown>[]): PromiseLike<PostgrestResult<unknown>>;
-    upsert(
-      rows: Record<string, unknown>[],
-      options?: { onConflict?: string },
-    ): PromiseLike<PostgrestResult<unknown>>;
+    upsert(rows: Record<string, unknown>[], options?: { onConflict?: string }): PromiseLike<PostgrestResult<unknown>>;
     update(values: Record<string, unknown>): PostgrestFilter<unknown>;
     delete(): PostgrestFilter<unknown>;
   };
+  rpc?<T>(name: string, args: Record<string, unknown>): PromiseLike<PostgrestResult<T>>;
 }
 
 export const TASKS_TABLE = "feedback_tasks";
 export const RESPONSES_TABLE = "feedback_responses";
 export const ALIASES_TABLE = "feedback_name_aliases";
 export const EXCLUDED_TEACHERS_TABLE = "feedback_excluded_teachers";
+export const EXCLUDED_STUDENTS_TABLE = "feedback_excluded_students";
 export const SNAPSHOTS_TABLE = "feedback_source_snapshots";
+/** 快照的同步时间（不带 CSV），普通老师也能读；答卷快照只给能看明细的，见 migrations/202611110001_feedback_roles.sql */
+export const SYNC_TIMES_VIEW = "feedback_sync_times";
 export const SCORE_HISTORY_TABLE = "feedback_score_history";
 export const SCORE_RESULTS_TABLE = "feedback_score_results";
+/** 评分结果去掉 detail 列（逐份明细），普通老师也能读；表本身只给能看明细的 */
+export const SCORE_SUMMARIES_VIEW = "feedback_score_summaries";
 export const COURSE_TYPE_RULES_TABLE = "feedback_course_type_rules";
 export const OWNER_ASSIGNMENTS_TABLE = "feedback_owner_assignments";
 
@@ -51,10 +55,15 @@ export class RdbFeedbackTaskRepository implements FeedbackTaskRepository {
   constructor(private readonly db: PostgrestLike) {}
 
   async listByCollectionMonth(collectionMonth: string): Promise<StoredFeedbackTask[]> {
+    return this.listByCollectionMonths([collectionMonth]);
+  }
+
+  async listByCollectionMonths(collectionMonths: string[]): Promise<StoredFeedbackTask[]> {
+    if (collectionMonths.length === 0) return [];
     const result = await this.db
       .from(TASKS_TABLE)
       .select("*")
-      .eq("collection_month", collectionMonth)
+      .in("collection_month", collectionMonths)
       .order("teacher_canonical_name", { ascending: true });
     return unwrap(result, "读取月度任务").map(rowToTask);
   }
@@ -89,17 +98,12 @@ export class RdbFeedbackTaskRepository implements FeedbackTaskRepository {
   }
 
   async applySyncPlan(plan: TaskSyncPlan): Promise<void> {
-    for (const chunk of chunked(plan.remove.map((task) => task.taskId), 200)) {
-      const result = await this.db.from(TASKS_TABLE).delete().in("task_id", chunk);
-      if (result.error) throw new Error(`删除已不是课程的任务失败：${result.error.message}`);
-    }
-    const rows = [...plan.create, ...plan.update].map(taskToRow) as unknown as Record<string, unknown>[];
-    if (rows.length === 0) return;
-    // task_id 唯一，upsert 保证重复同步幂等；状态字段由 buildTaskSyncPlan 保留教务的手动修改。
-    for (const chunk of chunked(rows, 200)) {
-      const result = await this.db.from(TASKS_TABLE).upsert(chunk, { onConflict: "task_id" });
-      if (result.error) throw new Error(`写入月度任务失败：${result.error.message}`);
-    }
+    if (plan.remove.length + plan.create.length + plan.update.length === 0) return;
+    if (!this.db.rpc) throw new Error("同步名单需要数据库服务端权限");
+    const result = await this.db.rpc("apply_feedback_task_sync", {
+      p_remove: plan.remove.map((task) => task.taskId), p_create: plan.create.map(taskToRow), p_update: plan.update.map(taskToRow),
+    });
+    if (result.error) throw new Error(`同步月度任务失败：${result.error.message}`);
   }
 
   async listAliases(): Promise<NameAlias[]> {
@@ -118,11 +122,13 @@ export class RdbFeedbackTaskRepository implements FeedbackTaskRepository {
       .map((row) => ({ responseRecordId: row.response_record_id, taskId: row.task_id! }));
   }
 
-  async listResponseIds(collectionMonth: string): Promise<string[]> {
-    const result = await this.db
+  async listResponseIds(collectionMonth: string, confirmedBefore?: string): Promise<string[]> {
+    let query = this.db
       .from(RESPONSES_TABLE)
       .select<{ response_record_id: string }>("response_record_id")
       .eq("collection_month", collectionMonth);
+    if (confirmedBefore) query = query.lt("updated_at", confirmedBefore);
+    const result = await query;
     return unwrap(result, "读取答卷引用").map((row) => row.response_record_id);
   }
 

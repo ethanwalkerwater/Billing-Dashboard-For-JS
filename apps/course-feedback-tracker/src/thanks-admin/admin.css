@@ -1,0 +1,125 @@
+@import "../styles.css";
+@source "../web/LoginPage.tsx";
+@source "../components/ui/card.tsx";
+@source "../components/ui/button.tsx";
+
+:root{color-scheme:light;--ink:#192335;--sub:#536278;--blue:#123969;--blue-dark:#102e55;--line:#e0e7ef;--pale:#eef5ff;--white:#fff;--zinc:#18181b;--border:#e4e4e7;font:15px/1.55 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",system-ui,sans-serif}
+*{box-sizing:border-box}
+button,input,textarea,select{font:inherit}
+button{cursor:pointer}
+button:disabled{cursor:default;opacity:.48}
+button:focus-visible,:is(input,textarea,select,a,[tabindex]):focus-visible{outline:2px solid #386fae;outline-offset:3px}
+button,select,input,textarea{color:inherit}
+h1,h2,h3,p,dl,dd,fieldset{margin:0}
+h1,h2,h3{line-height:1.3}
+small{font-size:12px}
+.icon{width:18px;height:18px;flex:none;vertical-align:text-bottom}
+.btn{border:1px solid var(--line);background:white;border-radius:8px;display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:42px;padding:8px 15px;font-weight:600;white-space:nowrap}
+.btn:hover:not(:disabled){background:#f6f8fb}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:#fff}
+.btn.primary:hover:not(:disabled){background:var(--blue-dark)}
+.tool{display:grid;place-items:center;width:44px;height:44px;border:0;background:transparent;border-radius:8px;color:var(--sub)}
+.tool:hover{background:var(--pale);color:var(--blue-dark)}
+.muted{color:var(--sub);font-size:13px}
+dialog{color:inherit}
+dialog:modal{overscroll-behavior:contain}
+dialog::backdrop{background:#17294469;overflow:hidden;overscroll-behavior:contain}
+.sheet{width:min(100%,440px);max-width:none;height:100%;max-height:none;margin:0 0 0 auto;padding:0;border:0;border-left:1px solid var(--border);background:white;color:var(--zinc)}
+.sheet::backdrop{background:#18181b54}
+.sheet-inner{padding:24px}
+.sheet-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.sheet-head .tool{margin:-6px -8px 0 0}
+.sheet-head h1{font-size:21px;margin-top:3px}
+.sheet-head p{margin-top:6px;color:#52525b;font-size:13px}
+.admin{color:var(--zinc);background:#fff;min-height:100dvh}
+.admin-shell{display:grid;grid-template-columns:256px minmax(0,1fr);min-height:inherit}
+.admin-sidebar{border-right:1px solid var(--border);padding:14px 12px}
+.admin-brand{display:flex;gap:9px;align-items:center;padding:0 7px;margin-bottom:23px;font-size:13px;font-weight:700;line-height:1.45}
+.admin-brand img{width:30px;height:30px}
+.admin-brand small{display:block;font-weight:500;color:#52525b}
+.admin-sidebar nav{display:grid;gap:4px}
+.admin-sidebar nav button{display:flex;align-items:center;gap:9px;text-align:left;background:transparent;border:0;border-radius:6px;min-height:32px;padding:4px 8px;font-size:13px}
+.admin-sidebar nav button:hover,.admin-sidebar nav button[aria-current="page"]{background:#f1f1f3}
+.admin-sidebar nav button[aria-current="page"]{font-weight:650}
+.admin-sidebar nav .count{margin-left:auto;font-variant-numeric:tabular-nums;color:#52525b}
+.crumb{height:48px;display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--border);padding:0 24px;font-size:13px}
+.slash,.crumb-root{color:#52525b}
+.admin-content{padding:23px 24px 32px}
+.admin h1{font-size:26px;letter-spacing:-.04em}
+.admin h2{font-size:16px}
+.admin-page-heading{display:flex;align-items:center;justify-content:space-between;gap:8px 16px;flex-wrap:wrap;margin-bottom:17px}
+.admin .muted{color:#52525b;margin-top:5px}
+.stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:17px}
+.stat{border:1px solid var(--border);border-radius:9px;padding:11px 13px;min-width:0}
+.stat dt{color:#52525b;font-size:12px;font-weight:550}
+.stat dd{font-size:23px;line-height:1.3;font-weight:720;font-variant-numeric:tabular-nums;overflow-wrap:anywhere;margin-top:2px}
+.filters{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 10px}
+.filters .search-box{position:relative;min-width:145px;flex:1;max-width:280px}
+.search-box .icon{position:absolute;left:10px;top:10px;color:#71717a;width:16px;height:16px;pointer-events:none}
+.filters input,.filters select,.sheet input:not([type=checkbox]){height:36px;border:1px solid var(--border);border-radius:7px;background:white;padding:5px 8px;font-size:13px}
+.filters input[type=search]{width:100%;padding-left:32px}
+.table-wrap{max-width:100%;max-height:470px;overflow:auto;border:1px solid var(--border);border-radius:8px}
+table{border-collapse:separate;border-spacing:0;width:100%;font-size:13px;white-space:nowrap}
+thead{position:sticky;top:0;z-index:2}
+th,td{padding:9px 11px;text-align:left;border-bottom:1px solid var(--border)}
+th{background:#fafafa;color:#52525b;font-weight:600}
+tbody th{position:sticky;left:0;z-index:1;background:white;color:var(--zinc)}
+tbody tr:last-child :is(th,td){border-bottom:0}
+.cell-message{max-width:225px;overflow:hidden;text-overflow:ellipsis}
+.numeric{font-variant-numeric:tabular-nums}
+.table-empty{white-space:normal;padding:23px 12px;text-align:center;color:#52525b}
+.status{display:inline-flex;align-items:center;gap:4px;padding:2px 7px;border:1px solid;border-radius:6px;font-size:11px;font-weight:650}
+.status .icon{width:12px;height:12px}
+.status.pending{color:#8a4b0f;background:#fff7e5;border-color:#f3d99c}
+.status.done{color:#234f89;background:#edf4ff;border-color:#cfe0f8}
+.status.off{color:#52525b;background:#f4f4f5;border-color:#dedee2}
+.btn.compact{min-height:32px;padding:4px 9px;border-color:var(--border);font-size:12px}
+.sheet .btn{border-color:var(--border)}
+.sheet .btn.primary{background:#18181b;border-color:#18181b}
+.setting-art{display:flex;align-items:center;gap:7px;font-weight:650}
+.setting-art img{width:48px;height:48px;object-fit:contain}
+.detail-list{margin:18px 0 14px;border-block:1px solid var(--border);padding:5px 0}
+.detail-list div{display:flex;gap:15px;justify-content:space-between;padding:7px 0;font-size:14px}
+.detail-list dt{color:#52525b}
+.detail-list dd{text-align:right}
+blockquote{margin:7px 0 20px;background:#f4f4f5;border:1px solid var(--border);border-radius:8px;padding:11px 13px;overflow-wrap:anywhere;white-space:pre-wrap}
+.sheet-foot{display:flex;justify-content:flex-end;gap:8px;margin-top:18px}
+.sheet-form{display:grid;gap:12px;margin-top:18px}
+.sheet-form label:not(.checkbox){display:grid;gap:5px;font-size:13px;font-weight:650}
+.checkbox{display:flex;align-items:center;gap:7px;font-size:13px}
+.checkbox input{accent-color:#18181b;width:17px;height:17px}
+@media(max-width:960px){
+  .admin-shell{display:block}
+  .admin-sidebar{display:flex;align-items:center;gap:14px;border-right:0;border-bottom:1px solid var(--border);padding:8px 16px}
+  .admin-brand{padding:0;margin:0;white-space:nowrap}
+  .admin-sidebar nav{display:flex;gap:4px}
+  .admin-sidebar nav .count{display:none}
+}
+@media(max-width:480px){
+  .admin-content{padding:17px 12px 24px}
+  .admin-sidebar{padding-inline:12px;gap:9px}
+  .admin-sidebar nav button{font-size:12px;gap:4px;padding-inline:6px}
+  .admin-brand img{width:24px}
+  .admin-brand small{font-size:11px}
+  .crumb{padding-inline:12px}
+  .stats{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+.batch-line{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:0 0 10px;font-size:13px}
+.batch-line #batch-status{margin-right:auto}
+select.status{min-height:30px;cursor:pointer}
+.pick{width:17px;height:17px;accent-color:#234e82;vertical-align:middle}
+tr:has(.pick:checked) :is(th,td){background:#eef5ff}
+.photo-field legend{margin:0 0 6px;font-size:13px;font-weight:650}
+.photo-edit{display:flex;align-items:center;gap:16px;padding:12px;border:1px solid var(--border);border-radius:9px;background:#fafafa}
+.photo-edit img{width:72px;height:72px;flex:none;object-fit:contain;border:1px solid var(--border);border-radius:7px;background:white}
+.photo-edit .btn{min-height:34px;padding:6px 12px;font-size:13px;font-weight:550;box-shadow:0 1px 2px #18181b0c}
+.photo-edit .icon{width:15px;height:15px}
+.photo-edit p,#photo-status{font-size:12px;line-height:1.5;color:#52525b;margin-top:5px}
+#photo-status:empty{display:none}
+.admin .muted{font-size:13px}
+.admin h1,.sheet h1{font-weight:700}
+.sheet h1,.admin h1{line-height:1.3}
+.sheet :is(input,button),.admin :is(input,button,select){appearance:auto}
+.sheet button,.admin button{appearance:none}
+.admin svg,.sheet svg{stroke-width:1.8}
+.admin .notice,.sheet .notice{font-size:13px;margin:8px 0;color:#88400b}

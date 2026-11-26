@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>月度反馈 · 方案对比</title>
+<style>
+html,body{margin:0;height:100%;background:#fff}
+iframe{display:block;width:100%;height:100%;border:0}
+#vs{position:fixed;right:16px;bottom:16px;z-index:9;display:flex;gap:4px;padding:4px;background:#fff;border:1px solid #e3e8e5;border-radius:10px;box-shadow:0 4px 16px rgba(0,0,0,.12);font:14px -apple-system,"PingFang SC",sans-serif}
+#vs{box-sizing:border-box;max-width:calc(100% - 32px);overflow-x:auto}
+#vs button{flex:none;white-space:nowrap;border:0;background:none;padding:6px 12px;border-radius:7px;cursor:pointer;color:#1d2421}
+#vs button[aria-pressed=true]{background:#1d2421;color:#fff}
+#vs[hidden]{display:none}
+/* 手机宽度下放到顶部，不挡各版本底部的提交按钮 */
+@media (max-width:600px){#vs{top:4px;bottom:auto;right:8px;max-width:calc(100% - 16px);font-size:13px}#vs button{padding:4px 9px}}
+</style>
+</head>
+<body>
+<iframe id="f" title="Demo"></iframe>
+<div id="vs" role="group" aria-label="版本"></div>
+<script>
+// 新一轮改版：把当前 vN.html 复制成 vN+1.html 再改，然后在这里加一行（最新的放最后）
+const VERSIONS = [
+  { file: "index.html", name: "现版 嵌入飞书" },
+  { file: "v4.html", name: "v4 卡片表单" },
+  { file: "v5.html", name: "v5 一题一屏" },
+  { file: "v6.html", name: "v6 分组表单" },
+  { file: "v7.html", name: "v7 一屏一题" },
+  { file: "v8.html", name: "v8 老师条 + 动效" },
+  { file: "v9.html", name: "v9 页头老师卡片" },
+];
+const vs = document.getElementById("vs"), f = document.getElementById("f");
+const q = new URLSearchParams(location.search);
+function show(file) {
+  f.src = file + location.hash;
+  q.set("v", file);
+  try { history.replaceState(null, "", "?" + q + location.hash); } catch {} // file:// 下个别浏览器不让改地址，不影响切换
+  vs.querySelectorAll("button").forEach((b) => b.setAttribute("aria-pressed", b.dataset.file === file));
+}
+VERSIONS.forEach((v) => {
+  const b = document.createElement("button");
+  b.textContent = v.name; b.dataset.file = v.file; b.onclick = () => show(v.file);
+  vs.append(b);
+});
+vs.hidden = VERSIONS.length < 2;
+show(q.get("v") || VERSIONS[VERSIONS.length - 1].file);
+</script>
+</body>
+</html>

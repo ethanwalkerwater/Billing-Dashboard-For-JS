@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>月度课程反馈 · 菁仕教育</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #18181b;
+      --muted: #52525b;
+      --line: #e4e4e7;
+      --blue: #1d4ed8;
+      --paper: #fff;
+      --surface: #fafafa;
+      font: 16px/1.5 Geist, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+      font-variant-numeric: tabular-nums;
+      color: var(--ink);
+      background: var(--surface);
+    }
+
+    * { box-sizing: border-box; }
+    body, h1, h2, p { margin: 0; }
+    body { min-height: 100svh; }
+    button, textarea { font: inherit; }
+    button { cursor: pointer; }
+    button:focus-visible, textarea:focus-visible, input:focus-visible + span {
+      outline: 2px solid var(--blue);
+      outline-offset: 3px;
+    }
+
+    ::selection { background: #dbeafe; color: #1e3a8a; }
+    .top { position: sticky; top: 0; z-index: 1; background: var(--paper); border-bottom: 1px solid var(--line); }
+    .shell { max-width: 644px; margin: auto; padding-inline: 20px; }
+    .brand { display: flex; align-items: center; gap: 9px; min-height: 54px; font-size: .875rem; font-weight: 600; }
+    .brand-mark { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 7px; background: var(--ink); color: white; }
+    .demo { margin-left: auto; color: var(--muted); font-size: .75rem; font-weight: 500; }
+    .progress-shell { padding-block: 10px 14px; }
+    .progress-line { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; font-size: .875rem; }
+    .progress-line span { color: var(--muted); }
+    progress { display: block; width: 100%; height: 6px; margin-top: 8px; border: 0; border-radius: 8px; overflow: hidden; background: #e4e4e7; }
+    progress::-webkit-progress-bar { background: #e4e4e7; }
+    progress::-webkit-progress-value { background: var(--blue); transition: width 180ms ease-out; }
+    progress::-moz-progress-bar { background: var(--blue); }
+
+    main { padding-block: 32px 48px; }
+    h1 { font-size: 1.5rem; font-weight: 650; letter-spacing: -.025em; line-height: 1.3; }
+    h1:focus { outline: none; }
+    h2 { font-size: 1rem; font-weight: 600; }
+    .context { margin-top: 6px; color: var(--muted); font-size: .875rem; }
+    .notice { margin-bottom: 16px; padding: 9px 12px; border: 1px solid #bfdbfe; border-radius: 8px; background: #eff6ff; color: #1e3a8a; font-size: .875rem; }
+    .notice:empty, [hidden] { display: none; }
+    .notice.error { border-color: #fed7aa; background: #fff7ed; color: #9a3412; }
+    .teachers { margin: 20px 0 0; padding: 0; list-style: none; overflow: hidden; border: 1px solid var(--line); border-radius: 14px; background: var(--paper); }
+    .teachers li + li { border-top: 1px solid var(--line); }
+    .teacher { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 16px; text-align: left; color: inherit; background: transparent; border: 0; min-height: 68px; }
+    button.teacher:hover { background: var(--surface); }
+    button.teacher:focus-visible { outline-offset: -4px; }
+    .teacher strong { display: block; font-size: 1rem; font-weight: 600; overflow-wrap: anywhere; }
+    .teacher small { display: block; color: var(--muted); font-size: .8125rem; overflow-wrap: anywhere; }
+    .state { display: inline-flex; align-items: center; gap: 5px; flex: none; padding: 3px 7px; border-radius: 6px; background: #f4f4f5; color: #3f3f46; font-size: .75rem; font-weight: 600; white-space: nowrap; }
+    .state[data-state="done"] { color: var(--blue); background: #eff6ff; }
+    .state[data-state="draft"] { color: #854d0e; background: #fefce8; }
+    svg { width: 1em; height: 1em; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+    .toolbar { margin-bottom: 10px; }
+    .button { display: inline-flex; min-height: 44px; align-items: center; justify-content: center; gap: 6px; padding: 0 14px; border: 1px solid var(--line); border-radius: 8px; color: var(--ink); background: var(--paper); font-size: .875rem; font-weight: 600; }
+    .button:hover { background: #f4f4f5; }
+    .button.primary { background: var(--ink); border-color: var(--ink); color: var(--paper); }
+    .button.primary:hover { background: #3f3f46; }
+    .button.link { min-height: 44px; padding-inline: 0; background: transparent; border-color: transparent; color: var(--muted); }
+    .button.link:hover { color: var(--ink); text-decoration: underline; text-underline-offset: 4px; }
+    form { margin-top: 20px; }
+    .questions { border: 1px solid var(--line); border-radius: 14px; background: var(--paper); padding: 16px; }
+    fieldset { min-width: 0; border: 0; padding: 0; margin: 0 0 22px; }
+    legend { padding: 0; font-size: .9375rem; font-weight: 600; }
+    .scale { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; margin-top: 8px; }
+    .scale label { position: relative; min-width: 0; cursor: pointer; }
+    .scale input { position: absolute; inset: 0; opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; }
+    .scale span { display: grid; place-items: center; height: 44px; border-radius: 8px; border: 1px solid #a1a1aa; font-weight: 600; }
+    .scale label:hover span { background: #fafafa; }
+    .scale input:checked + span { border: 2px solid var(--blue); background: #eff6ff; color: var(--blue); }
+    .scale-ends { display: flex; justify-content: space-between; margin-top: 5px; color: var(--muted); font-size: .75rem; }
+    .suggestion { display: block; font-size: .9375rem; font-weight: 600; }
+    .suggestion span { color: var(--muted); font-size: .8125rem; font-weight: 400; }
+    textarea { display: block; width: 100%; margin-top: 8px; min-height: 80px; resize: vertical; border: 1px solid #a1a1aa; border-radius: 8px; padding: 8px 10px; color: inherit; }
+    .actions { display: grid; grid-template-columns: 1fr 1.25fr; gap: 8px; margin-top: 12px; }
+    .help { margin-top: 16px; color: var(--muted); font-size: .8125rem; }
+    .form-error { margin: 0 0 12px; }
+    @media (min-width: 680px) { .shell { padding-inline: 32px; } main { padding-top: 48px; } .questions { padding: 22px; } }
+    @media (prefers-reduced-motion: reduce) { progress::-webkit-progress-value { transition: none; } }
+  </style>
+</head>
+<body>
+  <header class="top">
+    <div class="shell brand"><span class="brand-mark" aria-hidden="true">菁</span>菁仕教育 <span class="demo">虚构学生演示</span></div>
+    <div class="shell progress-shell">
+      <div class="progress-line"><span>2026 年 10 月课程</span><strong id="progress-text"></strong></div>
+      <progress id="progress" max="3" value="0" aria-label="已提交的老师问卷"></progress>
+    </div>
+  </header>
+  <main class="shell">
+    <p id="notice" class="notice" role="status"></p>
+    <div id="view"></div>
+  </main>
+  <script>
+    const teachers = [
+      { id: "zhou", name: "周老师", courses: "雅思阅读" },
+      { id: "chen", name: "陈老师", courses: "雅思写作、雅思口语" },
+      { id: "xu", name: "许老师", courses: "学术英语" },
+    ];
+    const questions = ["学习提升效果", "责任心与服务态度", "个人魅力"];
+    const storageKey = "jingshi-demo:xiaohe:2026-10";
+    const sample = { zhou: { parentSubmitted: true } };
+    const icons = {
+      check: '<path d="m4 8 2.5 2.5L12 5"/>',
+      clock: '<circle cx="8" cy="8" r="5.5"/><path d="M8 5v3l2 1"/>',
+      next: '<path d="m6 3.5 4.5 4.5L6 12.5"/>',
+      back: '<path d="m10 3.5-4.5 4.5 4.5 4.5"/>',
+    };
+    const icon = (name) => '<svg aria-hidden="true" viewBox="0 0 16 16">' + icons[name] + '</svg>';
+    const view = document.querySelector("#view");
+    const notice = document.querySelector("#notice");
+    const progress = document.querySelector("#progress");
+    const progressText = document.querySelector("#progress-text");
+
+    function read() {
+      try { return JSON.parse(localStorage.getItem(storageKey)) || sample; }
+      catch { return sample; }
+    }
+
+    let state = read();
+    const isDone = (teacher) => state[teacher.id]?.submitted === true;
+    const resume = () => teachers.filter((teacher) => state[teacher.id]?.draft && !isDone(teacher))
+      .sort((a, b) => state[b.id].savedAt - state[a.id].savedAt)[0];
+    let active = resume();
+    let showList = false;
+
+    function say(message, error = false) {
+      notice.textContent = message;
+      notice.classList.toggle("error", error);
+    }
+
+    function render(moveFocus = false) {
+      const done = teachers.filter(isDone).length;
+      progress.value = done;
+      progressText.textContent = "已提交 " + done + " / " + teachers.length + " 份";
+
+      if (active && !isDone(active)) {
+        view.innerHTML =
+          '<div class="toolbar"><button type="button" class="button link" id="list">' + icon("back") + '老师名单</button></div>' +
+          '<h1 tabindex="-1">评价' + active.name + '</h1><p class="context">' + active.courses + '</p>' +
+          '<form><p id="form-error" class="notice error form-error" role="alert" tabindex="-1" hidden></p><div class="questions">' +
+          questions.map((question, index) =>
+            '<fieldset><legend>' + question + '</legend><div class="scale">' +
+            [1, 2, 3, 4, 5].map((score) => '<label><input type="radio" name="q' + index + '" value="' + score + '" aria-label="' + score + ' 分"><span aria-hidden="true">' + score + '</span></label>').join("") +
+            '</div><div class="scale-ends"><span>1 分 · 很不满意</span><span>5 分 · 很满意</span></div></fieldset>'
+          ).join("") +
+          '<label class="suggestion" for="suggestion">给老师的建议 <span>（选填）</span></label><textarea name="suggestion" id="suggestion" maxlength="500"></textarea></div>' +
+          '<div class="actions"><button type="button" class="button" id="save">保存，稍后继续</button>' +
+          '<button type="submit" class="button primary">' + (done + 1 === teachers.length ? "提交反馈" : "提交并继续") + '</button></div></form>' +
+          '<p class="help">没上过这位老师的课？请联系教务核对名单。</p>';
+
+        const form = view.querySelector("form");
+        const draft = state[active.id]?.draft;
+        if (draft) {
+          draft.scores.forEach((value, index) => { form.elements.namedItem("q" + index).value = value; });
+          form.elements.suggestion.value = draft.suggestion;
+        }
+        const answers = () => {
+          const values = new FormData(form);
+          return { scores: questions.map((_, index) => values.get("q" + index) ?? ""), suggestion: values.get("suggestion") };
+        };
+        const save = (showError = true) => {
+          const values = answers();
+          if (values.scores.some(Boolean) || values.suggestion.trim()) return persist({ draft: values, savedAt: Date.now() }, showError);
+          if (state[active.id]?.draft) return persist({}, showError);
+          return "saved";
+        };
+        const returnToList = (message) => {
+          active = undefined;
+          showList = true;
+          say(message);
+          render(true);
+        };
+        form.oninput = () => save(false);
+        view.querySelector("#list").onclick = () => { if (save()) returnToList(""); };
+        view.querySelector("#save").onclick = () => {
+          const result = save();
+          if (result) returnToList(result === "done" ? "这份反馈已提交。" : "可以关闭页面。下次用同一链接回来继续。");
+        };
+        form.onsubmit = (event) => {
+          event.preventDefault();
+          const values = answers();
+          if (values.scores.some((score) => !score)) {
+            formError("请先为三项内容各选一个分数。");
+            return;
+          }
+          const submittedTeacher = active;
+          const result = persist({ submitted: true });
+          if (!result) return;
+          const current = teachers.indexOf(submittedTeacher);
+          active = [...teachers.slice(current + 1), ...teachers.slice(0, current)].find((teacher) => !isDone(teacher));
+          showList = false;
+          say(submittedTeacher.name + "的反馈已提交。");
+          render(true);
+        };
+      } else if (done === teachers.length && !showList) {
+        view.innerHTML = '<h1 tabindex="-1">本月反馈已全部提交</h1><p class="context">小禾的 ' + done + ' 份课程反馈已收到。</p>' +
+          '<div class="toolbar"><button type="button" class="button link" id="list">查看老师名单 ' + icon("next") + '</button></div>';
+        view.querySelector("#list").onclick = () => { showList = true; say(""); render(true); };
+      } else {
+        view.innerHTML = '<h1 tabindex="-1">小禾的课程反馈</h1><p class="context">' +
+          (done === teachers.length ? "本月反馈已全部提交" : "请选择一位老师开始，或继续填写已保存的反馈。") +
+          '</p><ul class="teachers" aria-label="老师名单">' +
+          teachers.map((teacher) => {
+            const done = isDone(teacher);
+            const status = done ? "done" : state[teacher.id]?.draft ? "draft" : "pending";
+            const content = '<span><strong>' + teacher.name + '</strong><small>' + teacher.courses + '</small></span>' +
+              '<span class="state" data-state="' + status + '">' + icon(done ? "check" : status === "draft" ? "clock" : "next") +
+              (done ? "已提交" : status === "draft" ? "继续填写" : "待评价") + '</span>';
+            return '<li>' + (done ? '<div class="teacher">' + content + '</div>' :
+              '<button type="button" class="teacher" data-teacher="' + teacher.id + '">' + content + '</button>') + '</li>';
+          }).join("") + '</ul>';
+        for (const button of view.querySelectorAll("[data-teacher]")) {
+          button.onclick = () => {
+            active = teachers.find((teacher) => teacher.id === button.dataset.teacher);
+            showList = false;
+            say("");
+            render(true);
+          };
+        }
+      }
+
+      if (moveFocus) {
+        view.querySelector("h1").focus({ preventScroll: true });
+        window.scrollTo(0, 0);
+      }
+    }
+
+    function formError(message) {
+      const error = view.querySelector("#form-error");
+      error.hidden = false;
+      error.textContent = message;
+      error.focus();
+    }
+
+    function persist(entry, showError = true) {
+      const latest = read();
+      if (latest[active.id]?.submitted) {
+        state = latest;
+        return "done";
+      }
+      const next = { ...latest, [active.id]: { ...sample[active.id], ...entry } };
+      try { localStorage.setItem(storageKey, JSON.stringify(next)); }
+      catch {
+        if (showError) formError("浏览器暂时无法保存，当前答案仍在页面上。请保持页面打开后重试。");
+        return null;
+      }
+      state = next;
+      return "saved";
+    }
+
+    render();
+  </script>
+</body>
+</html>

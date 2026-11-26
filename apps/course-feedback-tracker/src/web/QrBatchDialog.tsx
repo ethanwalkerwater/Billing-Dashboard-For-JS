@@ -53,7 +53,7 @@ export function QrBatchDialog({
             {phase === "cancelled" ? "已取消" : null}
           </DialogTitle>
           <DialogDescription>
-            {phase === "rendering" ? `${done} / ${total} 张，按学生分文件夹` : null}
+            {phase === "rendering" ? `${done} / ${total} 张，每位学生一张` : null}
             {phase === "zipping" ? `${total} 张已生成，正在打成 ZIP` : null}
             {phase === "done"
               ? `${progress.fileName}${progress.sizeBytes ? `（${formatSize(progress.sizeBytes)}）` : ""}已保存到下载目录`

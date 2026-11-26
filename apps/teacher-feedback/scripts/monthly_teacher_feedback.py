@@ -1178,6 +1178,41 @@ def filter_excluded_teachers(
     }
 
 
+def filter_excluded_students(
+    records: List[FeedbackRecord],
+    teacher_total_hours: Dict[str, float],
+    teacher_student_hours: Dict[Tuple[str, str], float],
+    raw_feedback_records: List[Dict[str, object]],
+    excluded_students: set,
+) -> Dict[str, object]:
+    """不统计的学生：课时、覆盖率、加权都不算他们（工作台「不统计的学生」名单）。"""
+    if not excluded_students:
+        return {
+            "records": records,
+            "teacher_total_hours": teacher_total_hours,
+            "teacher_student_hours": teacher_student_hours,
+            "raw_feedback_records": raw_feedback_records,
+        }
+
+    kept_hours = {
+        (teacher, student): hours
+        for (teacher, student), hours in teacher_student_hours.items()
+        if student not in excluded_students
+    }
+    rebuilt_total: Dict[str, float] = defaultdict(float)
+    for (teacher, _student), hours in kept_hours.items():
+        rebuilt_total[teacher] += hours
+
+    return {
+        "records": [r for r in records if r.student not in excluded_students],
+        "teacher_total_hours": dict(rebuilt_total),
+        "teacher_student_hours": kept_hours,
+        "raw_feedback_records": [
+            r for r in raw_feedback_records if r.get("student") not in excluded_students
+        ],
+    }
+
+
 def build_teacher_summary(
     records: List[FeedbackRecord],
     teacher_total_hours: Dict[str, float],
@@ -2816,6 +2851,7 @@ def generate_monthly_feedback_report(
     identities: str = "学生,家长/监护人",
     combine_mode: str = "merge_by_student",
     exclude_teachers_raw: str = "",
+    exclude_students_raw: str = "",
     feedback_month_offset: int = 1,
     feedback_start_date: str = "",
     feedback_end_date: str = "",
@@ -2845,6 +2881,7 @@ def generate_monthly_feedback_report(
     name_map = load_name_map(name_map_csv)
     identity_filter = parse_identity_filter(identities)
     excluded_teachers = parse_name_set(exclude_teachers_raw)
+    excluded_students = parse_name_set(exclude_students_raw)
     course_type_keywords = exclude_course_type_keywords or [
         "请假",
         "假期",
@@ -2926,11 +2963,20 @@ def generate_monthly_feedback_report(
         raw_feedback_records=raw_feedback_records,
         excluded_teachers=excluded_teachers,
     )
+    filtered_inputs = filter_excluded_students(
+        records=filtered_inputs["records"],
+        teacher_total_hours=filtered_inputs["teacher_total_hours"],
+        teacher_student_hours=filtered_inputs["teacher_student_hours"],
+        raw_feedback_records=filtered_inputs["raw_feedback_records"],
+        excluded_students={
+            normalize_student(name, name_map["student"]) for name in excluded_students
+        },
+    )
     feedback_records = filtered_inputs["records"]
     teacher_total_hours = filtered_inputs["teacher_total_hours"]
     teacher_student_hours = filtered_inputs["teacher_student_hours"]
     raw_feedback_records = filtered_inputs["raw_feedback_records"]
-    if excluded_teachers:
+    if excluded_teachers or excluded_students:
         schedule_stats["teacher_count_in_month"] = len(teacher_total_hours)
         schedule_stats["student_count_in_month"] = len(
             {student for (_, student), hours in teacher_student_hours.items() if hours > 0}
@@ -3092,6 +3138,7 @@ def generate_monthly_feedback_report(
         "combine_mode": combine_mode,
         "dedupe_keep": dedupe_keep,
         "exclude_teachers": sorted(excluded_teachers),
+        "exclude_students": sorted(excluded_students),
         "feedback_month_offset": feedback_month_offset,
         "feedback_start_date": feedback_start_date,
         "feedback_end_date": feedback_end_date,

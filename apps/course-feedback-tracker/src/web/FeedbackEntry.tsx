@@ -1,16 +1,11 @@
-import { Quote } from "lucide-react";
+import { CalendarDays, Quote, TriangleAlert } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { identityLabel, improvementOptions, isNothingToImprove, suggestionText } from "./feedback-text";
-import { METRICS } from "./report-types";
+import { METRICS, SCORE_ADJUST_RULES } from "./report-types";
 import type { DetailRow } from "./report-types";
-
-/** 评分时把 4 分按 5 分算的两条规则，见 functions/feedback-score/index.py */
-const ADJUST_RULES = {
-  streak: { label: "连续 4 分", hint: "连续 3 个月给这位老师这一项打 4 分、每月都有课，本月的 4 分按 5 分算" },
-  "strict-rater": { label: "评分标准高", hint: "本月给 2 位及以上老师打分、从没打过 5 分，4 分都按 5 分算" },
-} as const;
+import type { StudentCourseTrend } from "./missing-feedback";
 
 /** 一份反馈里某项指标的分数：学生、家长各一份时都列出来；按规则改算的写成 4→5。 */
 function metricScores(row: DetailRow, metricId: string): string {
@@ -26,7 +21,39 @@ function metricScores(row: DetailRow, metricId: string): string {
 }
 
 /** 一条反馈：谁、什么时候、三项分数、改进方向、文字建议。文字评价页和老师抽屉共用。 */
-export function FeedbackEntry({ row, showTeacher }: { row: DetailRow; showTeacher?: boolean }) {
+function monthNumber(month: string): number {
+  return Number(month.slice(5));
+}
+
+function CourseTrend({ trend }: { trend: StudentCourseTrend }) {
+  const current = trend.currentLessons;
+  const next = trend.nextLessons;
+  const nextText =
+    next == null
+      ? `${monthNumber(trend.nextMonth)}月课表未同步`
+      : next === 0
+        ? `${monthNumber(trend.nextMonth)}月 0 节 · 未续课`
+        : current != null && next < current
+          ? `${monthNumber(trend.nextMonth)}月 ${next} 节 · 减少 ${current - next} 节`
+          : current === 0
+            ? `${monthNumber(trend.nextMonth)}月 ${next} 节 · 新增续课`
+            : `${monthNumber(trend.nextMonth)}月 ${next} 节 · 已续课${current != null && next > current ? `，增加 ${next - current} 节` : ""}`;
+  const warning = next != null && (next === 0 || (current != null && next < current));
+  return (
+    <div className="text-muted-foreground flex flex-wrap items-center gap-1.5 text-xs" aria-label="课程续课情况">
+      <CalendarDays className="size-3.5" />
+      <Badge variant="outline">
+        {current == null ? `${monthNumber(trend.currentMonth)}月课表未同步` : `${monthNumber(trend.currentMonth)}月 ${current} 节`}
+      </Badge>
+      <Badge variant={warning ? "warning" : "secondary"}>
+        {warning ? <TriangleAlert className="size-3" /> : null}
+        {nextText}
+      </Badge>
+    </div>
+  );
+}
+
+export function FeedbackEntry({ row, showTeacher, courseTrend }: { row: DetailRow; showTeacher?: boolean; courseTrend?: StudentCourseTrend }) {
   const options = improvementOptions(row);
   const suggestion = suggestionText(row);
   return (
@@ -41,8 +68,8 @@ export function FeedbackEntry({ row, showTeacher }: { row: DetailRow; showTeache
           </Badge>
         ) : null}
         {[...new Set(Object.values(row.adjusted ?? {}))].map((rule) => (
-          <Badge key={rule} variant="secondary" title={ADJUST_RULES[rule].hint}>
-            {ADJUST_RULES[rule].label} · 4 分按 5 分
+          <Badge key={rule} variant="secondary" title={SCORE_ADJUST_RULES[rule].hint}>
+            {SCORE_ADJUST_RULES[rule].label} · 4 分按 5 分
           </Badge>
         ))}
         <span className="text-muted-foreground ml-auto font-mono text-xs">{row.submittedAt.slice(5, 16)}</span>
@@ -54,6 +81,7 @@ export function FeedbackEntry({ row, showTeacher }: { row: DetailRow; showTeache
           </span>
         ))}
       </div>
+      {courseTrend ? <CourseTrend trend={courseTrend} /> : null}
       {options.length > 0 ? (
         <div className="flex flex-wrap gap-1.5">
           {options.map((option, index) => (

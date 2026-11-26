@@ -1,9 +1,9 @@
 import JSZip from "jszip";
 import QRCode from "qrcode";
 
-import { buildPrefilledFormUrl } from "../domain";
-import type { StoredFeedbackTask } from "../server/tasks/types";
-import { feishuFormUrl } from "./cloudbase";
+import { monthlyFeedbackTitle } from "../domain/monthly-feedback";
+import { monthlyUrl } from "./monthly-links";
+import type { MonthlyLinks, StudentMonth } from "./monthly-links";
 
 /**
  * 卡片 810 × 1013（原来 1080 × 1350 的 3/4）。
@@ -16,36 +16,16 @@ const SANS = '-apple-system, "PingFang SC", "Microsoft YaHei", "Noto Sans SC", s
 // 跟着 vite 的 base 走（/feedback/），写死 "/logo-blue.svg" 会去根目录找
 export const BRAND_LOGO_URL = `${import.meta.env.BASE_URL}logo-blue.svg`;
 const BRAND_NAVY = "#0E2848";
-/** 卡片底部那句话：匿名 + 善意。短，不说教。 */
-export const FOOTER_LINE = "反馈完全匿名，你的善意会帮助老师变得更好";
-
-/**
- * 二维码直接编码带预填的飞书表单链接，扫码零中转。
- * 答卷已按姓名匹配回任务，中间那一跳（/t/<token> → 302）没有任何作用，
- * 只剩冷启动延迟和腾讯默认域名的拦截页。旧端点保留，已印出去的码不失效。
- */
-export function taskFormUrl(task: Pick<StoredFeedbackTask, "studentName" | "teacherCanonicalName" | "courseMonth">): string {
-  return buildPrefilledFormUrl({
-    baseUrl: feishuFormUrl(),
-    teacherName: task.teacherCanonicalName,
-    studentName: task.studentName,
-    courseMonth: task.courseMonth,
-  });
-}
+export const QR_DESCRIPTION = "扫码查看本月待评价的老师，可分次填写";
 
 /**
  * 用 `scale`（每个模块整数像素）而不是 `width`。
  * `width` 会把二维码缩放到指定像素，模块边缘出现抗锯齿灰边，颜色数从 2 涨到上千，
  * PNG 直接压不动——实测单张 67 KB，换成整数 scale 后降到约 10 KB。
- * scale 按模块数算出来、刚好放进 boxPx：链接加了月份后二维码从 65 格变成 77 格，
- * 写死 scale 要么超出卡片上的方框，要么（以前抽屉里传的 480）画布 3.9 万像素宽、浏览器直接画不出来。
+ * scale 按模块数算出来、刚好放进 boxPx，适配不同长度的月度链接。
  */
 const QR_MARGIN = 2;
-export async function taskQrDataUrl(
-  task: Pick<StoredFeedbackTask, "studentName" | "teacherCanonicalName" | "courseMonth">,
-  boxPx = 420,
-): Promise<string> {
-  const url = taskFormUrl(task);
+export async function monthlyQrDataUrl(url: string, boxPx = 420): Promise<string> {
   const modules = QRCode.create(url, { errorCorrectionLevel: "M" }).modules.size + QR_MARGIN * 2;
   return QRCode.toDataURL(url, {
     errorCorrectionLevel: "M",
@@ -100,12 +80,8 @@ function canvasFor(): { canvas: HTMLCanvasElement; context: CanvasRenderingConte
   return { canvas: sharedCanvas, context };
 }
 
-/**
- * 二维码卡片，自上而下：老师名（最大）→ 课程 → 学生 → 二维码 → 匿名提示 → 品牌。
- * 老师名做主角：学生一次会收到好几张，在聊天记录缩略图里就得认出评的是谁。
- */
-export async function renderQrCard(task: StoredFeedbackTask): Promise<Blob> {
-  const [qrDataUrl, logo] = await Promise.all([taskQrDataUrl(task), brandLogo()]);
+export async function renderQrCard(task: StudentMonth, url: string): Promise<Blob> {
+  const [qrDataUrl, logo] = await Promise.all([monthlyQrDataUrl(url), brandLogo()]);
   const qrImage = await loadImage(qrDataUrl);
   const { canvas, context } = canvasFor();
 
@@ -131,30 +107,21 @@ export async function renderQrCard(task: StoredFeedbackTask): Promise<Blob> {
   const maxTextW = cardW - 96;
 
   context.fillStyle = "#18181b";
-  context.font = `700 72px ${SANS}`;
-  context.fillText(fitText(context, `${task.teacherCanonicalName}老师`, maxTextW), centerX, cardY + 150);
+  context.font = `700 46px ${SANS}`;
+  context.fillText(fitText(context, monthlyFeedbackTitle(task.courseMonth, task.studentName), maxTextW), centerX, cardY + 160);
 
-  context.fillStyle = "#3f3f46";
-  context.font = `500 36px ${SANS}`;
-  context.fillText(fitText(context, task.courseNames.join(" · "), maxTextW), centerX, cardY + 219);
-
-  context.fillStyle = "#71717a";
-  context.font = `400 27px ${SANS}`;
-  // 每个月的码不一样（预填了反馈课程月份），卡片上写明是哪个月的，免得学生扫错上个月的。
-  context.fillText(fitText(context, `学生：${task.studentName} · ${cardMonthLabel(task.courseMonth)}`, maxTextW), centerX, cardY + 279);
+  context.fillStyle = "#52525b";
+  context.font = `400 25px ${SANS}`;
+  context.fillText(QR_DESCRIPTION, centerX, cardY + 232);
 
   // 二维码在一个固定的 420px 方框里居中：自然尺寸随版本在 390–420 之间浮动，
   // 固定框保证下面那两行文字的位置不跟着抖。不缩放，保持模块是纯黑白。
   const qrBox = 420;
   const qrPx = Math.min(qrImage.naturalWidth, qrBox);
-  const qrTop = cardY + 322 + (qrBox - qrPx) / 2;
+  const qrTop = cardY + 276 + (qrBox - qrPx) / 2;
   context.imageSmoothingEnabled = false;
   context.drawImage(qrImage, centerX - qrPx / 2, qrTop, qrPx, qrPx);
   context.imageSmoothingEnabled = true;
-
-  context.fillStyle = "#71717a";
-  context.font = `400 20px ${SANS}`;
-  context.fillText(FOOTER_LINE, centerX, cardY + 780);
 
   const logoH = 30;
   const logoW = (logo.naturalWidth / logo.naturalHeight) * logoH;
@@ -172,22 +139,12 @@ export async function renderQrCard(task: StoredFeedbackTask): Promise<Blob> {
   });
 }
 
-/** 「10月课程」 */
-export function cardMonthLabel(courseMonth: string): string {
-  return `${Number(courseMonth.slice(5))}月课程`;
-}
-
 function safeName(value: string): string {
   return value.replace(/[\\/:*?"<>|]/g, "_").trim() || "未命名";
 }
 
-export function cardFileName(task: StoredFeedbackTask): string {
-  return `${safeName(task.teacherCanonicalName)}-${safeName(task.studentName)}-${task.courseMonth}.png`;
-}
-
-/** ZIP 里按学生分文件夹：一个学生一个目录，教务直接把整个文件夹发给家长。 */
-export function cardZipPath(task: StoredFeedbackTask): string {
-  return `${safeName(task.studentName)}/${safeName(task.teacherCanonicalName)}-${task.courseMonth}.png`;
+export function cardFileName(task: StudentMonth): string {
+  return `${task.courseMonth}-${safeName(task.studentName)}-月度反馈.png`;
 }
 
 export function downloadBlob(blob: Blob, fileName: string): void {
@@ -223,10 +180,11 @@ const yieldToBrowser = () => new Promise<void>((resolve) => setTimeout(resolve, 
  *  - 画布和 logo 复用，不是每张重新分配。
  *  - 每张之间让出主线程，进度条才会动；否则界面假死。
  *
- * ponytail: 每月约 260 张，前端串行几秒钟就够，不值得为它开云存储 + Worker。
+ * 一个月每位学生一张，直接在浏览器中生成。
  */
 export async function downloadQrZip(
-  tasks: StoredFeedbackTask[],
+  tasks: StudentMonth[],
+  links: MonthlyLinks,
   onProgress: (progress: BatchProgress) => void,
   signal?: AbortSignal,
 ): Promise<BatchProgress> {
@@ -235,6 +193,7 @@ export async function downloadQrZip(
   const report = () => onProgress({ ...progress, failed: [...progress.failed] });
   report();
 
+  const fileNames = new Set<string>();
   for (const task of tasks) {
     if (signal?.aborted) {
       progress.phase = "cancelled";
@@ -242,11 +201,16 @@ export async function downloadQrZip(
       return progress;
     }
     try {
-      zip.file(cardZipPath(task), await renderQrCard(task));
+      const base = cardFileName(task);
+      let name = base;
+      let index = 2;
+      while (fileNames.has(name)) name = base.replace(/\.png$/, `-${index++}.png`);
+      zip.file(name, await renderQrCard(task, monthlyUrl(links, task)));
+      fileNames.add(name);
     } catch (error) {
       progress.failed.push({
-        taskId: task.taskId,
-        label: `${task.studentName} × ${task.teacherCanonicalName}`,
+        taskId: task.studentRecordId,
+        label: task.studentName,
         reason: error instanceof Error ? error.message : String(error),
       });
     }
@@ -257,7 +221,7 @@ export async function downloadQrZip(
 
   if (progress.failed.length > 0) {
     const rows = progress.failed.map((item) => `${item.taskId},${item.label},${item.reason}`);
-    zip.file("生成失败清单.csv", `﻿任务ID,学生 × 老师,失败原因\r\n${rows.join("\r\n")}\r\n`);
+    zip.file("生成失败清单.csv", `﻿学生档案ID,学生,失败原因\r\n${rows.join("\r\n")}\r\n`);
   }
 
   progress.phase = "zipping";
@@ -273,7 +237,7 @@ export async function downloadQrZip(
     return progress;
   }
 
-  const fileName = `课程反馈二维码-${tasks[0]?.collectionMonth ?? ""}.zip`;
+  const fileName = `月度反馈二维码-${tasks[0]?.courseMonth ?? ""}.zip`;
   downloadBlob(blob, fileName);
   progress.phase = "done";
   progress.zipPercent = 100;
