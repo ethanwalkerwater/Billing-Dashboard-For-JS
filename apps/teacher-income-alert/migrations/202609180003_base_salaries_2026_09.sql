@@ -21,6 +21,5 @@ insert into public.income_teachers (teacher, base_salary) values
   ('王储君', 24000),
   ('Valentina Lin', 24000),
   ('黄钢', 36000),
-  ('张文豪', 24000),
   ('陈依依', 24000)
 on conflict (teacher) do update set base_salary = excluded.base_salary, updated_at = now();

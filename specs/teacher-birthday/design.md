@@ -14,7 +14,7 @@
 
 | 项 | 决定 |
 |---|---|
-| 首批老师 | 官网 `src/data/teachers.ts` 中 `teacherProfiles` 的 22 位：应雁心 张文豪 张劭景 陈璐怡 郑唯梓 李品轩 汤朔 王冰青 高志勇 李寅鑫 朱毅博 刘艳阳 马怡婷 唐择运 陈依依 黄钢 蓝浪 Valentina Lin 刘峥 Jack Hou（侯东淳） 王储君 罗健文 |
+| 首批老师 | 官网 `src/data/teachers.ts` 中 `teacherProfiles` 的 22 位：应雁心 张劭景 陈璐怡 郑唯梓 李品轩 汤朔 王冰青 高志勇 李寅鑫 朱毅博 刘艳阳 马怡婷 唐择运 陈依依 黄钢 蓝浪 Valentina Lin 刘峥 Jack Hou（侯东淳） 王储君 罗健文 |
 | 生日、入职时间、联系方式 | 教务补录；生日一律公历 |
 | 机器人 | 「课表分析」（`cli_a93a4faca0f8dcb6`），提醒群为「教务群 - 生日」（`oc_ee5597e67ae6a33dfffdb4358b1ecd90`），当天祝福群为「菁仕教育大群」（`oc_b29eb8916144f9b64eb3f4e2c23a8664`） |
 | 群收件配置 | `BIRTHDAY_ACADEMIC_CHAT_ID` 发收集提醒；`BIRTHDAY_GROUP_CHAT_ID` 发生日祝福；不再私信教务个人 |

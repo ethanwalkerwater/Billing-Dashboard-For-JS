@@ -110,18 +110,6 @@
       "sourceName": "王储君"
     },
     {
-      "teacher": "张文豪",
-      "employmentType": "全职",
-      "baseSalary": 20000,
-      "managementFee": 0,
-      "marketingFee": 0,
-      "advisorFee": 0,
-      "schedulingFee": 0,
-      "adminFee": 0,
-      "rentDeduction": 0,
-      "sourceName": "张文豪"
-    },
-    {
       "teacher": "傅威程",
       "employmentType": "全职",
       "baseSalary": 25000,

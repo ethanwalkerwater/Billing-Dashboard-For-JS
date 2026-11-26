@@ -9,7 +9,6 @@ insert into public.income_teachers (teacher, base_salary) values
   ('汤朔', 20000),
   ('郑唯梓', 30000),
   ('王储君', 20000),
-  ('张文豪', 20000),
   ('傅威程', 25000),
   ('刘艳阳', 20000),
   ('Valentina Lin', 20000),

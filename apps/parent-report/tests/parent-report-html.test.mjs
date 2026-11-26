@@ -85,7 +85,6 @@ privateTest("renderParentReportHtml produces the mobile-portrait single-column l
   assert.match(html, /<h3>应雁心<\/h3>/);
   assert.match(html, /<h3>李品轩<\/h3>/);
   assert.match(html, /<h3>包天翊<\/h3>/);
-  assert.match(html, /<h3>张文豪<\/h3>/);
   assert.match(html, /<h3>Valentina Lin<\/h3>/);
   assert.match(html, /<h3>罗健文<\/h3>/);
   assert.doesNotMatch(html, /<h3>Lisa老师<\/h3>|<h3>傅老师<\/h3>|<h3>包老师<\/h3>|<h3>张老师<\/h3>|<h3>林老师<\/h3>|<h3>罗建文<\/h3>|<h3>高老师<\/h3>/);
