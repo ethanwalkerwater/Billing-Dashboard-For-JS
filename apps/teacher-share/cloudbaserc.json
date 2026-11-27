@@ -1,0 +1,18 @@
+{
+  "$schema": "https://static.cloudbase.net/cli/cloudbaserc.schema.json",
+  "version": "2.0",
+  "envId": "jingshi-test-d5gp401i44a0fa7a7",
+  "region": "ap-shanghai",
+  "functionRoot": "dist-functions",
+  "functions": [
+    {
+      "name": "share-api",
+      "timeout": 20,
+      "memorySize": 128,
+      "runtime": "Nodejs20.19",
+      "handler": "index.main",
+      "installDependency": false,
+      "description": "老师分享页：教务维护分享链接，官网 /s/编号 读有效的分享页"
+    }
+  ]
+}
