@@ -11,7 +11,7 @@
   ],
   "scripts": {
     "build": "turbo run build",
-    "test": "npm run test:node && npm run test:billing-python && npm run test:teacher-income-report && npm run test:feedback && npm run test:course-feedback-tracker && npm run test:teacher-income-alert && npm run test:ielts-progress && npm run test:teacher-birthday",
+    "test": "npm run test:node && npm run test:billing-python && npm run test:teacher-income-report && npm run test:feedback && npm run test:course-feedback-tracker && npm run test:teacher-income-alert && npm run test:ielts-progress && npm run test:teacher-birthday && npm run test:teacher-share",
     "test:node": "node --test packages/billing-core/tests/*.test.mjs apps/parent-report/tests/*.test.mjs",
     "test:core": "npm test -w @jingshi/billing-core",
     "test:billing-python": "npm run test:python -w @jingshi/billing-report",
@@ -40,7 +40,9 @@
     "test:ielts-progress": "npm test -w @jingshi/ielts-progress",
     "dev:teacher-birthday": "npm run dev -w @jingshi/teacher-birthday",
     "build:teacher-birthday": "npm run build -w @jingshi/teacher-birthday",
-    "test:teacher-birthday": "npm test -w @jingshi/teacher-birthday"
+    "test:teacher-birthday": "npm test -w @jingshi/teacher-birthday",
+    "build:teacher-share": "npm run build -w @jingshi/teacher-share",
+    "test:teacher-share": "npm test -w @jingshi/teacher-share"
   },
   "devDependencies": {
     "turbo": "^2.10.5"
