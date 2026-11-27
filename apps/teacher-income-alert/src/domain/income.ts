@@ -2,6 +2,8 @@
  * 教师薪资预警的全部计算。纯函数，前后端共用，云函数里跑 aggregateSchedule，浏览器里跑 evaluateTeacher。
  */
 
+import { isDepartedTeacher } from "@jingshi/billing-core";
+
 /** 飞书课表一条记录里本系统关心的字段（已按 v1 records 接口的真实形状读取）。 */
 export interface ScheduleRow {
   teacher: string;
@@ -147,7 +149,8 @@ export function parseScheduleRow(fields: Record<string, unknown>, studentNames?:
   const startsAt = fields["上课时间"];
   const unitPrice = readNumber(fields["课程单价"]);
   const hours = readNumber(fields["课程时长"]) ?? 0;
-  if (!teacher || typeof startsAt !== "number" || !unitPrice || hours <= 0) return null;
+  // 已离职老师整行不显示（名单在 billing-core，只存哈希）
+  if (!teacher || isDepartedTeacher(teacher) || typeof startsAt !== "number" || !unitPrice || hours <= 0) return null;
   return {
     teacher,
     studentName: readStudentNames(fields["学生"], studentNames).map(cleanStudentName).filter(Boolean).join("、"),

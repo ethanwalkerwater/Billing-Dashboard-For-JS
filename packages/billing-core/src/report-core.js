@@ -33,6 +33,29 @@ export function cleanText(value) {
   return String(value).replace(/\r/g, " ").replace(/\n/g, " ").trim();
 }
 
+// 已离职老师：课表里保留他们的课作财务记录，账单显示成「已离职老师」，老师收入和薪资预警不出这一行。
+// 仓库和网页都公开，所以只存姓名的 FNV-1a 哈希，不存原名（只防直接搜到，短姓名能被穷举）。
+// 新增一位：node -e 'import("@jingshi/billing-core").then(m=>console.log(m.teacherNameHash("姓名")))'
+export const DEPARTED_TEACHER = "已离职老师";
+const DEPARTED_TEACHER_HASHES = new Set(["0ff2bdf0"]);
+
+export function teacherNameHash(name) {
+  let hash = 0x811c9dc5;
+  for (const byte of new TextEncoder().encode(cleanText(name).replace(/老师$/u, "").replace(/\s+/g, ""))) {
+    hash = Math.imul(hash ^ byte, 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, "0");
+}
+
+export function isDepartedTeacher(name) {
+  const text = cleanText(name);
+  return text === DEPARTED_TEACHER || (text !== "" && DEPARTED_TEACHER_HASHES.has(teacherNameHash(text)));
+}
+
+export function displayTeacherName(name) {
+  return isDepartedTeacher(name) ? DEPARTED_TEACHER : cleanText(name);
+}
+
 export function parseCancellationRate(label) {
   return CANCELLATION_RATES[cleanText(label)] ?? null;
 }
@@ -117,7 +140,7 @@ function addIssue(issues, code, rawRow, message) {
 
 export function normalizeRow(row, rawRowNumber) {
   const courseType = cleanText(row["课程类型"]);
-  const teacher = cleanText(row["老师"]);
+  const teacher = displayTeacherName(row["老师"]);
   const student = cleanText(row["学生"]);
   const teachingType = cleanText(row["授课类型"]);
   const cancellation = cleanText(row["临时取消"]);

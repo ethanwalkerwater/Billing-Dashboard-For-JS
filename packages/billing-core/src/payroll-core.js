@@ -1,4 +1,4 @@
-import { cleanText, parseCsv, parseNumber } from "./report-core.js";
+import { cleanText, isDepartedTeacher, parseCsv, parseNumber } from "./report-core.js";
 
 export const DEFAULT_PAYROLL_PARAMETERS = {
   fullTimeFeedbackBaseRate: 0.47,
@@ -457,7 +457,8 @@ function teacherNamesForMonth(reportData, month, baseRows, extraRows) {
   for (const rows of extraRows) {
     for (const row of rows || []) names.set(normalizeKey(row.teacher), row.teacher);
   }
-  return [...names.values()].sort((a, b) => a.localeCompare(b, "zh-CN"));
+  // 已离职老师不出工资行；他的课照常算进学生归属和服务提成，其他老师的历史工资不变
+  return [...names.values()].filter((name) => !isDepartedTeacher(name)).sort((a, b) => a.localeCompare(b, "zh-CN"));
 }
 
 export function buildPayrollReport(reportData, input = {}) {

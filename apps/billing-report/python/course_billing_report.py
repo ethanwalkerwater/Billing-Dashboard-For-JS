@@ -121,9 +121,26 @@ def _weekday(dt: datetime | None) -> str:
     return ["周一", "周二", "周三", "周四", "周五", "周六", "周日"][dt.weekday()]
 
 
+# 已离职老师：和 packages/billing-core 的 DEPARTED_TEACHER_HASHES 保持一致，只存姓名的 FNV-1a 哈希（仓库公开）
+DEPARTED_TEACHER = "已离职老师"
+DEPARTED_TEACHER_HASHES = {"0ff2bdf0"}
+
+
+def teacher_name_hash(name: Any) -> str:
+    value = 0x811C9DC5
+    for byte in re.sub(r"\s+", "", re.sub(r"老师$", "", clean_text(name))).encode("utf-8"):
+        value = ((value ^ byte) * 0x01000193) & 0xFFFFFFFF
+    return format(value, "08x")
+
+
+def display_teacher_name(name: Any) -> str:
+    text = clean_text(name)
+    return DEPARTED_TEACHER if text and teacher_name_hash(text) in DEPARTED_TEACHER_HASHES else text
+
+
 def normalize_row(row: dict[str, Any], raw_row_number: int) -> dict[str, Any]:
     course_type = clean_text(row.get("课程类型"))
-    teacher = clean_text(row.get("老师"))
+    teacher = display_teacher_name(row.get("老师"))
     student = clean_text(row.get("学生"))
     teaching_type = clean_text(row.get("授课类型"))
     cancellation = clean_text(row.get("临时取消"))
