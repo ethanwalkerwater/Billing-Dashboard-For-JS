@@ -1,4 +1,4 @@
-import { buildReportFromCsv } from "./report-core.js";
+import { buildReportFromCsv, parseCancellationRate, parseDiscountRate } from "./report-core.js";
 
 const state = {
   data: null,
@@ -131,7 +131,7 @@ function groupAdjustmentKey(result, group) {
     group.counterparty,
     group.courseType,
     group.teachingType,
-    group.cancellationStatus,
+    group.statusLabel,
   ]);
 }
 
@@ -310,10 +310,26 @@ function renderSummary(results) {
   `).join("");
 }
 
-function statusBadge(status) {
-  if (status === "正常上课") return '<span class="badge">正常上课</span>';
-  if (String(status).includes("%")) return `<span class="badge warn">${escapeHtml(status)}</span>`;
-  return `<span class="badge danger">${escapeHtml(status)}</span>`;
+function statusBadge(item) {
+  const statusLabel = item.statusLabel || "";
+  const isCancelled = item.cancellationStatus !== "正常上课";
+  if (!isCancelled && item.discountStatus) {
+    if (parseDiscountRate(item.discountStatus) == null) return `<span class="badge warn">未知优惠 ${escapeHtml(item.discountStatus)}</span>`;
+    return `<span class="badge promo">优惠 ${escapeHtml(item.discountStatus)}</span>`;
+  }
+  if (statusLabel === "正常上课") return '<span class="badge">正常上课</span>';
+  // 色弱：未知比例靠文字区分，组合行里哪一半没配置，就在那一半前面写「未知取消 / 未知优惠」
+  const cancelUnknown = isCancelled && parseCancellationRate(item.cancellationStatus) == null;
+  const discountUnknown = item.discountStatus && parseDiscountRate(item.discountStatus) == null;
+  if (cancelUnknown || discountUnknown) {
+    const halves = [
+      isCancelled ? `${cancelUnknown ? "未知取消 " : ""}${item.cancellationStatus}` : "",
+      item.discountStatus ? `${discountUnknown ? "未知优惠 " : ""}${item.discountStatus}` : "",
+    ].filter(Boolean).join(" · ");
+    return `<span class="badge warn">${escapeHtml(halves)}</span>`;
+  }
+  if (String(statusLabel).includes("%")) return `<span class="badge warn">${escapeHtml(statusLabel)}</span>`;
+  return `<span class="badge danger">${escapeHtml(statusLabel)}</span>`;
 }
 
 function renderGroups(results) {
@@ -347,12 +363,12 @@ function renderGroups(results) {
             <col style="width: 82px" />
             <col style="width: 92px" />
             <col style="width: 72px" />
-            <col style="width: 96px" />
+            <col style="width: 150px" />
             <col style="width: 80px" />
             <col style="width: 86px" />
             <col style="width: 84px" />
             <col style="width: 78px" />
-            <col style="width: 120px" />
+            <col style="width: 90px" />
             <col style="width: 94px" />
             <col style="width: 94px" />
             <col style="width: 96px" />
@@ -381,7 +397,7 @@ function renderGroups(results) {
                   <td><strong>${escapeHtml(group.counterparty)}</strong></td>
                   <td>${escapeHtml(group.courseType)}</td>
                   <td>${escapeHtml(group.teachingType)}</td>
-                  <td>${statusBadge(group.cancellationStatus)}</td>
+                  <td>${statusBadge(group)}</td>
                   <td class="numeric">${number(group.duration)}</td>
                   <td class="numeric">${number(group.cancelledDuration)}</td>
                   <td class="numeric">${escapeHtml(group.unitPriceLabel)}</td>
@@ -410,7 +426,7 @@ function renderGroups(results) {
     button.addEventListener("click", () => {
       const result = results[Number(button.dataset.detailResultIndex)];
       const group = result.groups[Number(button.dataset.detailGroupIndex)];
-      openDrawer(group.rawRows, `${result.entity} · ${group.counterparty} · ${group.courseType}`, `${result.month} · ${group.teachingType} · ${group.cancellationStatus}`);
+      openDrawer(group.rawRows, `${result.entity} · ${group.counterparty} · ${group.courseType}`, `${result.month} · ${group.teachingType} · ${group.statusLabel}`);
     });
   });
   els.groupSections.querySelectorAll("[data-discount-input]").forEach((input) => {
@@ -481,7 +497,7 @@ function openDrawer(rawRows, title, subtitle) {
       <td>${escapeHtml(record.teacher)}</td>
       <td>${escapeHtml(record.courseType)}</td>
       <td>${escapeHtml(record.teachingType)}</td>
-      <td>${statusBadge(record.cancellationStatus)}</td>
+      <td>${statusBadge(record)}</td>
       <td class="numeric">${record.unitPrice == null ? "缺失" : moneyValue(record.unitPrice)}</td>
       <td class="numeric">${number(record.duration)}</td>
       <td class="numeric">${moneyValue(record.sourceAmount)}</td>
@@ -504,7 +520,7 @@ function closeDrawer() {
 function exportCurrentCsv() {
   const results = currentResults();
   if (!results.length) return;
-  const rows = [[`${results[0].subjectLabel}名`, "月份", results[0]?.counterpartyLabel || "", "课程类型", "授课类型", "取消/上课状态", "总时长（h）", "取消时长（h）", "课程单价（¥）", "折扣（%）", "折扣原因", "总金额（¥）", "实际金额（¥）", "原始行"]];
+  const rows = [[`${results[0].subjectLabel}名`, "月份", results[0]?.counterpartyLabel || "", "课程类型", "授课类型", "取消/上课状态", "价格优惠", "总时长（h）", "取消时长（h）", "课程单价（¥）", "折扣（%）", "折扣原因", "总金额（¥）", "实际金额（¥）", "原始行"]];
   results.forEach((result) => {
     result.groups.forEach((group) => {
       const adjustment = getAdjustment(groupAdjustmentKey(result, group));
@@ -515,6 +531,7 @@ function exportCurrentCsv() {
         group.courseType,
         group.teachingType,
         group.cancellationStatus,
+        group.discountStatus || "",
         group.duration,
         group.cancelledDuration,
         group.unitPriceLabel,

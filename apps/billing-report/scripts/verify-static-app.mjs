@@ -81,4 +81,36 @@ const report = buildReportFromCsv(sample, "sample.csv");
 assert.equal(report.views.student["2026-03"]["学生A-101"].totals.amount, 3400);
 assert.equal(report.views.student["2026-03"]["学生A-101"].totals.cancelledAmount, 1400);
 
+const discountSample = [
+  "学生,老师,课程类型,上课时间,下课时间,课程单价,课程时长,课程总价格,临时取消,授课类型,价格优惠",
+  "演示甲-901,张老师,Alevel数学,2026/11/03 10:00,2026/11/03 12:00,800,2,1600,,1v1,",
+  "演示甲-901,张老师,Alevel数学,2026/11/05 10:00,2026/11/05 12:00,800,2,0,,1v1,赠课-免费",
+  "演示甲-901,张老师,Alevel数学,2026/11/06 10:00,2026/11/06 12:00,520,1,416,,1v1,试听-80%",
+].join("\n");
+const discountReport = buildReportFromCsv(discountSample, "discount.csv");
+const discountResult = discountReport.views.student["2026-11"]["演示甲-901"];
+assert.ok(discountResult, "T-A01: 演示甲-901 2026-11 必须有计费结果");
+assert.equal(discountResult.groups.length, 3, "T-A01/T-A02/T-A05: 正常课、赠课、试听课必须各成一组");
+const normalGroup = discountResult.groups.find((group) => group.statusLabel === "正常上课");
+const giftGroup = discountResult.groups.find((group) => group.statusLabel === "赠课-免费");
+const trialGroup = discountResult.groups.find((group) => group.statusLabel === "试听-80%");
+assert.ok(normalGroup, "T-A01: 2026/11/03 正常 800×2 必须单独成组");
+assert.equal(normalGroup.lessons, 1, "T-A01: 正常课组只含 1 节课");
+assert.equal(normalGroup.amount, 1600, "T-A01: 正常课 800×2 总价应为 1600");
+assert.ok(giftGroup, "T-A02: 2026/11/05 价格优惠=赠课-免费 必须单独成组");
+assert.equal(giftGroup.statusLabel, "赠课-免费", "T-A02: 赠课组状态标签应为赠课-免费");
+assert.equal(giftGroup.lessons, 1, "T-A02: 赠课组只含 1 节课");
+assert.equal(giftGroup.amount, 0, "T-A02: 赠课总价应为 0");
+assert.equal(giftGroup.issueCount, 0, "T-A02: 赠课不应产生数据提醒");
+assert.ok(trialGroup, "T-A05: 2026/11/06 试听-80% 必须单独成组");
+assert.equal(trialGroup.statusLabel, "试听-80%", "T-A05: 试听组状态标签应为试听-80%");
+assert.equal(trialGroup.lessons, 1, "T-A05: 试听组只含 1 节课");
+assert.equal(trialGroup.amount, 416, "T-A05: 试听 520×1×80% 总价应为 416");
+assert.equal(discountReport.qualityIssues.length, 0, "T-A02/T-A05: 赠课与试听不应产生数据提醒");
+assert.match(app, /"取消\/上课状态", "价格优惠"/, "T-A02: 导出 CSV 表头必须有相邻的取消/上课状态与价格优惠列");
+assert.match(app, /badge promo/, "T-A02: 状态徽标必须支持 badge promo 优惠样式");
+assert.match(css, /\.badge\.promo/, "T-A02: 优惠徽标必须使用 .badge.promo 蓝色样式");
+assert.match(app, /cancelUnknown \? "未知取消 "/, "第 2 轮: 组合徽标里未知取消那一半自己写「未知取消」");
+assert.match(app, /discountUnknown \? "未知优惠 "/, "第 2 轮: 组合徽标里未知优惠那一半自己写「未知优惠」");
+
 console.log("static app verification ok");

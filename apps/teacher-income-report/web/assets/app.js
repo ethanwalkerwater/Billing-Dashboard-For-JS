@@ -20,6 +20,18 @@ import {
   recurringAdjustmentRows,
 } from "./income-calculations.js";
 import { buildIncomeWorkbook } from "./income-workbook.js";
+import {
+  UNKNOWN_RATE_NOTE,
+  AMOUNT_MISMATCH_NOTE,
+  groupHasAmountMismatch,
+  adjustedGroupAmount,
+  adjustedLessonRowAmount,
+  defaultGroupUnitPrice,
+  defaultLessonRowUnitPrice,
+  groupHasUnknownRate,
+  lessonRowRateNote,
+  lessonAdjustmentKey,
+} from "./lesson-adjust.js";
 
 const MASTER_STORAGE_KEY = "jingshi.teacher-income.master.v1";
 // 手填的三类调整（额外收入与扣款 / 实发工资调整 / 公司成本调整）按「月份 + 老师」存在本机浏览器，
@@ -425,64 +437,17 @@ function buildDownstreamReport(csvText, sourceName) {
   };
 }
 
-function lessonAdjustmentKey(month, teacher, group) {
-  return JSON.stringify([
-    month,
-    teacher,
-    group.counterparty,
-    group.courseType,
-    group.teachingType,
-    group.cancellationStatus,
-  ]);
-}
-
 function groupRecords(group) {
   return (group.rawRows || [])
     .map((rawRow) => state.lessonReport?.recordsByRow?.[String(rawRow)])
     .filter(Boolean);
 }
 
-function defaultGroupUnitPrice(group) {
-  if (group.unitPrices?.length === 1) return String(group.unitPrices[0]);
-  const records = groupRecords(group);
-  const weightedDuration = records.reduce((total, record) => (
-    total + (record.duration || 0) * (record.isCancelled ? (record.cancellationRate || 0) : 1)
-  ), 0);
-  return weightedDuration ? String(round((group.amount || 0) / weightedDuration)) : "";
-}
-
-function adjustedGroupAmount(group, unitPrice) {
-  const numericUnitPrice = parseNumber(unitPrice);
-  if (numericUnitPrice == null) return round(group.amount || 0);
-  const records = groupRecords(group);
-  if (!records.length) return round(numericUnitPrice * (group.duration || 0));
-  return round(records.reduce((total, record) => (
-    total + lessonAmountFromUnitPrice(
-      numericUnitPrice,
-      record.duration,
-      record.isCancelled ? (record.cancellationRate || 0) : 1,
-    )
-  ), 0));
-}
-
-function defaultLessonRowUnitPrice(entry) {
-  const sourcePrice = parseNumber(entry.source?.["课程单价"] ?? entry.source?.["单价"]);
-  if (sourcePrice != null) return String(sourcePrice);
-  return entry.duration ? String(round((entry.amount || 0) / entry.duration)) : "";
-}
-
-function adjustedLessonRowAmount(entry, unitPrice) {
-  const numericUnitPrice = parseNumber(unitPrice);
-  return numericUnitPrice == null
-    ? round(entry.amount || 0)
-    : lessonAmountFromUnitPrice(numericUnitPrice, entry.duration);
-}
-
 function adjustmentFor(month, teacher, group) {
   const key = lessonAdjustmentKey(month, teacher, group);
   if (!state.adjustments[key]) {
     state.adjustments[key] = {
-      unitPrice: defaultGroupUnitPrice(group),
+      unitPrice: defaultGroupUnitPrice(group, groupRecords(group)),
       multiplier: "",
       multiplierReason: "",
     };
@@ -531,7 +496,7 @@ function adjustedLessonReport(feedbackRatesByMonth = {}) {
           adjustment.multiplier,
           feedbackRatesByMonth?.[month]?.get(teacherKey(teacher)),
         );
-        const adjustedAmount = adjustedGroupAmount(group, adjustment.unitPrice);
+        const adjustedAmount = adjustedGroupAmount(group, groupRecords(group), adjustment.unitPrice);
         const amounts = adjustedLessonAmounts(
           adjustedAmount,
           multiplier,
@@ -1256,7 +1221,7 @@ function renderLessonDetails(row) {
               ${result.groups.map((group, index) => {
                 const adjustment = adjustmentFor(state.month, row.teacher, group);
                 const multiplier = lessonMultiplierDetails(adjustment, row);
-                const adjustedAmount = adjustedGroupAmount(group, adjustment.unitPrice);
+                const adjustedAmount = adjustedGroupAmount(group, groupRecords(group), adjustment.unitPrice);
                 const actual = actualLessonAmount(
                   adjustedAmount,
                   multiplier.value,
@@ -1266,7 +1231,7 @@ function renderLessonDetails(row) {
                     <td><strong>${escapeHtml(group.counterparty)}</strong></td>
                     <td>${escapeHtml(group.courseType)}</td>
                     <td>${escapeHtml(group.teachingType)}</td>
-                    <td><span class="badge">${escapeHtml(group.cancellationStatus)}</span></td>
+                    <td><span class="badge">${escapeHtml(group.statusLabel ?? group.cancellationStatus)}</span>${groupHasUnknownRate(groupRecords(group)) ? ` <span class="badge warn">${UNKNOWN_RATE_NOTE}</span>` : ""}${groupHasAmountMismatch(groupRecords(group)) ? ` <span class="badge warn">${AMOUNT_MISMATCH_NOTE}</span>` : ""}</td>
                     <td class="numeric">${number(group.duration)}</td>
                     <td class="numeric">${number(group.cancelledDuration)}</td>
                     <td class="numeric"><input class="table-input number-input" type="number" min="0" step="0.01" value="${escapeHtml(adjustment.unitPrice)}" placeholder="${escapeHtml(group.unitPriceLabel)}" data-lesson-unit-price="${index}" /></td>
@@ -1327,7 +1292,7 @@ function renderLessonDetails(row) {
                   <td><input class="table-input reason-input" type="text" value="${escapeHtml(multiplier.reason)}" ${multiplier.automatic ? "readonly" : ""} data-row-multiplier-reason="${index}" /></td>
                   <td class="numeric"><strong>${number(adjustedAmount)}</strong></td>
                   <td class="numeric"><strong>${number(actual)}</strong></td>
-                  <td>${escapeHtml(cleanText(entry.source?.课程类型 || entry.source?.授课类型 || "汇总行"))}</td>
+                  <td>${escapeHtml(cleanText(entry.source?.课程类型 || entry.source?.授课类型 || "汇总行"))}${lessonRowRateNote(entry) ? ` <span class="badge warn">${lessonRowRateNote(entry)}</span>` : ""}</td>
                 </tr>
               `;
             }).join("")}
@@ -1526,12 +1491,12 @@ function teacherExportModel(row) {
     ? result.groups.map((group) => {
       const adjustment = adjustmentFor(state.month, row.teacher, group);
       const multiplier = lessonMultiplierDetails(adjustment, row);
-      const adjustedAmount = adjustedGroupAmount(group, adjustment.unitPrice);
+      const adjustedAmount = adjustedGroupAmount(group, groupRecords(group), adjustment.unitPrice);
       return [
         group.counterparty,
         group.courseType,
         group.teachingType,
-        group.cancellationStatus,
+        group.statusLabel ?? group.cancellationStatus,
         group.duration,
         parseNumber(adjustment.unitPrice) ?? "",
         multiplier.value,

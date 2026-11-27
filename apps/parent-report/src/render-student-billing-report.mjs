@@ -2,6 +2,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { renderFacultyByRole } from "./render-faculty.mjs";
+import { discountText, reportBlockers, roundYuan } from "./student-billing-batch-data.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, "../../..");
@@ -16,7 +17,7 @@ const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({
 }[char]));
 
 function formatMoney(value) {
-  const integerValue = Math.floor(Number(value || 0));
+  const integerValue = roundYuan(value);
   return `¥${integerValue.toLocaleString("zh-CN", { maximumFractionDigits: 0 })}`;
 }
 
@@ -25,15 +26,28 @@ function formatNumber(value) {
 }
 
 function discountLabel(line) {
-  if (line.isLeave && line.billingNote && line.billingNote !== "—") return line.billingNote;
+  if ((line.isLeave || line.promoLabel) && line.billingNote && line.billingNote !== "—") return line.billingNote;
   if (line.discountReason) return line.discountReason;
-  if (line.discountRate && line.discountRate !== 100) return `${line.discountRate / 10} 折`;
+  if (line.discountRate && line.discountRate !== 100) return discountText(line.discountRate);
   return "—";
+}
+
+function rowClass(line) {
+  const classes = [line.isLeave && "is-leave", line.promoLabel && "is-promo"].filter(Boolean);
+  return classes.length ? ` class="${classes.join(" ")}"` : "";
+}
+
+const PROMO_FOOTNOTE = "优惠课程：赠课、模拟考试不收费；试听课按 80% 收取课时费。临时取消按取消时间对应的比例收取课时费，病假不收费。";
+
+function renderPromoFootnote(report) {
+  return report.courseLines.some((line) => line.promoLabel)
+    ? `<p class="promo-footnote">${PROMO_FOOTNOTE}</p>`
+    : "";
 }
 
 function renderCourseRows(report) {
   return report.courseLines.map((line) => `
-    <tr${line.isLeave ? ` class="is-leave"` : ""}>
+    <tr${rowClass(line)}>
       <td>
         <strong>${esc(line.courseType)}</strong>
         ${report.months?.length > 1 && line.month ? `<span>${esc(line.month)}</span>` : ""}
@@ -54,21 +68,21 @@ function renderTotalRow(report) {
   if (!prepay?.enabled || prepay.balanceBefore == null) {
     return `
       <div class="total-row">
-        <p>折扣与临时请假已按规则计入应付课时费。</p>
+        <p>折扣、优惠课程与临时请假已按规则计入应付课时费。</p>
         <div>
           <span class="section-label">Total Payable</span>
           <strong>${formatMoney(report.totals.payableAmount)}</strong>
         </div>
       </div>`;
   }
-  // 报告金额统一向下取整显示；剩余用取整后的两数相减，保证三行金额能对上
-  const balance = Math.floor(Number(prepay.balanceBefore));
-  const fee = Math.floor(Number(report.totals.payableAmount || 0));
+  // 报告金额统一四舍五入到元；剩余用取整后的两数相减，保证三行金额能对上
+  const balance = roundYuan(prepay.balanceBefore);
+  const fee = roundYuan(report.totals.payableAmount);
   const remaining = balance - fee;
   const owed = remaining < 0;
   return `
     <div class="total-row prepay-total">
-      <p>${owed ? "预付余额不足以抵扣本期课时费，<br />差额需补缴。" : "本期课时费已从预付余额中扣除，"}<br />折扣与临时请假已按规则计入本期费用。</p>
+      <p>${owed ? "预付余额不足以抵扣本期课时费，<br />差额需补缴。" : "本期课时费已从预付余额中扣除，"}<br />折扣、优惠课程与临时请假已按规则计入本期费用。</p>
       <dl class="prepay-summary">
         <div><dt>预付余额（扣费前）</dt><dd>${formatMoney(balance)}</dd></div>
         <div><dt>本期课时费</dt><dd>− ${formatMoney(fee)}</dd></div>
@@ -90,11 +104,12 @@ function renderCalendar(calendar) {
             <div class="day-num">${esc(cell.day)}</div>
             <div class="day-lessons">
               ${(cell.lessons || []).map((lesson) => `
-                <div class="lesson-pill ${lesson.isLeave ? "leave" : ""}">
+                <div class="lesson-pill ${lesson.isLeave ? "leave" : ""}${lesson.isPromo ? " promo" : ""}">
                   <span>${esc(lesson.startTime)}-${esc(lesson.endTime)}</span>
                   <b>${esc(lesson.courseType)}</b>
                   <em>${esc(lesson.teacher)} · ${formatNumber(lesson.duration)}h</em>
                   ${lesson.isLeave ? `<mark>${esc(lesson.leaveLabel)}</mark>` : ""}
+                  ${lesson.isPromo ? `<mark class="promo">${esc(lesson.promoText || lesson.promoLabel)}</mark>` : ""}
                 </div>
               `).join("")}
             </div>
@@ -128,6 +143,13 @@ function embeddedCjkFontCss(source, format = "truetype") {
 }
 
 export function renderStudentBillingReportHtml(report, teachers, options = {}) {
+  // 家长永远看不到未配置的取消 / 优惠、说明和金额对不上的行：网页上已报错拦住，这里再兜一次 API / 命令行入口
+  const blockers = reportBlockers(report);
+  if (blockers.length) {
+    const error = new Error(`${report.studentName}：${blockers.map((item) => `${item.row ? `第 ${item.row} 行：` : ""}${item.message}`).join("；")}`);
+    error.statusCode = 422;
+    throw error;
+  }
   const facultySections = renderFacultyByRole(
     teachers,
     report.activeTeacherNames,
@@ -158,6 +180,7 @@ export function renderStudentBillingReportHtml(report, teachers, options = {}) {
       --champagne-soft: #f7efe4;
       --platinum: #f5f6f8;
       --leave: #a4523f;
+      --promo: #1f5fbf;
       --radius: 10px;
       --report-serif: "Noto Serif SC", "Noto Serif CJK SC", "Songti SC", "STSong", SimSun, Georgia, "Times New Roman", serif;
     }
@@ -244,6 +267,9 @@ export function renderStudentBillingReportHtml(report, teachers, options = {}) {
     td strong { display: block; font-size: 15px; }
     td span { display: block; color: var(--muted); font-size: 12px; }
     tr.is-leave { background: var(--champagne-soft); }
+    tr.is-promo td:first-child { box-shadow: inset 3px 0 0 var(--promo); }
+    tr.is-promo td:nth-child(5) { color: var(--promo); font-weight: 700; }
+    .promo-footnote { margin: 14px 0 0; color: var(--muted); font-size: 12px; }
     .bill-note { margin-top: 5px; color: var(--leave); }
     .total-row { margin-top: 24px; padding-top: 18px; border-top: 2px solid var(--ink); }
     .total-row p { margin: 0 0 14px; color: var(--muted); font-size: 12px; }
@@ -281,6 +307,7 @@ export function renderStudentBillingReportHtml(report, teachers, options = {}) {
       overflow: hidden;
     }
     .lesson-pill.leave { border-left-color: var(--leave); background: var(--champagne-soft); }
+    .lesson-pill.promo { border-left: 2px dashed var(--promo); }
     .lesson-pill span, .lesson-pill b, .lesson-pill em { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .lesson-pill span { color: var(--indigo-deep); font-weight: 700; }
     .lesson-pill b { margin-top: 1px; }
@@ -300,10 +327,12 @@ export function renderStudentBillingReportHtml(report, teachers, options = {}) {
       text-overflow: ellipsis;
       white-space: nowrap;
     }
+    mark.promo { background: rgba(31,95,191,.1); color: var(--promo); }
     .legend { display: flex; gap: 18px; margin-top: 22px; color: var(--muted); font-size: 12px; }
     .legend span { display: inline-flex; align-items: center; gap: 6px; }
     .legend i { width: 10px; height: 10px; border-radius: 50%; background: var(--indigo); }
     .legend .leave i { background: var(--leave); }
+    .legend .promo i { border-radius: 2px; background: var(--promo); }
     .faculty-section { margin-top: 22px; }
     .faculty-section:first-of-type { margin-top: 0; }
     .faculty-section h3 { margin: 0 0 14px; font-family: var(--report-serif); font-size: 22px; font-weight: 600; }
@@ -388,6 +417,7 @@ export function renderStudentBillingReportHtml(report, teachers, options = {}) {
         <tbody>${renderCourseRows(report)}</tbody>
       </table>
       ${renderTotalRow(report)}
+      ${renderPromoFootnote(report)}
     </section>
 
     ${calendars.map((calendar, index) => `
@@ -402,7 +432,8 @@ export function renderStudentBillingReportHtml(report, teachers, options = {}) {
       ${renderCalendar(calendar)}
       <div class="legend">
         <span><i></i>正常课程</span>
-        <span class="leave"><i></i>请假 / 临时取消课程</span>
+        <span class="leave"><i></i>请假、病假</span>
+        <span class="promo"><i></i>试听、赠课、模拟考试</span>
       </div>
     </section>
     `).join("")}
