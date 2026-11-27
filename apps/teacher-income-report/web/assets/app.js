@@ -1,4 +1,4 @@
-import { buildReportFromCsv, cleanText, parseCsv, parseNumber } from "./report-core.js";
+import { buildReportFromCsv, cleanText, isDepartedTeacher, parseCsv, parseNumber } from "./report-core.js";
 import {
   DEFAULT_PAYROLL_PARAMETERS,
   buildFeedbackRanking,
@@ -751,7 +751,8 @@ function restorePersistedMasterData() {
       : saved;
     const restoredKeys = [];
     if (Array.isArray(sections.baseSalaries)) {
-      state.master.baseSalaries = sections.baseSalaries;
+      // 浏览器里存过的底薪表可能还有已离职老师，和项目默认值一样去掉
+      state.master.baseSalaries = sections.baseSalaries.filter((row) => !isDepartedTeacher(row?.teacher));
       restoredKeys.push("baseSalaries");
     }
     if (Array.isArray(sections.studentOwnership)) {

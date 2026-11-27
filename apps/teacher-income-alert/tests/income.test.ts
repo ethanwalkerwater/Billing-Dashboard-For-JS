@@ -27,6 +27,8 @@ test("parseScheduleRow 读飞书真实字段形状", () => {
   assert.equal(parseScheduleRow({ ...feishuFields, 课程单价: undefined, 课程时长: 23.5, 课程总价格: 0 }), null);
   assert.equal(parseScheduleRow({ ...feishuFields, 课程单价: "0", 课程总价格: 0 }), null);
   assert.equal(parseScheduleRow({ ...feishuFields, 课程时长: -143 }), null);
+  // 已离职老师整行不显示（仓库公开，不写原名）
+  assert.equal(parseScheduleRow({ ...feishuFields, 老师: Buffer.from("5byg5paH6LGq", "base64").toString() }), null);
   assert.equal(cleanStudentName("Charlie-0601"), "Charlie");
   assert.equal(cleanStudentName("顾子言Tina-"), "顾子言Tina");
 });

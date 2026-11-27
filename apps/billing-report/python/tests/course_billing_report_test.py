@@ -1,9 +1,11 @@
+import base64
 import unittest
 
 from course_billing_report import (
     aggregate_records,
     build_report_data,
     normalize_row,
+    teacher_name_hash,
     parse_cancellation_rate,
     render_html,
 )
@@ -162,6 +164,14 @@ class CourseBillingReportTest(unittest.TestCase):
         self.assertIn('result-section', html)
         self.assertNotIn('data-section-row', html)
         self.assertIn('subjectLabel}名', html)
+
+    def test_departed_teacher_shows_as_placeholder_and_hash_matches_js(self):
+        # 仓库公开，测试里不写原名；哈希必须和 billing-core 的 teacherNameHash 一致
+        departed = base64.b64decode("5byg5paH6LGq").decode()
+        row = normalize_row(make_row(老师=departed + "老师"), 2)
+        self.assertEqual(row["teacher"], "已离职老师")
+        self.assertEqual(row["amount"], 2000)
+        self.assertEqual(teacher_name_hash("测试"), "f78149cf")
 
 
 if __name__ == "__main__":
